@@ -1,0 +1,309 @@
+<?php
+/**
+ * Copyright (C) 2026 InsightX. GPLv3 or later. Original work by InsightX.
+ *
+ * Export pipeline. Each run() call performs one bounded slice of work and
+ * returns progress so a JS driver can poll it to completion without hitting PHP
+ * time / memory limits.
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+class ISX_Export {
+
+	const ROWS_PER_BATCH  = 200;
+	const FILES_PER_BATCH = 120;
+
+	/**
+	 * Advance the export by one step.
+	 *
+	 * @param ISX_Job $job
+	 * @return array { progress:int, done:bool, message:string, download?:string }
+	 */
+	public static function run( ISX_Job $job ) {
+		$step = $job->get( 'step', 'init' );
+
+		switch ( $step ) {
+			case 'init':
+				return self::init( $job );
+			case 'database':
+				return self::database( $job );
+			case 'pack_meta':
+				return self::pack_meta( $job );
+			case 'files':
+				return self::files( $job );
+			case 'finalize':
+				return self::finalize( $job );
+			case 'upload':
+				return self::upload( $job );
+		}
+
+		return array( 'progress' => 100, 'done' => true, 'message' => 'เสร็จสิ้น' );
+	}
+
+	private static function init( ISX_Job $job ) {
+		global $wpdb;
+
+		ISX_Archive::init( $job->archive() );
+
+		$options = (array) $job->get( 'options', array() );
+
+		$manifest = array(
+			'generator'               => 'InsightX Backup ' . ISX_VERSION,
+			'created'                 => time(),
+			'siteurl'                 => get_option( 'siteurl' ),
+			'home'                    => get_option( 'home' ),
+			'abspath'                 => untrailingslashit( ABSPATH ),
+			'content_dir'             => untrailingslashit( WP_CONTENT_DIR ),
+			'content_url'             => untrailingslashit( content_url() ),
+			'table_prefix'            => $wpdb->prefix,
+			'wp_version'              => get_bloginfo( 'version' ),
+			'no_replace_email_domain' => ! empty( $options['no_replace_email_domain'] ),
+		);
+		$job->set( 'manifest', $manifest );
+
+		$tables = empty( $options['exclude_database'] ) ? ISX_Database::tables() : array();
+		if ( ! empty( $options['exclude_selected_tables'] ) ) {
+			$tables = array_values( array_diff( $tables, (array) $options['exclude_selected_tables'] ) );
+		}
+		$job->set( 'tables', $tables );
+
+		$exclude_dirs = array();
+		if ( ! empty( $options['exclude_media'] ) ) {
+			$exclude_dirs[] = 'uploads';
+		}
+		if ( ! empty( $options['exclude_themes'] ) ) {
+			$exclude_dirs[] = 'themes';
+		}
+		if ( ! empty( $options['exclude_mu_plugins'] ) ) {
+			$exclude_dirs[] = 'mu-plugins';
+		}
+		if ( ! empty( $options['exclude_plugins'] ) ) {
+			$exclude_dirs[] = 'plugins';
+		}
+
+		$keep_only_subdirs = array();
+		if ( empty( $options['exclude_themes'] ) && ! empty( $options['exclude_inactive_themes'] ) ) {
+			$keep_only_subdirs['themes'] = ISX_Files::active_theme_dirs();
+		}
+		if ( empty( $options['exclude_plugins'] ) && ! empty( $options['exclude_inactive_plugins'] ) ) {
+			$keep_only_subdirs['plugins'] = ISX_Files::active_plugin_entries();
+		}
+
+		$filters = array(
+			'exclude_dirs'      => $exclude_dirs,
+			'keep_only_subdirs' => $keep_only_subdirs,
+			'exclude_cache'     => ! empty( $options['exclude_cache_files'] ),
+			'exclude_paths'     => isset( $options['exclude_selected_files'] ) ? (array) $options['exclude_selected_files'] : array(),
+		);
+		$job->set( 'total_files', ISX_Files::build_list( $job->file_list(), $filters ) );
+
+		$job->set( 'cursor', array( 'ti' => 0, 'off' => 0 ) );
+		$job->set( 'step', 'database' );
+		$job->set( 'progress', 5 );
+		$job->save();
+
+		return array( 'progress' => 5, 'done' => false, 'message' => 'เตรียมข้อมูล...' );
+	}
+
+	private static function database( ISX_Job $job ) {
+		global $wpdb;
+
+		$tables = (array) $job->get( 'tables', array() );
+		$cursor = (array) $job->get( 'cursor', array( 'ti' => 0, 'off' => 0 ) );
+		$ti     = (int) $cursor['ti'];
+		$off    = (int) $cursor['off'];
+
+		if ( $ti >= count( $tables ) ) {
+			$job->set( 'step', 'pack_meta' );
+			$job->save();
+			return array( 'progress' => 50, 'done' => false, 'message' => 'แพ็กฐานข้อมูล...' );
+		}
+
+		$table   = $tables[ $ti ];
+		$options = (array) $job->get( 'options', array() );
+
+		$where = '';
+		if ( $table === $wpdb->comments && ! empty( $options['exclude_spam_comments'] ) ) {
+			$where = "comment_approved != 'spam'";
+		} elseif ( $table === $wpdb->posts && ! empty( $options['exclude_post_revisions'] ) ) {
+			$where = "post_type != 'revision'";
+		}
+
+		$search  = isset( $options['replace_old'] ) ? array_values( (array) $options['replace_old'] ) : array();
+		$replace = isset( $options['replace_new'] ) ? array_values( (array) $options['replace_new'] ) : array();
+
+		$fh = fopen( $job->db_dump(), 'ab' );
+
+		if ( $off === 0 ) {
+			ISX_Database::dump_schema( $fh, $table );
+		}
+		$written = ISX_Database::dump_rows( $fh, $table, $off, self::ROWS_PER_BATCH, $where, $search, $replace );
+		fclose( $fh );
+
+		if ( $written < self::ROWS_PER_BATCH ) {
+			$cursor['ti']  = $ti + 1;
+			$cursor['off'] = 0;
+		} else {
+			$cursor['off'] = $off + $written;
+		}
+		$job->set( 'cursor', $cursor );
+
+		$progress = 5 + (int) ( 45 * ( $ti / max( 1, count( $tables ) ) ) );
+		$job->set( 'progress', $progress );
+		$job->save();
+
+		return array(
+			'progress' => $progress,
+			'done'     => false,
+			'message'  => sprintf( 'ส่งออกตาราง %s...', $table ),
+		);
+	}
+
+	private static function pack_meta( ISX_Job $job ) {
+		ISX_Archive::add_data( $job->archive(), 'manifest.json', wp_json_encode( $job->get( 'manifest', array() ) ) );
+		if ( is_file( $job->db_dump() ) ) {
+			ISX_Archive::add_file( $job->archive(), $job->db_dump(), 'database.isxdb' );
+		}
+		$job->set( 'cursor', array( 'fo' => 0 ) );
+		$job->set( 'step', 'files' );
+		$job->set( 'progress', 55 );
+		$job->save();
+
+		return array( 'progress' => 55, 'done' => false, 'message' => 'แพ็กไฟล์...' );
+	}
+
+	private static function files( ISX_Job $job ) {
+		$cursor = (array) $job->get( 'cursor', array( 'fo' => 0 ) );
+		$result = ISX_Files::pack_batch( $job->archive(), $job->file_list(), (int) $cursor['fo'], self::FILES_PER_BATCH );
+
+		$cursor['fo'] = $result['offset'];
+		$job->set( 'cursor', $cursor );
+
+		$done_files = (int) $job->get( 'done_files', 0 ) + $result['added'];
+		$job->set( 'done_files', $done_files );
+
+		$total    = max( 1, (int) $job->get( 'total_files', 1 ) );
+		$progress = 55 + (int) ( 40 * min( 1, $done_files / $total ) );
+
+		if ( $result['done'] ) {
+			$job->set( 'step', 'finalize' );
+		}
+		$job->set( 'progress', $progress );
+		$job->save();
+
+		return array(
+			'progress' => $progress,
+			'done'     => false,
+			'message'  => sprintf( 'แพ็กไฟล์ %d/%d...', $done_files, $total ),
+		);
+	}
+
+	private static function finalize( ISX_Job $job ) {
+		ISX_Archive::finish( $job->archive() );
+
+		// Every finished export is kept as a local backup (listed under
+		// "ข้อมูลสำรอง"), regardless of whether it's also pushed to S3.
+		$backup_name = ISX_Backups::store( $job->archive() );
+		$backup_path = ISX_Backups::path( $backup_name );
+
+		$options = (array) $job->get( 'options', array() );
+
+		// Compress before encrypting — encrypted data doesn't compress.
+		if ( $backup_path !== null && isset( $options['compression'] ) && $options['compression'] === 'gzip' ) {
+			$tmp    = $backup_path . '.gz';
+			$result = ISX_Compress::gzip_file( $backup_path, $tmp );
+			if ( ! is_wp_error( $result ) ) {
+				@unlink( $backup_path );
+				rename( $tmp, $backup_path );
+			} else {
+				@unlink( $tmp );
+			}
+		}
+
+		if ( $backup_path !== null && ! empty( $options['encrypt'] ) ) {
+			$password = ISX_Crypto::decrypt_string( (string) $job->get( 'encrypt_password_enc', '' ) );
+			if ( $password !== '' ) {
+				$tmp    = $backup_path . '.enc';
+				$result = ISX_Crypto::encrypt_file( $password, $backup_path, $tmp );
+				if ( ! is_wp_error( $result ) ) {
+					@unlink( $backup_path );
+					rename( $tmp, $backup_path );
+				} else {
+					@unlink( $tmp );
+				}
+			}
+		}
+
+		$size = $backup_path !== null ? filesize( $backup_path ) : 0;
+		$job->set( 'backup_name', $backup_name );
+		$job->set( 'archive_size', $size );
+
+		$provider = $job->get( 'to_storage', '' );
+		if ( $provider !== '' ) {
+			$job->set( 'step', 'upload' );
+			$job->set( 'progress', 97 );
+			$job->save();
+			return array( 'progress' => 97, 'done' => false, 'message' => 'กำลังอัปโหลดไปยัง Storage...' );
+		}
+
+		// The finished archive already lives in the backups dir; the job's
+		// scratch directory (dump, file list) is no longer needed. finish()
+		// keeps a "done" marker on disk so a duplicate poll racing this one
+		// (browser tab vs. WP-Cron, see with_lock()) reports success instead
+		// of "ไม่พบงาน" for a directory that no longer exists.
+		$job->finish( 'ส่งออกเสร็จสิ้น' );
+
+		return array(
+			'progress' => 100,
+			'done'     => true,
+			'message'  => 'ส่งออกเสร็จสิ้น',
+			'size'     => size_format( (int) $size ),
+			'backup'   => $backup_name,
+		);
+	}
+
+	private static function upload( ISX_Job $job ) {
+		$provider    = $job->get( 'to_storage', '' );
+		$backup_name = $job->get( 'backup_name', '' );
+		$backup      = ISX_Backups::path( $backup_name );
+
+		if ( $backup === null || ! ISX_Destinations::is_configured( $provider ) ) {
+			$message = 'ยังไม่ได้ตั้งค่า provider นี้ — ไฟล์ถูกเก็บไว้ในข้อมูลสำรองแล้ว';
+			$job->finish( $message );
+			return array(
+				'progress' => 100,
+				'done'     => true,
+				'error'    => true,
+				'message'  => $message,
+			);
+		}
+
+		$client = new ISX_S3_Client( ISX_Destinations::get( $provider ) );
+		$key    = 'insightx-migrate/' . basename( $backup );
+		$result = $client->put_object( $key, $backup );
+
+		if ( is_wp_error( $result ) ) {
+			$message = 'อัปโหลดไม่สำเร็จ: ' . $result->get_error_message();
+			$job->finish( $message );
+			return array(
+				'progress' => 100,
+				'done'     => true,
+				'error'    => true,
+				'message'  => $message,
+			);
+		}
+
+		$message = 'ส่งออกและอัปโหลดไปยัง Storage สำเร็จ';
+		$job->finish( $message );
+
+		return array(
+			'progress' => 100,
+			'done'     => true,
+			'message'  => $message,
+			'backup'   => $backup_name,
+		);
+	}
+}

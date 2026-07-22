@@ -1,0 +1,27 @@
+# Runtime data — export/import job scratch dirs and local backups.
+# These are generated at runtime and must never ship with the plugin or be
+# committed; the folder itself (with its .htaccess / index.php guards) stays.
+storage/*
+!storage/.htaccess
+!storage/index.php
+!storage/backups/
+storage/backups/*
+!storage/backups/.htaccess
+!storage/backups/index.php
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Local tooling (if this plugin is ever built/tested with Node/Composer)
+node_modules/
+vendor/
+composer.lock
+package-lock.json
+
+# Logs
+*.log
