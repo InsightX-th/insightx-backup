@@ -82,6 +82,7 @@ class ISX_Admin {
 		add_submenu_page( 'isx_export', __( 'ข้อมูลสำรอง', 'insightx-backup' ), __( 'ข้อมูลสำรอง', 'insightx-backup' ), 'export', 'isx_backups', array( __CLASS__, 'page_backups' ) );
 		add_submenu_page( 'isx_export', __( 'การเชื่อมต่อ', 'insightx-backup' ), __( 'การเชื่อมต่อ', 'insightx-backup' ), 'export', 'isx_connections', array( __CLASS__, 'page_connections' ) );
 		add_submenu_page( 'isx_export', __( 'ตั้งค่า Storage', 'insightx-backup' ), __( 'ตั้งค่า Storage', 'insightx-backup' ), 'export', 'isx_settings', array( __CLASS__, 'page_settings' ) );
+		add_submenu_page( 'isx_export', __( 'Log', 'insightx-backup' ), __( 'Log', 'insightx-backup' ), 'export', 'isx_log', array( __CLASS__, 'page_log' ) );
 	}
 
 	public static function assets( $hook ) {
@@ -89,7 +90,8 @@ class ISX_Admin {
 			|| strpos( $hook, 'isx_import' ) !== false
 			|| strpos( $hook, 'isx_backups' ) !== false
 			|| strpos( $hook, 'isx_connections' ) !== false
-			|| strpos( $hook, 'isx_settings' ) !== false;
+			|| strpos( $hook, 'isx_settings' ) !== false
+			|| strpos( $hook, 'isx_log' ) !== false;
 
 		if ( ! $is_isx_page ) {
 			return;
@@ -145,6 +147,15 @@ class ISX_Admin {
 
 	public static function page_settings() {
 		require ISX_PATH . 'views/settings.php';
+	}
+
+	public static function page_log() {
+		if ( isset( $_POST['isx_log_clear'] ) && check_admin_referer( 'isx_log_clear' ) && current_user_can( 'export' ) ) {
+			ISX_Logger::clear();
+			wp_safe_redirect( admin_url( 'admin.php?page=isx_log&cleared=1' ) );
+			exit;
+		}
+		require ISX_PATH . 'views/log.php';
 	}
 
 	/* ---------------- Export / Import pipeline AJAX ---------------- */
@@ -233,11 +244,16 @@ class ISX_Admin {
 
 	public static function ajax_import_chunk() {
 		self::guard( 'import' );
-		$job = ISX_Job::load( isset( $_POST['job'] ) ? sanitize_text_field( wp_unslash( $_POST['job'] ) ) : '' );
+		$job_id = isset( $_POST['job'] ) ? sanitize_text_field( wp_unslash( $_POST['job'] ) ) : '';
+		$job    = ISX_Job::load( $job_id );
 		if ( ! $job || $job->get( 'type' ) !== 'import' ) {
+			ISX_Logger::log_error( 'import', 'งานไม่ถูกต้อง (chunk upload)', array( 'job' => $job_id ) );
 			wp_send_json_error( array( 'message' => 'งานไม่ถูกต้อง' ) );
 		}
 		if ( empty( $_FILES['chunk']['tmp_name'] ) || ! is_uploaded_file( $_FILES['chunk']['tmp_name'] ) ) {
+			// Common causes: upload_max_filesize/post_max_size smaller than the
+			// chunk size, or the request hit a proxy/host body-size limit.
+			ISX_Logger::log_error( 'import', 'ไม่พบข้อมูล chunk', array( 'job' => $job_id ) );
 			wp_send_json_error( array( 'message' => 'ไม่พบข้อมูล chunk' ) );
 		}
 
@@ -263,8 +279,14 @@ class ISX_Admin {
 	}
 
 	public static function ajax_run() {
-		$job = ISX_Job::load( isset( $_POST['job'] ) ? sanitize_text_field( wp_unslash( $_POST['job'] ) ) : '' );
+		$job_id = isset( $_POST['job'] ) ? sanitize_text_field( wp_unslash( $_POST['job'] ) ) : '';
+		$job    = ISX_Job::load( $job_id );
 		if ( ! $job ) {
+			// Job dir/state.json missing or unreadable — mid-run causes seen in
+			// practice: disk full, PHP-FPM/host killed the process while
+			// state.json was mid-write, or someone changed the storage path
+			// (Settings → ตั้งค่า Storage) while a job was still in flight.
+			ISX_Logger::log_error( 'system', 'ไม่พบงาน', array( 'job' => $job_id ) );
 			wp_send_json_error( array( 'message' => 'ไม่พบงาน' ) );
 		}
 
@@ -343,6 +365,17 @@ class ISX_Admin {
 				$span            = max( 1, $range[1] - $range[0] );
 				$result['phase'] = $step_before;
 				$result['phase_progress'] = (int) round( max( 0, min( 100, ( $progress_val - $range[0] ) / $span * 100 ) ) );
+
+				if ( ! empty( $result['error'] ) ) {
+					ISX_Logger::log_error(
+						$type,
+						isset( $result['message'] ) ? $result['message'] : 'เกิดข้อผิดพลาดไม่ทราบสาเหตุ',
+						array(
+							'job'  => $locked_job->id(),
+							'step' => $step_before,
+						)
+					);
+				}
 
 				// Some early-failure paths still delete the job dir outright
 				// (see cleanup() call sites) — only persist the "last known"
@@ -578,6 +611,7 @@ class ISX_Admin {
 		$name = isset( $_POST['name'] ) ? sanitize_text_field( wp_unslash( $_POST['name'] ) ) : '';
 		$path = ISX_Backups::path( $name );
 		if ( $path === null ) {
+			ISX_Logger::log_error( 'backup', 'ไม่พบไฟล์ข้อมูลสำรอง (กู้คืน)', array( 'name' => $name ) );
 			wp_send_json_error( array( 'message' => 'ไม่พบไฟล์ข้อมูลสำรอง' ) );
 		}
 
@@ -899,6 +933,11 @@ class ISX_Admin {
 		$result = $client->get_object( $key, $job->archive() );
 
 		if ( is_wp_error( $result ) ) {
+			ISX_Logger::log_error(
+				'import',
+				'ดาวน์โหลดจาก Storage ไม่สำเร็จ: ' . $result->get_error_message(),
+				array( 'job' => $job->id(), 'provider' => $slug, 'key' => $key )
+			);
 			$job->cleanup();
 			wp_send_json_error( array( 'message' => $result->get_error_message() ) );
 		}

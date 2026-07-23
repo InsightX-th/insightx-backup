@@ -1271,3 +1271,56 @@ table.isx-backups-table tbody td.isx-b-actions {
   height: 16px;
   flex: 0 0 auto;
 }
+
+/* ---------- Log (terminal style) ---------- */
+
+.isx-terminal {
+  background: #1e1e2e;
+  border-radius: var(--isx-radius-sm);
+  overflow: hidden;
+  box-shadow: var(--isx-shadow-sm);
+}
+
+.isx-terminal-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  background: #292a3d;
+}
+
+.isx-terminal-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.isx-terminal-title {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #8a8db0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.isx-terminal-body {
+  margin: 0;
+  padding: 16px;
+  max-height: 520px;
+  overflow: auto;
+  color: #d6d8f5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.isx-terminal-tag {
+  color: #ff6b81;
+  font-weight: 700;
+}
+
+.isx-terminal-ctx {
+  color: #6fd58c;
+}

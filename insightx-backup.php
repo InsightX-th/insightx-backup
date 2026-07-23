@@ -3,7 +3,7 @@
  * Plugin Name: InsightX Backup
  * Plugin URI: https://insightx.in.th/
  * Description: ย้าย/สำรอง WordPress ทั้งเว็บ (ฐานข้อมูล + ไฟล์) เป็นแพ็กเกจเดียว แล้ว import กลับหรือส่งขึ้น S3 ได้ — เขียนขึ้นใหม่ทั้งหมดโดย InsightX.
- * Version: 0.1.1
+ * Version: 0.1.2
  * Author: InsightX
  * Author URI: https://insightx.in.th/
  * Text Domain: insightx-backup
@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ISX_VERSION', '0.1.1' );
+define( 'ISX_VERSION', '0.1.2' );
 define( 'ISX_FILE', __FILE__ );
 define( 'ISX_PATH', plugin_dir_path( __FILE__ ) );
 define( 'ISX_URL', plugin_dir_url( __FILE__ ) );
@@ -74,6 +74,7 @@ define( 'ISX_STORAGE_PATH', isx_resolve_storage_path() );
 /**
  * Simple, explicit class loader (no reliance on any third-party autoloader).
  */
+require_once ISX_PATH . 'includes/class-isx-logger.php';
 require_once ISX_PATH . 'includes/class-isx-crypto.php';
 require_once ISX_PATH . 'includes/class-isx-compress.php';
 require_once ISX_PATH . 'includes/class-isx-serialize.php';
