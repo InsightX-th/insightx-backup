@@ -4,7 +4,7 @@ Tags: backup, migration, export, import, s3
 Requires at least: 3.3
 Tested up to: 7.0.2
 Requires PHP: 5.3
-Stable tag: 0.1.2
+Stable tag: 0.1.3
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -44,6 +44,9 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 **ความต้องการของระบบ:** PHP 7.4+, ส่วนขยาย cURL/zlib/openssl
 
 == Changelog ==
+
+= 0.1.3 =
+* แก้เวลาที่เหลือประมาณการ (ETA) ไม่แสดงหน่วยชั่วโมง (ค้างที่นาทีอย่างเดียว เช่น "65 นาที" แทนที่จะเป็น "1 ชั่วโมง 5 นาที")
 
 = 0.1.2 =
 * เพิ่มหน้า Log บันทึกข้อผิดพลาดของ ส่งออก/นำเข้า/ข้อมูลสำรอง (เมนู "Log")
