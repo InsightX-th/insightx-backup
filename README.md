@@ -17,13 +17,25 @@
 - **ตั้งค่า Storage** — เลือกโฟลเดอร์เก็บ backup/job scratch ในเครื่องเอง (ค่าเริ่มต้นคือในปลั๊กอิน) และตั้ง **backup อัตโนมัติ** (รายวัน/รายสัปดาห์/รายเดือน ผ่าน WP-Cron, เลือกส่งขึ้น Storage ได้, จำกัดจำนวนไฟล์เก่าที่เก็บไว้)
 - **Find & Replace** — แทนที่ข้อความในฐานข้อมูลตอน export ได้หลายคู่
 - **ตัวเลือกขั้นสูง** — เข้ารหัสด้วยรหัสผ่าน, บีบอัด GZip (ต่อไฟล์ระหว่างแพ็ก ไม่ใช่ทั้งก้อนตอนจบ), ไม่รวมฐานข้อมูล/ตารางที่เลือก/คอมเมนต์สแปม/revision, ไม่รวมสื่อ/ธีม/ปลั๊กอิน (ทั้งหมดหรือเฉพาะที่ไม่ได้ใช้งาน)/ไฟล์แคช (เลือกเองเสมอ ไม่ exclude อัตโนมัติ)/ไฟล์ที่เลือกเอง
-- **แสดงความคืบหน้าแบบละเอียด** — เปอร์เซ็นต์ (คำนวณจากจำนวนไฟล์จริงในแพ็กเกจ ไม่ใช่สูตรเดา), เวลาที่ใช้ไปแล้ว, และเวลาที่เหลือโดยประมาณ ระหว่าง export/import/กู้คืน (รวมช่วงอัปโหลดไฟล์ตอน import ด้วย)
+- **แสดงความคืบหน้าแบบละเอียด** — progress bar เดียวที่แสดงชื่อขั้นตอนปัจจุบัน (เช่น "เตรียมข้อมูล" → "ส่งออกฐานข้อมูล" → "แพ็กไฟล์" → "สร้างไฟล์สำเร็จ") พร้อม % เฉพาะขั้นนั้น (คำนวณจากจำนวนไฟล์/แถวจริง ไม่ใช่สูตรเดา) — พอขั้นไหนเต็ม 100% บาร์รีเซ็ตแล้วขึ้นขั้นถัดไปให้อัตโนมัติ มี shimmer animation วิ่งผ่านระหว่างทำงานให้เห็นว่าระบบยังทำงานอยู่แม้ % จะขยับช้า รวมช่วงอัปโหลดไฟล์ตอน import เป็นขั้นแรกด้วย พร้อมเวลาที่ใช้ไปแล้วและเวลาที่เหลือโดยประมาณ และคำเตือนไม่ให้ปิด/ย้ายหน้าระหว่างทำงาน
 - **รันต่อเนื่องแม้ปิดแท็บ** — งาน export/import ขับเคลื่อนด้วย WP-Cron เป็นตัวสำรอง นอกเหนือจากการ poll ของเบราว์เซอร์ — สลับหน้าหรือปิดแท็บระหว่างทำงานได้ งานจะยังเดินต่อในเบื้องหลัง (ต้องมีการเข้าเว็บ/ทราฟฟิกใดๆ เพื่อกระตุ้น WP-Cron ตามปกติของ WordPress) การ poll ยังทำงานต่อได้แม้ session หลุดกลางทาง (ดูหัวข้อความปลอดภัย)
 - **WP-CLI** — `wp isx export` / `wp isx import <file>` / `wp isx providers` รันบนเซิร์ฟเวอร์ตรงๆ ไม่ต้องเปิดเบราว์เซอร์
 
 ---
 
 ## การติดตั้ง
+
+### ดาวน์โหลด zip จาก GitLab
+
+1. เข้า `https://gitlab.insightx.dev/plugin-wordpress/insightx-backup`
+2. เมนูซ้าย **Deploy → Releases** — เลือกเวอร์ชันล่าสุด แล้วดาวน์โหลดไฟล์ `insightx-backup.zip` จากส่วน "assets" (ไฟล์นี้ build จาก CI แล้ว ไม่มี `.git`/`.gitlab-ci.yml` ติดมา พร้อมอัปโหลดได้เลย)
+   - ถ้า repo ยังไม่มี release เลย (ยังไม่เคย push tag) ให้ไปที่ **Code → Tags** แทน แล้วกดดาวน์โหลด "Source code (zip)" ของ tag ที่ต้องการแทนได้ — ได้ผลเหมือนกัน
+3. ไปที่เว็บ WordPress ปลายทาง → **Plugins → Add New → Upload Plugin**
+4. เลือกไฟล์ zip ที่ดาวน์โหลดมา → กด **Install Now**
+5. ถ้าเว็บนั้นเคยลงปลั๊กอินตัวนี้เวอร์ชันเก่ามาก่อน ให้ **Deactivate + Delete ตัวเก่าก่อน** แล้วค่อยอัปโหลดใหม่ (อย่าทับ) — กันปัญหา cache JS/CSS เก่าค้าง (ดูหัวข้อ "การอัปเดตปลั๊กอิน")
+6. กด **Activate Plugin**
+
+### ติดตั้งตรงจากโฟลเดอร์ (dev/local)
 
 1. วางโฟลเดอร์ `insightx-backup` ไว้ที่ `wp-content/plugins/`
 2. เปิดใช้งานปลั๊กอินจากเมนู **Plugins**
@@ -50,7 +62,7 @@
 3. **เลือกปลายทาง** — ถ้าจะส่งขึ้น Storage ให้เลือก provider จากการ์ด (ต้องตั้งค่าที่เมนู "การเชื่อมต่อ" ก่อน — provider ที่ยังไม่ตั้งค่าจะแสดงจางลง)
 4. กด **"ส่งออกเป็นไฟล์"** เพื่อดาวน์โหลด หรือ **"ส่งออกไปยัง Storage"** เพื่ออัปขึ้น bucket โดยตรง
    - ไฟล์ที่ใหญ่กว่า 80MB จะอัปโหลดขึ้น Storage แบบ multipart อัตโนมัติ (แบ่งเป็นชิ้นละ 20MB) กันโดน reverse proxy หน้า bucket (เช่น Cloudflare) ตัดด้วย `413 Payload Too Large`
-5. ไฟล์ที่ export เสร็จจะถูกเก็บสำเนาไว้ในเมนู "ข้อมูลสำรอง" เสมอ ไม่ว่าจะเลือกปลายทางไหน
+5. ไฟล์ที่ export เสร็จจะถูกเก็บสำเนาไว้ในเมนู "ข้อมูลสำรอง" เสมอ ไม่ว่าจะเลือกปลายทางไหน — ตั้งชื่อไฟล์รูปแบบ `{โดเมนเว็บ}-{วันเดือนปี}-{รหัสสุ่ม 6 ตัว}.wpress` เช่น `skymaster.co.th-23072026-a1b2c3.wpress`
 
 ### นำเข้าเว็บไซต์ (เมนู "นำเข้า")
 
@@ -110,11 +122,30 @@ wp isx providers
 
 ---
 
+## การอัปเดตปลั๊กอิน
+
+เช็คเวอร์ชันใหม่อัตโนมัติจาก GitLab (self-hosted, `gitlab.insightx.dev/plugin-wordpress/insightx-backup`) ผ่าน [plugin-update-checker](https://github.com/YahnisElsts/plugin-update-checker) (vendored ไว้ใน `libs/`) — ขึ้น "There is a new version available... update now" ในหน้า Plugins แบบเดียวกับปลั๊กอินที่อัปเดตผ่าน WordPress.org
+
+**วิธี release เวอร์ชันใหม่:**
+1. อัปเดตเลข `Version:` ใน `insightx-backup.php` (header + `ISX_VERSION`)
+2. Commit + push แล้ว `git tag v0.1.x && git push origin v0.1.x`
+3. `.gitlab-ci.yml` จะรันอัตโนมัติตอน push tag — build zip ด้วย `git archive` (จาก tracked tree ของ tag นั้น, ไม่มี `.git`/ไฟล์ dev-only ติดไปเพราะ `.gitattributes` สั่ง `export-ignore`), อัปโหลดขึ้น GitLab generic package registry แล้วสร้าง GitLab Release แนบ zip เป็น release asset
+4. เว็บที่ลงปลั๊กอินไว้จะเห็นอัปเดตใหม่ภายในรอบเช็คถัดไป (หรือกด "Check again" ในหน้า Plugins)
+
+Repo เป็น public ไม่ต้องตั้งค่า access token ฝั่ง WordPress — ถ้าเปลี่ยนเป็น private ทีหลัง ต้องเพิ่ม token ตอน `new ISX_GitLabApi(...)` ใน `insightx-backup.php`
+
+---
+
 ## โครงสร้างปลั๊กอิน
 
 ```
 insightx-backup.php           entry point, define constants, load classes, isx_resolve_storage_path(),
-                               ลงทะเบียน cron (isx_cron_step, isx_scheduled_backup) + WP-CLI (cli_init)
+                               ลงทะเบียน cron (isx_cron_step, isx_scheduled_backup) + WP-CLI (cli_init) +
+                               GitLab update checker (plugin-update-checker)
+.gitlab-ci.yml                 CI: build zip จาก git tag แล้วสร้าง GitLab Release พร้อม release asset
+.gitattributes                 export-ignore ไฟล์ dev-only (.gitlab-ci.yml เอง) ตอน git archive
+libs/
+  plugin-update-checker/       เช็ค/แจ้งเตือนเวอร์ชันใหม่จาก GitLab release (vendored, YahnisElsts)
 includes/
   class-isx-admin.php          เมนู wp-admin + AJAX router ทั้งหมด + run_job_to_completion() (ใช้ร่วมกับ CLI/cron)
   class-isx-cli.php            WP-CLI command (wp isx export/import/providers) — โหลดเฉพาะตอน WP_CLI active

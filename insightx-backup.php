@@ -25,6 +25,27 @@ define( 'ISX_FILE', __FILE__ );
 define( 'ISX_PATH', plugin_dir_path( __FILE__ ) );
 define( 'ISX_URL', plugin_dir_url( __FILE__ ) );
 
+// === GitLab Plugin Update Checker ===
+// Self-hosted GitLab (not gitlab.com), so PucFactory::buildUpdateChecker()'s
+// URL-based auto-detection doesn't apply (it only recognizes the exact host
+// "gitlab.com" and only accepts a URL string, not a pre-built API object) —
+// instantiate the versioned VCS classes directly instead, same as PUC's own
+// docs recommend for self-hosted/enterprise VCS. Public repo, no access
+// token needed. CI (.gitlab-ci.yml) attaches a built zip to each tag's
+// GitLab Release; enableReleaseAssets() makes updates install that zip
+// instead of GitLab's raw (un-built) source archive for the tag.
+require_once ISX_PATH . 'libs/plugin-update-checker/plugin-update-checker.php';
+
+use YahnisElsts\PluginUpdateChecker\v5p6\Vcs\GitLabApi as ISX_GitLabApi;
+use YahnisElsts\PluginUpdateChecker\v5p6\Vcs\PluginUpdateChecker as ISX_VcsPluginUpdateChecker;
+
+$isx_update_checker = new ISX_VcsPluginUpdateChecker(
+	new ISX_GitLabApi( 'https://gitlab.insightx.dev/plugin-wordpress/insightx-backup' ),
+	__FILE__,
+	'insightx-backup'
+);
+$isx_update_checker->getVcsApi()->enableReleaseAssets();
+
 /**
  * Where in-progress job data and finished local backups live. Defaults to the
  * plugin's own storage/ dir, but an admin can point it elsewhere from Settings
