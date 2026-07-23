@@ -424,8 +424,12 @@
 	 */
 	function formatDuration(seconds) {
 		seconds = Math.max(0, Math.round(seconds || 0));
-		var m = Math.floor(seconds / 60);
+		var h = Math.floor(seconds / 3600);
+		var m = Math.floor((seconds % 3600) / 60);
 		var s = seconds % 60;
+		if (h > 0) {
+			return h + ' ชั่วโมง ' + m + ' นาที';
+		}
 		return m > 0 ? m + ' นาที ' + s + ' วินาที' : s + ' วินาที';
 	}
 
