@@ -42,7 +42,7 @@
 			event.preventDefault();
 			var slug = $provider.val();
 			if (!isConfigured(slug)) {
-				window.alert('ยังไม่ได้ตั้งค่า provider นี้ — ไปที่เมนู "ตั้งค่า Storage" ก่อน');
+				window.alert('ยังไม่ได้ตั้งค่า provider นี้ — ไปที่เมนู "การเชื่อมต่อ" ก่อน');
 				return;
 			}
 			$flag.val(slug);
@@ -194,7 +194,7 @@
 			closeMenu();
 			var slug = $(this).data('provider');
 			if (!isConfigured(slug)) {
-				window.alert('ยังไม่ได้ตั้งค่า provider นี้ — ไปที่เมนู "ตั้งค่า Storage" ก่อน');
+				window.alert('ยังไม่ได้ตั้งค่า provider นี้ — ไปที่เมนู "การเชื่อมต่อ" ก่อน');
 				return;
 			}
 			loadBackups(slug);
@@ -315,7 +315,7 @@
 						}
 						var message = (res.data && res.data.message) || 'บันทึกแล้ว';
 						if (res.data && res.data.connected) {
-							$status.text('✓ ' + message).addClass('is-ok');
+							$status.text(message).addClass('is-ok');
 						} else {
 							$status.text(message).addClass('is-error');
 						}
@@ -326,6 +326,115 @@
 				.fail(function () {
 					refreshSaveState($block);
 					$status.text('บันทึกไม่สำเร็จ').addClass('is-error');
+				});
+		});
+	})();
+
+	/* ================= Storage settings page: local backups dir ================= */
+
+	(function storageDirBlock() {
+		var $button = $('#isx-storage-dir-save');
+		if (!$button.length) {
+			return;
+		}
+
+		$button.on('click', function (event) {
+			event.preventDefault();
+
+			var $input = $('#isx-storage-dir-input');
+			var $status = $('#isx-storage-dir-status');
+			var path = $.trim($input.val());
+
+			$button.prop('disabled', true);
+			$status.text('กำลังบันทึก...').removeClass('is-ok is-error');
+
+			ISX.post('isx_storage_dir_save', { path: path })
+				.done(function (res) {
+					$button.prop('disabled', false);
+					if (res && res.success) {
+						$input.val(res.data.path);
+						$status.text(res.data.message).removeClass('is-error').addClass('is-ok');
+					} else {
+						$status.text((res && res.data && res.data.message) || 'บันทึกไม่สำเร็จ').removeClass('is-ok').addClass('is-error');
+					}
+				})
+				.fail(function () {
+					$button.prop('disabled', false);
+					$status.text('บันทึกไม่สำเร็จ').removeClass('is-ok').addClass('is-error');
+				});
+		});
+	})();
+
+	/* ================= Storage settings page: scheduled backup ================= */
+
+	(function scheduleBlock() {
+		var $button = $('#isx-schedule-save');
+		if (!$button.length) {
+			return;
+		}
+
+		// Icon dropdown for "ความถี่" / "ส่งขึ้น Storage" — reuses the same
+		// open/close + menu markup pattern as the import page's "นำเข้าจาก"
+		// picker instead of a plain <select> (native <option> can't render
+		// an icon).
+		function wireIconPicker(prefix) {
+			var $picker = $('#' + prefix + '-picker');
+			if (!$picker.length) {
+				return;
+			}
+			var $toggle = $('#' + prefix + '-toggle');
+			var $hidden = $('#' + prefix);
+			var $icon = $('#' + prefix + '-icon');
+			var $label = $('#' + prefix + '-label');
+
+			$toggle.on('click', function (event) {
+				event.preventDefault();
+				event.stopPropagation();
+				$picker.toggleClass('is-open');
+			});
+			$(document).on('click', function (event) {
+				if (!$(event.target).closest($picker).length) {
+					$picker.removeClass('is-open');
+				}
+			});
+			$picker.on('click', '.isx-import-from-menu a', function (event) {
+				event.preventDefault();
+				var $item = $(this);
+				$hidden.val($item.data('value') || '');
+				$label.text($item.data('label') || '');
+				$icon.html($item.find('.isx-card-icon').html());
+				$picker.removeClass('is-open');
+			});
+		}
+		wireIconPicker('isx-schedule-to-storage');
+		wireIconPicker('isx-schedule-interval');
+
+		$button.on('click', function (event) {
+			event.preventDefault();
+
+			var $status = $('#isx-schedule-status');
+			var data = {
+				enabled: $('#isx-schedule-enabled').is(':checked') ? 1 : 0,
+				interval: $('#isx-schedule-interval').val(),
+				to_storage: $('#isx-schedule-to-storage').val(),
+				retain: $('#isx-schedule-retain').val()
+			};
+
+			$button.prop('disabled', true);
+			$status.text('กำลังบันทึก...').removeClass('is-ok is-error');
+
+			ISX.post('isx_schedule_save', data)
+				.done(function (res) {
+					$button.prop('disabled', false);
+					if (res && res.success) {
+						$status.text(res.data.message).removeClass('is-error').addClass('is-ok');
+					} else {
+						$status.text((res && res.data && res.data.message) || 'บันทึกไม่สำเร็จ').removeClass('is-ok').addClass('is-error');
+					}
+				})
+				.fail(function () {
+					$button.prop('disabled', false);
+					$status.text('บันทึกไม่สำเร็จ').removeClass('is-ok').addClass('is-error');
 				});
 		});
 	})();
@@ -448,24 +557,47 @@
 			return $('<div>').text(text == null ? '' : String(text)).html();
 		}
 
+		// Server sends raw byte counts now (not pre-formatted "28.01 MB"
+		// strings) specifically so folder totals below can be summed.
+		function formatBytes(bytes) {
+			bytes = Number(bytes) || 0;
+			if (bytes < 1024) {
+				return bytes + ' B';
+			}
+			var units = ['KB', 'MB', 'GB', 'TB'];
+			var value = bytes;
+			var i = -1;
+			do {
+				value /= 1024;
+				i++;
+			} while (value >= 1024 && i < units.length - 1);
+			return value.toFixed(2) + ' ' + units[i];
+		}
+
 		// Flat "full/path/to/file.ext" + size entries from the server → a
 		// folder/file tree so the modal reads like a file explorer instead of
-		// a wall of repeated path prefixes.
+		// a wall of repeated path prefixes. Each dir node accumulates the sum
+		// of every file size beneath it, so the tree can show a folder total
+		// instead of leaving folders blank.
 		function buildContentTree(entries) {
-			var root = { type: 'dir', children: {} };
+			var root = { type: 'dir', size: 0, children: {} };
 			entries.forEach(function (entry) {
 				var parts = entry.path.split('/').filter(function (p) {
 					return p !== '';
 				});
 				var node = root;
+				root.size += entry.size;
 				parts.forEach(function (part, i) {
 					var isFile = i === parts.length - 1;
 					if (!node.children[part]) {
 						node.children[part] = isFile
 							? { type: 'file', size: entry.size }
-							: { type: 'dir', children: {} };
+							: { type: 'dir', size: 0, children: {} };
 					}
 					node = node.children[part];
+					if (!isFile) {
+						node.size += entry.size;
+					}
 				});
 			});
 			return root;
@@ -488,6 +620,7 @@
 					html +=
 						'<li class="isx-tree-dir"><details open><summary><span class="dashicons dashicons-category"></span>' +
 						escapeHtmlLocal(name) +
+						'<span class="isx-content-size">' + formatBytes(child.size) + '</span>' +
 						'</summary><ul class="isx-tree-list">' +
 						renderContentTree(child) +
 						'</ul></details></li>';
@@ -496,7 +629,7 @@
 						'<li class="isx-tree-file"><span class="dashicons dashicons-media-default"></span><span class="isx-content-path">' +
 						escapeHtmlLocal(name) +
 						'</span><span class="isx-content-size">' +
-						escapeHtmlLocal(child.size) +
+						formatBytes(child.size) +
 						'</span></li>';
 				}
 			});
@@ -530,7 +663,9 @@
 						return;
 					}
 					var tree = buildContentTree(entries);
-					var html = '<ul class="isx-tree-list isx-tree-root">' + renderContentTree(tree) + '</ul>';
+					var html =
+						'<p class="isx-content-total">' + escapeHtmlLocal('รวมทั้งหมด: ' + formatBytes(tree.size)) + '</p>' +
+						'<ul class="isx-tree-list isx-tree-root">' + renderContentTree(tree) + '</ul>';
 					$('#isx-content-body').html(html);
 				})
 				.fail(function () {

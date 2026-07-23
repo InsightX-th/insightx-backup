@@ -22,6 +22,16 @@ class ISX_Admin {
 		add_action( 'wp_ajax_isx_import_create', array( __CLASS__, 'ajax_import_create' ) );
 		add_action( 'wp_ajax_isx_import_chunk', array( __CLASS__, 'ajax_import_chunk' ) );
 		add_action( 'wp_ajax_isx_run', array( __CLASS__, 'ajax_run' ) );
+		// A restore/import overwrites wp_users/wp_usermeta mid-job, which
+		// invalidates the browser's current login session — WP's admin-ajax.php
+		// then routes the *next* poll to wp_ajax_nopriv_* instead of wp_ajax_*
+		// before our code ever runs. ajax_run() already authenticates with the
+		// job's own on-disk secret (not the WP session) specifically for this
+		// reason, but that only helps once the request reaches it, so the
+		// nopriv hook needs to exist too — same pattern All-in-One WP Migration
+		// uses for its own wp_ajax_nopriv_ai1wm_import / ai1wm_status, guarded
+		// by their own per-job secret key the same way ajax_run() is here.
+		add_action( 'wp_ajax_nopriv_isx_run', array( __CLASS__, 'ajax_run' ) );
 		add_action( 'wp_ajax_isx_import_decrypt', array( __CLASS__, 'ajax_import_decrypt' ) );
 		add_action( 'wp_ajax_isx_list_tables', array( __CLASS__, 'ajax_list_tables' ) );
 		add_action( 'wp_ajax_isx_download', array( __CLASS__, 'ajax_download' ) );
@@ -32,8 +42,29 @@ class ISX_Admin {
 		add_action( 'wp_ajax_isx_backups_list_content', array( __CLASS__, 'ajax_backups_list_content' ) );
 
 		add_action( 'wp_ajax_isx_storage_save', array( __CLASS__, 'ajax_storage_save' ) );
+		add_action( 'wp_ajax_isx_storage_dir_save', array( __CLASS__, 'ajax_storage_dir_save' ) );
 		add_action( 'wp_ajax_isx_storage_import_list', array( __CLASS__, 'ajax_storage_import_list' ) );
 		add_action( 'wp_ajax_isx_storage_import_prepare', array( __CLASS__, 'ajax_storage_import_prepare' ) );
+
+		add_action( 'wp_ajax_isx_schedule_save', array( __CLASS__, 'ajax_schedule_save' ) );
+		add_filter( 'cron_schedules', array( __CLASS__, 'cron_schedules' ) ); // phpcs:ignore WordPress.WP.CronInterval
+	}
+
+	/**
+	 * WP only ships hourly/twicedaily/daily/weekly out of the box — add a
+	 * monthly interval for the scheduled-backup option.
+	 *
+	 * @param array $schedules
+	 * @return array
+	 */
+	public static function cron_schedules( $schedules ) {
+		if ( ! isset( $schedules['monthly'] ) ) {
+			$schedules['monthly'] = array(
+				'interval' => 30 * DAY_IN_SECONDS,
+				'display'  => __( 'รายเดือน', 'insightx-backup' ),
+			);
+		}
+		return $schedules;
 	}
 
 	public static function menu() {
@@ -49,6 +80,7 @@ class ISX_Admin {
 		add_submenu_page( 'isx_export', __( 'ส่งออก', 'insightx-backup' ), __( 'ส่งออก', 'insightx-backup' ), 'export', 'isx_export', array( __CLASS__, 'page_export' ) );
 		add_submenu_page( 'isx_export', __( 'นำเข้า', 'insightx-backup' ), __( 'นำเข้า', 'insightx-backup' ), 'import', 'isx_import', array( __CLASS__, 'page_import' ) );
 		add_submenu_page( 'isx_export', __( 'ข้อมูลสำรอง', 'insightx-backup' ), __( 'ข้อมูลสำรอง', 'insightx-backup' ), 'export', 'isx_backups', array( __CLASS__, 'page_backups' ) );
+		add_submenu_page( 'isx_export', __( 'การเชื่อมต่อ', 'insightx-backup' ), __( 'การเชื่อมต่อ', 'insightx-backup' ), 'export', 'isx_connections', array( __CLASS__, 'page_connections' ) );
 		add_submenu_page( 'isx_export', __( 'ตั้งค่า Storage', 'insightx-backup' ), __( 'ตั้งค่า Storage', 'insightx-backup' ), 'export', 'isx_settings', array( __CLASS__, 'page_settings' ) );
 	}
 
@@ -56,11 +88,20 @@ class ISX_Admin {
 		$is_isx_page = strpos( $hook, 'isx_export' ) !== false
 			|| strpos( $hook, 'isx_import' ) !== false
 			|| strpos( $hook, 'isx_backups' ) !== false
+			|| strpos( $hook, 'isx_connections' ) !== false
 			|| strpos( $hook, 'isx_settings' ) !== false;
 
 		if ( ! $is_isx_page ) {
 			return;
 		}
+
+		// An import/restore overwrites wp_users & wp_usermeta mid-request, which
+		// invalidates the current admin's session. WP's own Heartbeat API keeps
+		// polling in the background on every admin page using that same session,
+		// so its next tick fails auth and pops a "Your session has expired" modal
+		// right over our own progress UI. Nothing to fix there — just don't let
+		// Heartbeat run while an isx admin screen is open.
+		wp_deregister_script( 'heartbeat' );
 
 		wp_enqueue_style( 'isx-admin', ISX_URL . 'assets/css/isx-admin.css', array(), ISX_VERSION );
 		wp_enqueue_script( 'isx-admin', ISX_URL . 'assets/js/isx-admin.js', array( 'jquery' ), ISX_VERSION, true );
@@ -96,6 +137,10 @@ class ISX_Admin {
 
 	public static function page_backups() {
 		require ISX_PATH . 'views/backups.php';
+	}
+
+	public static function page_connections() {
+		require ISX_PATH . 'views/connections.php';
 	}
 
 	public static function page_settings() {
@@ -331,6 +376,29 @@ class ISX_Admin {
 	}
 
 	/**
+	 * Drive a job to completion in the current PHP process instead of via
+	 * browser polling — used by WP-CLI (ISX_CLI_Command) and the scheduled
+	 * backup cron callback (run_scheduled_backup()), neither of which has a
+	 * JS poll loop to lean on. Just runs run_step() in a tight loop; still
+	 * goes through the same per-job lock, so it's safe to run alongside a
+	 * browser tab or WP-Cron tick that happens to be working the same job.
+	 *
+	 * @param ISX_Job       $job
+	 * @param callable|null $on_tick Optional callback invoked with each step's result.
+	 * @return array The final ("done") result.
+	 */
+	public static function run_job_to_completion( ISX_Job $job, $on_tick = null ) {
+		do {
+			$result = self::run_step( $job );
+			if ( is_callable( $on_tick ) ) {
+				$on_tick( $result );
+			}
+		} while ( empty( $result['done'] ) );
+
+		return $result;
+	}
+
+	/**
 	 * Schedule (or re-schedule) the next background cron tick for a job,
 	 * de-duplicating so a job never has two pending ticks at once.
 	 *
@@ -496,12 +564,12 @@ class ISX_Admin {
 			$read_path,
 			function ( $header ) use ( &$entries ) {
 				$path_in_archive = isset( $header['p'] ) ? $header['p'] : '';
-				if ( $path_in_archive === 'database.isxdb' || $path_in_archive === 'manifest.json' ) {
-					return;
-				}
+				// "u" (original size) is only present on compressed entries —
+				// show the real content size, not the smaller on-disk one.
+				$size = isset( $header['u'] ) ? $header['u'] : ( isset( $header['s'] ) ? $header['s'] : 0 );
 				$entries[] = array(
 					'path' => $path_in_archive,
-					'size' => isset( $header['s'] ) ? (int) $header['s'] : 0,
+					'size' => (int) $size,
 				);
 			}
 		);
@@ -521,11 +589,14 @@ class ISX_Admin {
 			}
 		);
 
+		// Raw byte counts, not pre-formatted strings — the JS builds a
+		// folder/file tree from these entries and needs to sum bytes per
+		// folder (a "28.01 MB" string can't be added to "3.17 KB").
 		$out = array();
 		foreach ( $entries as $entry ) {
 			$out[] = array(
 				'path' => $entry['path'],
-				'size' => size_format( $entry['size'], 2 ),
+				'size' => $entry['size'],
 			);
 		}
 
@@ -533,6 +604,132 @@ class ISX_Admin {
 	}
 
 	/* ---------------- Storage settings AJAX ---------------- */
+
+	/**
+	 * Change where local job/backup data lives (see isx_resolve_storage_path()
+	 * in the main plugin file). Only saves the pointer — an admin who already
+	 * has backups sitting in the old location is responsible for moving those
+	 * files over themselves, same as this plugin's own directory move for
+	 * All-in-One WP Migration did manually.
+	 */
+	public static function ajax_storage_dir_save() {
+		self::guard( 'export' );
+
+		$path = isset( $_POST['path'] ) ? sanitize_text_field( wp_unslash( $_POST['path'] ) ) : '';
+		$path = untrailingslashit( trim( $path ) );
+
+		if ( $path === '' ) {
+			delete_option( 'isx_storage_path' );
+			wp_send_json_success(
+				array(
+					'message' => 'รีเซ็ตกลับค่าเริ่มต้นแล้ว',
+					'path'    => untrailingslashit( ISX_PATH . 'storage' ),
+				)
+			);
+		}
+
+		$parent = dirname( $path );
+		if ( ! is_dir( $parent ) || ! is_writable( $parent ) ) {
+			wp_send_json_error( array( 'message' => 'ไม่พบโฟลเดอร์ต้นทาง หรือเขียนไม่ได้: ' . $parent ) );
+		}
+
+		if ( ! is_dir( $path ) && ! wp_mkdir_p( $path ) ) {
+			wp_send_json_error( array( 'message' => 'สร้างโฟลเดอร์ไม่สำเร็จ' ) );
+		}
+		if ( ! is_writable( $path ) ) {
+			wp_send_json_error( array( 'message' => 'โฟลเดอร์นี้เขียนไม่ได้' ) );
+		}
+
+		// Same protection files the activation hook creates for the default dir.
+		$htaccess = $path . '/.htaccess';
+		if ( ! file_exists( $htaccess ) ) {
+			file_put_contents( $htaccess, "Deny from all\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		}
+		$index = $path . '/index.php';
+		if ( ! file_exists( $index ) ) {
+			file_put_contents( $index, "<?php // Silence is golden.\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		}
+
+		update_option( 'isx_storage_path', $path );
+
+		wp_send_json_success(
+			array(
+				'message' => 'บันทึกแล้ว — มีผลตั้งแต่โหลดหน้านี้ใหม่ (backup เก่าที่โฟลเดอร์เดิมต้องย้ายเอง)',
+				'path'    => $path,
+			)
+		);
+	}
+
+	/**
+	 * Save the automatic-backup schedule and (re)register its cron event.
+	 * The event itself is registered unconditionally in the main plugin file
+	 * (same reasoning as isx_cron_step — it must fire from wp-cron.php, which
+	 * isn't is_admin()) and reads this option back when it runs.
+	 */
+	public static function ajax_schedule_save() {
+		self::guard( 'export' );
+
+		$enabled  = ! empty( $_POST['enabled'] ) && $_POST['enabled'] !== '0'; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$interval = isset( $_POST['interval'] ) ? sanitize_key( wp_unslash( $_POST['interval'] ) ) : 'weekly';
+		if ( ! in_array( $interval, array( 'daily', 'weekly', 'monthly' ), true ) ) {
+			$interval = 'weekly';
+		}
+		$to_storage = isset( $_POST['to_storage'] ) ? sanitize_key( wp_unslash( $_POST['to_storage'] ) ) : '';
+		if ( $to_storage !== '' && ! isset( ISX_Destinations::providers()[ $to_storage ] ) ) {
+			$to_storage = '';
+		}
+		$retain = isset( $_POST['retain'] ) ? max( 1, (int) $_POST['retain'] ) : 5;
+
+		$schedule = array(
+			'enabled'    => $enabled,
+			'interval'   => $interval,
+			'to_storage' => $to_storage,
+			'retain'     => $retain,
+		);
+		update_option( 'isx_schedule', $schedule );
+
+		wp_clear_scheduled_hook( 'isx_scheduled_backup' );
+		if ( $enabled ) {
+			wp_schedule_event( time() + HOUR_IN_SECONDS, $interval, 'isx_scheduled_backup' );
+		}
+
+		wp_send_json_success(
+			array(
+				'message' => $enabled ? 'บันทึกแล้ว — เปิดใช้งาน backup อัตโนมัติ' : 'บันทึกแล้ว — ปิด backup อัตโนมัติ',
+			)
+		);
+	}
+
+	/**
+	 * Cron callback for the scheduled-backup option (see ajax_schedule_save()).
+	 * Runs a full export synchronously in this one PHP process — there's no
+	 * browser tab to drive it via AJAX polling here — then trims local backups
+	 * down to the configured retain count.
+	 *
+	 * @return void
+	 */
+	public static function run_scheduled_backup() {
+		$schedule = (array) get_option( 'isx_schedule', array() );
+		if ( empty( $schedule['enabled'] ) ) {
+			return;
+		}
+
+		$job = ISX_Job::create( 'export' );
+		$job->set( 'options', array() );
+		$to_storage = isset( $schedule['to_storage'] ) ? $schedule['to_storage'] : '';
+		if ( $to_storage !== '' && ISX_Destinations::is_configured( $to_storage ) ) {
+			$job->set( 'to_storage', $to_storage );
+		}
+		$job->save();
+
+		self::run_job_to_completion( $job );
+
+		$retain = isset( $schedule['retain'] ) ? max( 1, (int) $schedule['retain'] ) : 5;
+		$all    = ISX_Backups::all(); // Newest-first already.
+		foreach ( array_slice( $all, $retain ) as $old ) {
+			ISX_Backups::delete( $old['name'] );
+		}
+	}
 
 	public static function ajax_storage_save() {
 		self::guard( 'export' );

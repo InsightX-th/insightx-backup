@@ -228,11 +228,16 @@
 
 	/**
 	 * Upload a File object as chunks to an already-created import job.
+	 * A chunk that fails (network hiccup or a transient server error) is
+	 * retried a few times with a short backoff before giving up for good —
+	 * previously any single failed chunk silently stalled the upload forever.
 	 */
-	function uploadChunks(job, file, onProgress, done) {
+	function uploadChunks(job, file, onProgress, done, onFail) {
 		var size = isx.chunk_size;
 		var total = Math.max(1, Math.ceil(file.size / size));
 		var index = 0;
+		var attempt = 0;
+		var MAX_ATTEMPTS = 5;
 
 		function send() {
 			var start = index * size;
@@ -252,12 +257,13 @@
 			})
 				.done(function (res) {
 					if (!res.success) {
-						onProgress({ message: (res.data && res.data.message) || 'อัปโหลดล้มเหลว' });
+						retryOrFail((res.data && res.data.message) || 'อัปโหลดล้มเหลว');
 						return;
 					}
+					attempt = 0;
 					index++;
 					var pct = Math.round((index / total) * 100);
-					onProgress({ message: 'อัปโหลด ' + pct + '%', percent: pct });
+					onProgress({ message: 'กำลังอัปโหลด...', percent: pct });
 					if (index < total) {
 						send();
 					} else {
@@ -265,9 +271,23 @@
 					}
 				})
 				.fail(function () {
-					onProgress({ message: 'อัปโหลดล้มเหลว' });
+					retryOrFail('อัปโหลดล้มเหลว');
 				});
 		}
+
+		function retryOrFail(message) {
+			attempt++;
+			if (attempt < MAX_ATTEMPTS) {
+				onProgress({ message: message + ' — ลองใหม่ (' + attempt + '/' + MAX_ATTEMPTS + ')...' });
+				setTimeout(send, 1000 * attempt);
+				return;
+			}
+			onProgress({ message: message });
+			if (typeof onFail === 'function') {
+				onFail(message);
+			}
+		}
+
 		send();
 	}
 
@@ -372,6 +392,8 @@
 		$('#isx-import-progress').show();
 		var $box = $('#isx-import-progress');
 		$box.find('.isx-bar-fill').css('width', '0%');
+		$box.find('.isx-percent').text('0%');
+		$box.find('.isx-eta').text('');
 		var status = $box.find('.isx-status');
 
 		post('isx_import_create').done(function (res) {
@@ -381,6 +403,7 @@
 			}
 			var job = res.data.job;
 			var secret = res.data.secret;
+			var uploadStart = Date.now();
 			uploadChunks(
 				job,
 				file,
@@ -388,6 +411,13 @@
 					if (typeof p.percent === 'number') {
 						$box.find('.isx-bar-fill').css('width', p.percent + '%');
 						$box.find('.isx-percent').text(p.percent + '%');
+						// Server doesn't drive this phase (it's a plain chunk upload),
+						// so estimate remaining time client-side from the pace so far.
+						if (p.percent > 0) {
+							var elapsed = (Date.now() - uploadStart) / 1000;
+							var eta = elapsed * (100 - p.percent) / p.percent;
+							$box.find('.isx-eta').text('เหลืออีกประมาณ ' + formatDuration(eta));
+						}
 					}
 					status.text(p.message || '');
 				},
@@ -409,6 +439,11 @@
 							$('#isx-import-done').show();
 						}
 					);
+				},
+				function (message) {
+					$('#isx-import-progress').hide();
+					window.alert(message || 'อัปโหลดล้มเหลว กรุณาลองใหม่');
+					$('#isx-import-idle').show();
 				}
 			);
 		});

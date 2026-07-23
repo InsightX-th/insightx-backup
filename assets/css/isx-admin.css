@@ -346,6 +346,10 @@
   gap: 16px 22px;
 }
 
+.isx-schedule-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .isx-field {
   display: flex;
   flex-direction: column;
@@ -403,6 +407,16 @@
   display: flex;
   align-items: center;
   gap: 9px;
+  margin: 14px 0 20px;
+  padding: 10px 0;
+  border-radius: var(--isx-radius-sm);
+  width: fit-content;
+}
+
+.isx-field-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
 }
 
 .isx-field-checkbox span {
@@ -427,6 +441,7 @@
 .isx-save-status.is-error {
   display: inline-flex;
   align-items: center;
+  gap: 7px;
   padding: 5px 12px;
   border-radius: 999px;
   border: 1px solid transparent;
@@ -438,6 +453,15 @@
   color: var(--isx-ok);
   background: var(--isx-ok-soft);
   border-color: var(--isx-ok-line);
+}
+
+.isx-save-status.is-ok::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--isx-ok);
 }
 
 .isx-save-status.is-error {
@@ -806,13 +830,42 @@ table.isx-backups-table tbody tr:hover td {
 }
 
 .isx-import-from-menu a {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 10px 12px;
   border-radius: 8px;
   color: var(--isx-ink);
   font-weight: 600;
   font-size: 13px;
   text-decoration: none;
+}
+
+.isx-select-icon-current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.isx-select-icon-current .isx-card-icon,
+.isx-import-from-menu a .isx-card-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.isx-select-icon-current .isx-card-icon .dashicons,
+.isx-import-from-menu a .isx-card-icon .dashicons {
+  font-size: 20px;
+  width: 20px;
+  height: 20px;
+  color: var(--isx-muted);
+}
+
+.isx-select-icon-current span:not(.isx-card-icon) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .isx-import-from-menu a:hover {
