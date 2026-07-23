@@ -141,6 +141,7 @@ storage/                       job scratch data + backups/ (gitignored, สร�
 
 - โฟลเดอร์ `storage/` ถูกกัน HTTP access โดยตรงด้วย `.htaccess` (`Deny from all`) + `index.php` ว่างเปล่า
 - แต่ละ export/import job มี secret แยกต่อ job เก็บบนดิสก์ ใช้ยืนยันตัวตนแทน WP session ระหว่าง poll (เพราะ import เขียนทับ `wp_users`/`wp_options` กลางทาง ทำให้ session เดิมหลุด) — endpoint poll (`isx_run`) ลงทะเบียนทั้งแบบ `wp_ajax_` และ `wp_ajax_nopriv_` เพื่อให้ยัง poll ต่อได้แม้ WP มองว่า "ไม่ login" แล้ว โดยที่ยังปลอดภัยเพราะเช็ค secret เท่านั้น ไม่เช็ค capability ใดๆ ที่ endpoint นี้
+- ตาราง `{prefix}options` ถูก import แบบ **atomic เสมอ** (ไม่ตัดข้ามหลาย AJAX request แม้จะมีแถวเกินขีดจำกัดปกติของตารางอื่น — ดู `ISX_Import::database()`) เพราะ WordPress ทุก request ต้องอ่านตารางนี้ก่อนถึงจะ bootstrap ได้ (รู้ว่าปลั๊กอินไหน active) ถ้าตัดข้าม request จะเสี่ยงเจอสถานะ options ไม่ครบระหว่างทาง ทำให้ปลั๊กอินไม่ถูกโหลดและ import ค้างถาวรกู้เองไม่ได้ — มี safety net เสริมใน `finalize()` เติม plugin ตัวเองกลับเข้า `active_plugins` ถ้าหายไปจริงๆ
 - ปิด WP Heartbeat API ทุกหน้าของปลั๊กอินระหว่าง export/import/กู้คืน กัน modal "session expired" ของ WP core มาแทรกกลาง progress UI
 - Secret Key ของ S3 destinations เข้ารหัสด้วยกุญแจที่มาจาก `wp_salt('auth')` ของเว็บนั้นๆ ก่อนเก็บลง `wp_options`
 - ไฟล์กลางทาง (archive/DB dump/file list) ของ job ถูกลบทิ้งทันทีเมื่อ export/import เสร็จสมบูรณ์ — เหลือแค่ state ชิ้นเล็กๆ ไว้ประมาณ 5 นาทีกันงานชนกัน (browser poll กับ WP-Cron driver) แล้วค่อยถูกกวาดทิ้งตอนมีการสร้าง job ถัดไป

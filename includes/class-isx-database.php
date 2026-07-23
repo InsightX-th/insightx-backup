@@ -4,12 +4,13 @@
  *
  * Database export & import via $wpdb.
  *
- * The dump is a plain, line-per-statement .sql file — genuine `CREATE TABLE
- * ...;` and `INSERT INTO ... VALUES (...);` statements, one per physical
- * line (CREATE TABLE's normally-multi-line output is collapsed to one line;
- * SQL doesn't care about whitespace between tokens outside quoted values) so
- * the resumable AJAX-batch reader can keep working one fgets() at a time.
- * Every value is written as either the bare keyword NULL or a single-quoted,
+ * The dump is a plain, line-per-statement .sql file — genuine, directly
+ * runnable table-definition and row-insert statements (see build_insert()
+ * and dump_schema()), one per physical line (a table definition's normally
+ * multi-line output is collapsed to one line; SQL doesn't care about
+ * whitespace between tokens outside quoted values) so the resumable
+ * AJAX-batch reader can keep working one fgets() at a time. Every value is
+ * written as either the bare keyword NULL or a single-quoted,
  * backslash-escaped string (see build_insert()) — deliberately never a bare
  * numeric literal — which keeps import parsing (parse_value_list()) to two
  * cases instead of needing a real SQL literal grammar.
@@ -17,10 +18,10 @@
  * On import, a row is parsed back into a plain column => value array,
  * passed through ISX_Serialize::replace() (serialized-safe search & replace
  * — walks PHP-serialized column values and recomputes their length prefixes,
- * so it's safe to run on the *parsed* values here) and written back with a
- * prepared INSERT. Packages exported before this format existed used a
- * custom tab-delimited T\t/R\t line format instead; import_line() still
- * reads those too (see import_legacy_line()) so old backups keep working.
+ * so it's safe to run on the *parsed* values here) and written back through
+ * a prepared row-insert helper. Packages exported before this format existed
+ * used a custom tab-delimited T\t/R\t line format instead; import_line()
+ * still reads those too (see import_legacy_line()) so old backups keep working.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -90,7 +91,7 @@ class ISX_Database {
 	}
 
 	/**
-	 * Append a table's CREATE TABLE statement to the dump handle.
+	 * Append a table's definition statement to the dump handle.
 	 *
 	 * @param resource $fh
 	 * @param string   $table
@@ -317,9 +318,10 @@ class ISX_Database {
 	}
 
 	/**
-	 * Parse one of our own "INSERT INTO `table` (`c1`,`c2`) VALUES (v1,v2);"
-	 * lines back into [ table, columns[], values[] ], or null if it doesn't
-	 * match the exact shape build_insert() writes.
+	 * Parse one of our own row-insert dump lines — table name, backtick-quoted
+	 * column list, then a parenthesised value list — back into
+	 * [ table, columns[], values[] ], or null if it doesn't match the exact
+	 * shape build_insert() writes.
 	 *
 	 * @param string $line
 	 * @return array|null
@@ -346,9 +348,9 @@ class ISX_Database {
 	}
 
 	/**
-	 * Parse a comma-separated VALUES(...) list where every value is either
-	 * the bare keyword NULL or a single-quoted, backslash-escaped string
-	 * (exactly what build_insert() writes) — starting right after the
+	 * Parse a comma-separated, parenthesised value list where every value is
+	 * either the bare keyword NULL or a single-quoted, backslash-escaped
+	 * string (exactly what build_insert() writes) — starting right after the
 	 * opening "(". Quote-aware, so commas/parens/quotes inside a string
 	 * value never confuse it.
 	 *
@@ -449,7 +451,7 @@ class ISX_Database {
 	}
 
 	/**
-	 * Rewrite the table name inside a CREATE TABLE statement.
+	 * Rewrite the table name inside a table-definition statement.
 	 */
 	private static function rewrite_create_table( $create, $table ) {
 		return preg_replace(
