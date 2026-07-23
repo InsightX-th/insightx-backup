@@ -233,7 +233,9 @@
 	 * previously any single failed chunk silently stalled the upload forever.
 	 */
 	function uploadChunks(job, file, onProgress, done, onFail) {
-		var size = isx.chunk_size;
+		// wp_localize_script() casts scalars to strings, so force numeric here —
+		// otherwise `start + size` concatenates and the 2nd chunk slices to EOF.
+		var size = parseInt(isx.chunk_size, 10) || 4 * 1024 * 1024;
 		var total = Math.max(1, Math.ceil(file.size / size));
 		var index = 0;
 		var attempt = 0;
@@ -295,6 +297,111 @@
 		return isx.ajax_url + '?action=isx_download&backup=' + encodeURIComponent(backupName) + '&nonce=' + encodeURIComponent(isx.nonce);
 	}
 
+	/* ---------------- Step-by-step progress UI ---------------- */
+
+	// Labels for the raw `phase` keys the server (class-isx-admin.php
+	// phase_range()) and the client-side chunk upload report. "pack_meta"
+	// and "files" are two server-side steps but shown as one row here since
+	// to the user they're both just "packing the files".
+	var STEP_LABELS = {
+		export: {
+			init: 'เตรียมข้อมูล',
+			database: 'ส่งออกฐานข้อมูล',
+			pack: 'แพ็กไฟล์',
+			finalize: 'สร้างไฟล์สำเร็จ',
+			upload: 'อัปโหลดไปยัง Storage'
+		},
+		import: {
+			upload: 'อัปโหลดไฟล์',
+			init: 'ตรวจสอบแพ็กเกจ',
+			clean: 'ล้างไฟล์เดิม',
+			extract: 'กู้คืนไฟล์',
+			database: 'นำเข้าฐานข้อมูล',
+			finalize: 'ปิดงาน'
+		}
+	};
+
+	function exportStepKeys(hasStorage) {
+		var keys = ['init', 'database', 'pack', 'finalize'];
+		if (hasStorage) {
+			keys.push('upload');
+		}
+		return keys;
+	}
+
+	function importStepKeys(hasUpload) {
+		var keys = [];
+		if (hasUpload) {
+			keys.push('upload');
+		}
+		return keys.concat(['init', 'clean', 'extract', 'database', 'finalize']);
+	}
+
+	/**
+	 * Build the single step row inside a .isx-progress-box — call once,
+	 * right before a job starts, before the first updateProgress(). Only one
+	 * step is ever shown at a time: its bar fills 0→100%, then the label and
+	 * bar reset for the next step (see updateSteps).
+	 */
+	function renderSteps($box, type, keys) {
+		var html = '<div class="isx-steps">' +
+			'<div class="isx-step is-active">' +
+			'<div class="isx-step-head">' +
+			'<span class="isx-step-label"></span>' +
+			'<span class="isx-step-pct">0%</span>' +
+			'</div>' +
+			'<div class="isx-step-bar"><div class="isx-step-bar-fill"></div></div>' +
+			'</div>' +
+			'</div>';
+		$box.find('.isx-steps').remove();
+		var $warning = $box.find('.isx-progress-warning');
+		if ($warning.length) {
+			$warning.after(html);
+		} else {
+			$box.prepend(html);
+		}
+		$box.data('steps', keys);
+		$box.data('labels', STEP_LABELS[type]);
+	}
+
+	// The server reports "pack_meta" and "files" as separate steps; both map
+	// to the single "แพ็กไฟล์" row.
+	function stepKeyFromPhase(phase) {
+		return (phase === 'pack_meta' || phase === 'files') ? 'pack' : phase;
+	}
+
+	/**
+	 * Drive the single rendered step row (see renderSteps) from an isx_run
+	 * result: swap in the current phase's label and animate its bar to
+	 * phase_progress%. When the phase changes, the bar resets to 0% and
+	 * fills for the new phase instead of stacking a list of steps.
+	 */
+	function updateSteps($box, result) {
+		var steps = $box.data('steps');
+		var labels = $box.data('labels');
+		if (!steps || !labels || !result.phase) {
+			return;
+		}
+		var key = stepKeyFromPhase(result.phase);
+		var pct = Math.max(0, Math.min(100, Math.round(result.phase_progress || 0)));
+
+		var $step = $box.find('.isx-step');
+		if ($step.data('key') !== key) {
+			// New phase — reset the bar to 0% first so it visibly re-fills
+			// from empty instead of jumping from the old phase's leftover width.
+			$step.data('key', key);
+			$step.find('.isx-step-bar-fill').css('width', '0%');
+			$step.find('.isx-step-pct').text('0%');
+			$step.find('.isx-step-label').text(labels[key] || key);
+			// Force a reflow so the width:0 above is committed before the new
+			// width is set, otherwise the browser coalesces both into a single
+			// jump and the fill-from-empty animation never shows.
+			void $step.find('.isx-step-bar-fill')[0].offsetWidth;
+		}
+		$step.find('.isx-step-bar-fill').css('width', pct + '%');
+		$step.find('.isx-step-pct').text(pct + '%');
+	}
+
 	window.ISX = {
 		post: post,
 		poll: poll,
@@ -303,7 +410,11 @@
 		downloadUrl: downloadUrl,
 		collectExportOptions: collectExportOptions,
 		formatDuration: formatDuration,
-		updateProgress: updateProgress
+		updateProgress: updateProgress,
+		renderSteps: renderSteps,
+		updateSteps: updateSteps,
+		exportStepKeys: exportStepKeys,
+		importStepKeys: importStepKeys
 	};
 
 	/* ---------------- Export page wiring ---------------- */
@@ -324,9 +435,7 @@
 	 * progress box across all four admin pages.
 	 */
 	function updateProgress($box, result) {
-		var pct = Math.max(0, Math.min(100, Math.round(result.progress || 0)));
-		$box.find('.isx-bar-fill').css('width', pct + '%');
-		$box.find('.isx-percent').text(pct + '%');
+		updateSteps($box, result);
 		$box.find('.isx-status').text(result.message || '');
 
 		if (typeof result.elapsed === 'number') {
@@ -349,6 +458,7 @@
 		$('#isx-export-idle').hide();
 		$('#isx-export-progress').show();
 		var $box = $('#isx-export-progress');
+		renderSteps($box, 'export', exportStepKeys(!!extra.to_storage));
 
 		startExport(
 			extra,
@@ -391,8 +501,7 @@
 		$('#isx-import-idle').hide();
 		$('#isx-import-progress').show();
 		var $box = $('#isx-import-progress');
-		$box.find('.isx-bar-fill').css('width', '0%');
-		$box.find('.isx-percent').text('0%');
+		renderSteps($box, 'import', importStepKeys(true));
 		$box.find('.isx-eta').text('');
 		var status = $box.find('.isx-status');
 
@@ -409,10 +518,11 @@
 				file,
 				function (p) {
 					if (typeof p.percent === 'number') {
-						$box.find('.isx-bar-fill').css('width', p.percent + '%');
-						$box.find('.isx-percent').text(p.percent + '%');
-						// Server doesn't drive this phase (it's a plain chunk upload),
-						// so estimate remaining time client-side from the pace so far.
+						// Server doesn't drive this phase (it's a plain chunk upload) —
+						// fake an isx_run-shaped result so it drives the "อัปโหลดไฟล์"
+						// step row the same way every other phase does.
+						updateSteps($box, { phase: 'upload', phase_progress: p.percent });
+						// ...and estimate remaining time client-side from the pace so far.
 						if (p.percent > 0) {
 							var elapsed = (Date.now() - uploadStart) / 1000;
 							var eta = elapsed * (100 - p.percent) / p.percent;

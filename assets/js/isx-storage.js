@@ -58,6 +58,7 @@
 			$('#isx-export-idle').hide();
 			$('#isx-export-progress').show();
 			var $box = $('#isx-export-progress');
+			ISX.renderSteps($box, 'export', ISX.exportStepKeys(true));
 
 			ISX.startExport(
 				$.extend({ to_storage: slug }, options),
@@ -100,6 +101,9 @@
 			$('#isx-import-idle').hide();
 			$('#isx-import-progress').show();
 			var $box = $('#isx-import-progress');
+			// No client-side upload step here — the file was already downloaded
+			// to the server by isx_storage_import_prepare before this runs.
+			ISX.renderSteps($box, 'import', ISX.importStepKeys(false));
 
 			ISX.poll(
 				job,
@@ -454,6 +458,7 @@
 			$actions.hide();
 			$('#isx-backups-progress').show();
 			var $box = $('#isx-backups-progress');
+			ISX.renderSteps($box, 'export', ISX.exportStepKeys(false));
 
 			ISX.startExport(
 				{},
@@ -502,6 +507,7 @@
 
 			$('#isx-backups-restore-progress').show();
 			var $box = $('#isx-backups-restore-progress');
+			ISX.renderSteps($box, 'import', ISX.importStepKeys(false));
 
 			ISX.post('isx_backups_restore', { name: name })
 				.done(function (res) {

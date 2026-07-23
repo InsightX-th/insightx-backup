@@ -11,7 +11,7 @@
 ## คุณสมบัติ
 
 - **ส่งออก (Export)** — แพ็กฐานข้อมูล + ทั้ง `wp-content` (`uploads`/`plugins`/`themes`/`mu-plugins` และไฟล์/โฟลเดอร์อื่นๆ ที่อยู่ใต้ `wp-content` เช่น drop-in ไฟล์, `languages/`) เป็นไฟล์ `.wpress` เดียว ดาวน์โหลดเป็นไฟล์ หรือส่งขึ้น S3 โดยตรง
-- **นำเข้า (Import)** — อัปโหลดไฟล์ `.wpress` (ลากวางหรือเลือกไฟล์) หรือนำเข้าจาก S3 โดยตรง ระบบกู้คืนไฟล์ + ฐานข้อมูล พร้อมแทนที่ URL/path/table-prefix ให้อัตโนมัติ
+- **นำเข้า (Import)** — อัปโหลดไฟล์ `.wpress` (ลากวางหรือเลือกไฟล์) หรือนำเข้าจาก S3 โดยตรง ระบบกู้คืนไฟล์ + ฐานข้อมูล พร้อมแทนที่ URL/path/table-prefix ให้อัตโนมัติ แบบ **clean-then-restore** — ล้างไฟล์ `wp-content` เดิมก่อนกู้คืน และ drop ตารางเก่าที่ไม่อยู่ใน package หลังเสร็จ ผลลัพธ์ตรงกับ package เป๊ะ ไม่มีข้อมูลเก่าค้าง (ต่างจาก All-in-One WP Migration ที่เขียนทับอย่างเดียว)
 - **ข้อมูลสำรอง (Backups)** — ทุกครั้งที่ export จะถูกเก็บสำเนาไว้ในเครื่องเสมอ ดูรายการ, กู้คืน, ดาวน์โหลด, ดูเนื้อหาไฟล์ข้างใน (พร้อมยอดรวมขนาดต่อโฟลเดอร์), หรือลบได้จากหน้าเดียว
 - **การเชื่อมต่อ** — ตั้งค่า credential ของ Amazon S3, Minio, Garage, Cloudflare R2, DigitalOcean Spaces, Google Cloud Storage หรือปลายทาง S3-compatible อื่นๆ ได้พร้อมกันหลายเจ้า แยกการ์ดอิสระต่อ provider — ทดสอบเชื่อมต่อจริงทุกครั้งที่บันทึก ไม่ใช่แค่เช็คว่ากรอกครบ
 - **ตั้งค่า Storage** — เลือกโฟลเดอร์เก็บ backup/job scratch ในเครื่องเอง (ค่าเริ่มต้นคือในปลั๊กอิน) และตั้ง **backup อัตโนมัติ** (รายวัน/รายสัปดาห์/รายเดือน ผ่าน WP-Cron, เลือกส่งขึ้น Storage ได้, จำกัดจำนวนไฟล์เก่าที่เก็บไว้)
@@ -54,7 +54,7 @@
 
 ### นำเข้าเว็บไซต์ (เมนู "นำเข้า")
 
-⚠️ **การนำเข้าจะเขียนทับฐานข้อมูลและไฟล์ปัจจุบันทั้งหมด และต้องล็อกอินใหม่หลังเสร็จ**
+⚠️ **การนำเข้าจะแทนที่เว็บปัจจุบันทั้งหมดด้วยเนื้อหาใน package (clean-then-restore) และต้องล็อกอินใหม่หลังเสร็จ** — ไฟล์ใน `wp-content` เดิม (ปลั๊กอิน/ธีม/uploads ที่ไม่อยู่ใน package) จะถูกลบทิ้งก่อนกู้คืน และตาราง prefix เดียวกันที่ไม่อยู่ใน package จะถูก drop หลังนำเข้าเสร็จ — ยกเว้นปลั๊กอินนี้เอง + โฟลเดอร์ storage (ข้อมูลสำรองในเครื่อง) ที่ไม่ถูกแตะเสมอ การล้างไฟล์จะเริ่มก็ต่อเมื่อ package ผ่านการตรวจสอบแล้วเท่านั้น (ไฟล์เสียจะ error ก่อนโดยไม่แตะข้อมูลเดิม)
 
 - **จากไฟล์ในเครื่อง** — ลากไฟล์ `.wpress` มาวางในกล่อง หรือกด "นำเข้าจาก" → "ไฟล์" เพื่อเลือกไฟล์
 - **จาก Storage** — กด "นำเข้าจาก" → เลือก provider → ระบบโหลดรายการ backup ในนั้นอัตโนมัติ → กด "นำเข้า" ที่แถวไฟล์ที่ต้องการ
@@ -120,7 +120,7 @@ includes/
   class-isx-cli.php            WP-CLI command (wp isx export/import/providers) — โหลดเฉพาะตอน WP_CLI active
   class-isx-job.php            job state บนดิสก์ (per-job secret, resumable cursor)
   class-isx-export.php         pipeline ส่งออก (init→database→pack→files→finalize→upload)
-  class-isx-import.php         pipeline นำเข้า (init→extract→database→finalize)
+  class-isx-import.php         pipeline นำเข้า (init→clean→extract→database→finalize)
   class-isx-archive.php        ฟอร์แมตแพ็กเกจ .wpress เอง — สตรีม อ่าน/เขียนทีละ chunk, บีบอัดต่อไฟล์แบบ raw-DEFLATE ได้ (ไม่พึ่ง ZipArchive)
   class-isx-database.php       dump/import ฐานข้อมูลผ่าน $wpdb เป็น SQL text จริง (CREATE TABLE/INSERT ตรงๆ) ยังอ่าน format เก่า (T\t/R\t) ได้เพื่อ backward-compat
   class-isx-serialize.php      serialized-safe find & replace (ป้องกันข้อมูล PHP serialize พัง)

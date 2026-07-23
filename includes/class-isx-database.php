@@ -175,6 +175,51 @@ class ISX_Database {
 	}
 
 	/**
+	 * If this dump line creates a table, return that table's name as it will
+	 * exist on the TARGET site (prefix already retargeted); null for any
+	 * other line. Lets the import batcher record exactly which tables the
+	 * package rebuilt, so finalize() can drop leftover same-prefix tables
+	 * that were on the target before the import but aren't in the package.
+	 *
+	 * @param string $line
+	 * @param string $old_prefix
+	 * @param string $new_prefix
+	 * @return string|null
+	 */
+	public static function created_table( $line, $old_prefix, $new_prefix ) {
+		$line = rtrim( $line, "\r\n" );
+		if ( strpos( $line, "T\t" ) === 0 ) {
+			$parts = explode( "\t", $line, 3 );
+			return isset( $parts[1] ) ? self::retarget_prefix( $parts[1], $old_prefix, $new_prefix ) : null;
+		}
+		if ( preg_match( '/^CREATE TABLE `([^`]+)`/', $line, $m ) ) {
+			return self::retarget_prefix( $m[1], $old_prefix, $new_prefix );
+		}
+		return null;
+	}
+
+	/**
+	 * Drop every table that matches this site's prefix but is NOT in $keep —
+	 * the clean-then-restore counterpart for the database: tables the old
+	 * site had that the imported package doesn't rebuild would otherwise
+	 * survive the import with their stale rows. Only ever called from
+	 * finalize() (after the whole dump has been applied), never before or
+	 * during the import, and callers must skip it entirely when the package
+	 * had no database dump.
+	 *
+	 * @param array $keep Target-prefixed table names to preserve.
+	 * @return void
+	 */
+	public static function drop_extra_tables( array $keep ) {
+		global $wpdb;
+		foreach ( self::tables() as $table ) {
+			if ( ! in_array( $table, $keep, true ) ) {
+				$wpdb->query( 'DROP TABLE IF EXISTS `' . self::ident( $table ) . '`' );
+			}
+		}
+	}
+
+	/**
 	 * Handle one dump line during import.
 	 *
 	 * @param string       $line
@@ -286,7 +331,6 @@ class ISX_Database {
 	 * @return string
 	 */
 	private static function build_insert( $table, array $row ) {
-		global $wpdb;
 		$columns = array();
 		$values  = array();
 		foreach ( $row as $column => $value ) {
@@ -294,12 +338,36 @@ class ISX_Database {
 			// Always a quoted string or NULL — never a bare numeric literal —
 			// so the import-side parser only ever has to handle those two
 			// shapes instead of a full SQL literal grammar.
-			$values[] = is_null( $value ) ? 'NULL' : "'" . $wpdb->_real_escape( $value ) . "'";
+			$values[] = is_null( $value ) ? 'NULL' : "'" . self::escape_value( $value ) . "'";
 		}
 		if ( empty( $columns ) ) {
 			return '';
 		}
 		return 'INSERT INTO `' . self::ident( $table ) . '` (' . implode( ',', $columns ) . ') VALUES (' . implode( ',', $values ) . ');';
+	}
+
+	/**
+	 * Escape one column value for build_insert(). Uses the raw mysqli link —
+	 * the same approach All-in-One WP Migration's database driver takes — so
+	 * wpdb's placeholder-escape layer never touches the data: wpdb's
+	 * _real_escape() ends with add_placeholder_escape(), which rewrites every
+	 * literal "%" into a per-request {64-hex-hash} token. Nothing in this
+	 * dump/import path ever runs remove_placeholder_escape() (and the hash
+	 * differs between the export and import requests anyway), so any value
+	 * that went through _real_escape() would keep the hash forever — turning
+	 * e.g. "100%" into "100{e845…}" on the restored site.
+	 *
+	 * @param string $value
+	 * @return string
+	 */
+	private static function escape_value( $value ) {
+		global $wpdb;
+		if ( $wpdb->dbh instanceof mysqli ) {
+			return mysqli_real_escape_string( $wpdb->dbh, $value );
+		}
+		// No mysqli handle (custom db drop-in) — fall back to wpdb's escaping
+		// with its placeholder hashes stripped back to literal "%".
+		return $wpdb->remove_placeholder_escape( $wpdb->_real_escape( $value ) );
 	}
 
 	/**

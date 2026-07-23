@@ -33,7 +33,8 @@ class ISX_Backups {
 	 * @return string The stored file name.
 	 */
 	public static function store( $job_archive_path ) {
-		$name = 'insightx-' . gmdate( 'Ymd-His' ) . '-' . substr( wp_generate_password( 8, false ), 0, 6 ) . '.wpress';
+		$host = wp_parse_url( home_url(), PHP_URL_HOST );
+		$name = ( $host ? $host : 'backup' ) . '-' . gmdate( 'dmY' ) . '-' . substr( wp_generate_password( 8, false ), 0, 6 ) . '.wpress';
 		$dest = self::dir() . '/' . $name;
 		if ( ! @rename( $job_archive_path, $dest ) ) {
 			copy( $job_archive_path, $dest );

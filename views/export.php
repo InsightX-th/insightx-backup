@@ -121,9 +121,8 @@ $isx_default   = 'amazon_s3';
 		</div>
 
 		<div id="isx-export-progress" class="isx-progress-box" style="display:none;">
-			<div class="isx-bar"><div class="isx-bar-fill"></div></div>
+			<p class="isx-progress-warning"><span class="dashicons dashicons-warning"></span> <?php esc_html_e( 'ระบบกำลังส่งออกข้อมูล กรุณาอย่าปิดหน้านี้หรือย้ายไปหน้าอื่นจนกว่าจะเสร็จสิ้น', 'insightx-backup' ); ?></p>
 			<div class="isx-progress-meta">
-				<span class="isx-percent">0%</span>
 				<span class="isx-eta"></span>
 			</div>
 			<p class="isx-status"></p>

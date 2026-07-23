@@ -321,13 +321,28 @@ class ISX_Admin {
 			function ( ISX_Job $locked_job ) {
 				if ( $locked_job->get( 'step' ) === 'done' ) {
 					return array(
-						'progress' => 100,
-						'done'     => true,
-						'message'  => (string) $locked_job->get( 'last_message', 'เสร็จสิ้น' ),
+						'progress'       => 100,
+						'done'           => true,
+						'message'        => (string) $locked_job->get( 'last_message', 'เสร็จสิ้น' ),
+						'phase'          => 'finalize',
+						'phase_progress' => 100,
 					);
 				}
 
-				$result = ( $locked_job->get( 'type' ) === 'import' ) ? ISX_Import::run( $locked_job ) : ISX_Export::run( $locked_job );
+				$type       = (string) $locked_job->get( 'type' );
+				$step_before = (string) $locked_job->get( 'step', 'init' );
+
+				$result = ( $type === 'import' ) ? ISX_Import::run( $locked_job ) : ISX_Export::run( $locked_job );
+
+				// Annotate with which pipeline phase this tick's work belongs to
+				// (the step that was current *before* run() advanced it) and how
+				// far along within just that phase, so the UI can show each
+				// phase as its own 0-100% bar instead of one bar for the whole job.
+				$range           = self::phase_range( $type, $step_before, $locked_job );
+				$progress_val    = isset( $result['progress'] ) ? (int) $result['progress'] : $range[1];
+				$span            = max( 1, $range[1] - $range[0] );
+				$result['phase'] = $step_before;
+				$result['phase_progress'] = (int) round( max( 0, min( 100, ( $progress_val - $range[0] ) / $span * 100 ) ) );
 
 				// Some early-failure paths still delete the job dir outright
 				// (see cleanup() call sites) — only persist the "last known"
@@ -335,6 +350,8 @@ class ISX_Admin {
 				if ( is_dir( $locked_job->dir() ) ) {
 					$locked_job->set( 'last_message', isset( $result['message'] ) ? $result['message'] : '' );
 					$locked_job->set( 'last_progress', isset( $result['progress'] ) ? $result['progress'] : 0 );
+					$locked_job->set( 'last_phase', $result['phase'] );
+					$locked_job->set( 'last_phase_progress', $result['phase_progress'] );
 					$locked_job->save();
 				}
 
@@ -346,9 +363,11 @@ class ISX_Admin {
 			// Lock held by the other driver right now — echo the last known
 			// state instead of executing (and definitely instead of double-running).
 			$result = array(
-				'progress' => (int) $job->get( 'last_progress', $job->get( 'progress', 0 ) ),
-				'done'     => false,
-				'message'  => (string) $job->get( 'last_message', 'กำลังดำเนินการ...' ),
+				'progress'       => (int) $job->get( 'last_progress', $job->get( 'progress', 0 ) ),
+				'done'           => false,
+				'message'        => (string) $job->get( 'last_message', 'กำลังดำเนินการ...' ),
+				'phase'          => (string) $job->get( 'last_phase', 'init' ),
+				'phase_progress' => (int) $job->get( 'last_phase_progress', 0 ),
 			);
 		}
 
@@ -396,6 +415,43 @@ class ISX_Admin {
 		} while ( empty( $result['done'] ) );
 
 		return $result;
+	}
+
+	/**
+	 * The [0,100] overall-progress window each pipeline step in
+	 * ISX_Import::run() / ISX_Export::run() occupies (mirrors the constants
+	 * those two classes compute their own $progress from) — used to turn the
+	 * single overall progress number back into a 0-100% figure local to just
+	 * the current step, so the UI can render each step as its own bar.
+	 *
+	 * @param string  $type import|export
+	 * @param string  $step
+	 * @param ISX_Job $job
+	 * @return array [start, end]
+	 */
+	private static function phase_range( $type, $step, ISX_Job $job ) {
+		if ( $type === 'import' ) {
+			$ranges = array(
+				'init'     => array( 0, 3 ),
+				'clean'    => array( 3, 6 ),
+				'extract'  => array( 6, 62 ),
+				'database' => array( 62, 95 ),
+				'finalize' => array( 95, 100 ),
+			);
+		} else {
+			// finalize() only stops at 97 (instead of 100) when the export also
+			// uploads to a Storage destination afterwards — see upload().
+			$finalize_end = $job->get( 'to_storage', '' ) !== '' ? 97 : 100;
+			$ranges       = array(
+				'init'      => array( 0, 5 ),
+				'database'  => array( 5, 50 ),
+				'pack_meta' => array( 50, 55 ),
+				'files'     => array( 55, 95 ),
+				'finalize'  => array( 95, $finalize_end ),
+				'upload'    => array( 97, 100 ),
+			);
+		}
+		return isset( $ranges[ $step ] ) ? $ranges[ $step ] : array( 0, 100 );
 	}
 
 	/**

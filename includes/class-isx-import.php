@@ -13,8 +13,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class ISX_Import {
 
-	const ENTRIES_PER_BATCH = 40;
+	const ENTRIES_PER_BATCH  = 40;
 	const DB_LINES_PER_BATCH = 300;
+	const CLEAN_PER_BATCH    = 1000;
 
 	/**
 	 * Advance the import by one step.
@@ -28,6 +29,8 @@ class ISX_Import {
 		switch ( $step ) {
 			case 'init':
 				return self::init( $job );
+			case 'clean':
+				return self::clean( $job );
 			case 'extract':
 				return self::extract( $job );
 			case 'database':
@@ -87,12 +90,37 @@ class ISX_Import {
 			)
 		);
 
-		$job->set( 'cursor', array( 'offset' => ISX_Archive::first_offset() ) );
-		$job->set( 'step', 'extract' );
+		// Clean-then-restore: the package fully replaces this site, so wipe
+		// the existing wp-content tree (minus this plugin + its storage)
+		// before extracting — otherwise plugins/themes/uploads the old site
+		// had but the package doesn't would silently survive the import.
+		// This only ever runs AFTER the archive validated above, so a corrupt
+		// upload can never wipe a site it then fails to restore.
+		$job->set( 'step', 'clean' );
 		$job->set( 'progress', 3 );
 		$job->save();
 
 		return array( 'progress' => 3, 'done' => false, 'message' => 'ตรวจสอบแพ็กเกจ...' );
+	}
+
+	private static function clean( ISX_Job $job ) {
+		$result = ISX_Files::clean_content_batch( self::CLEAN_PER_BATCH );
+
+		$cleaned = (int) $job->get( 'cleaned_files', 0 ) + $result['deleted'];
+		$job->set( 'cleaned_files', $cleaned );
+
+		if ( $result['done'] ) {
+			$job->set( 'cursor', array( 'offset' => ISX_Archive::first_offset() ) );
+			$job->set( 'step', 'extract' );
+			$job->set( 'progress', 6 );
+			$job->save();
+			return array( 'progress' => 6, 'done' => false, 'message' => 'ล้างไฟล์เดิมแล้ว เริ่มกู้คืนไฟล์...' );
+		}
+
+		$job->set( 'progress', 4 );
+		$job->save();
+
+		return array( 'progress' => 4, 'done' => false, 'message' => sprintf( 'ลบไฟล์เดิม (%d ไฟล์)...', $cleaned ) );
 	}
 
 	private static function extract( ISX_Job $job ) {
@@ -139,9 +167,9 @@ class ISX_Import {
 		// this doesn't hard-depend on re-exporting everything.
 		$total_files = isset( $manifest_ref['data']['total_files'] ) ? (int) $manifest_ref['data']['total_files'] : 0;
 		if ( $total_files > 0 ) {
-			$progress = 3 + (int) ( 57 * min( 1, $done_entries / ( $total_files + 2 ) ) );
+			$progress = 6 + (int) ( 54 * min( 1, $done_entries / ( $total_files + 2 ) ) );
 		} else {
-			$progress = min( 60, 3 + (int) ( $done_entries / 20 ) );
+			$progress = min( 60, 6 + (int) ( $done_entries / 20 ) );
 		}
 		if ( $result['done'] ) {
 			$job->set( 'cursor', array( 'db_offset' => 0 ) );
@@ -180,6 +208,8 @@ class ISX_Import {
 		// still cuts at the normal per-request line cap.
 		$options_table = $old_prefix . 'options';
 
+		$imported_tables = (array) $job->get( 'imported_tables', array() );
+
 		$processed = 0;
 		$done      = false;
 		while ( true ) {
@@ -196,12 +226,20 @@ class ISX_Import {
 				break;
 			}
 
+			// Record which (target-prefixed) tables the package rebuilds, so
+			// finalize() can drop leftover same-prefix tables it didn't.
+			$created = ISX_Database::created_table( $line, $old_prefix, $new_prefix );
+			if ( $created !== null && ! in_array( $created, $imported_tables, true ) ) {
+				$imported_tables[] = $created;
+			}
+
 			ISX_Database::import_line( $line, $search, $replace, $old_prefix, $new_prefix, $skip_emails );
 			$processed++;
 		}
 		$cursor['db_offset'] = ftell( $fh );
 		fclose( $fh );
 
+		$job->set( 'imported_tables', $imported_tables );
 		$job->set( 'cursor', $cursor );
 
 		$done_lines = (int) $job->get( 'done_lines', 0 ) + $processed;
@@ -219,6 +257,19 @@ class ISX_Import {
 	}
 
 	private static function finalize( ISX_Job $job ) {
+		// Clean-then-restore, database half: drop same-prefix tables the
+		// package didn't rebuild (stale tables from the previous site).
+		// Deliberately only here — after the ENTIRE dump has been applied —
+		// never before/during import, because WP must be able to bootstrap
+		// off a consistent table set between polls. Skipped entirely when
+		// the package carried no database dump ("ไม่รวมฐานข้อมูล" export
+		// option): imported_tables being empty then means "the import didn't
+		// touch the DB", not "drop everything".
+		$imported_tables = (array) $job->get( 'imported_tables', array() );
+		if ( ! empty( $imported_tables ) ) {
+			ISX_Database::drop_extra_tables( $imported_tables );
+		}
+
 		// Flush rewrite rules on next load; clear caches.
 		delete_option( 'rewrite_rules' );
 		wp_cache_flush();

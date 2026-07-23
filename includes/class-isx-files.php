@@ -287,6 +287,56 @@ class ISX_Files {
 	}
 
 	/**
+	 * Delete a bounded batch of the target site's existing wp-content files
+	 * (clean-then-restore: the import replaces the whole tree with the
+	 * package's contents, so anything already on disk is stale by
+	 * definition). Never touches this plugin's own directory, the storage
+	 * path (in-progress job + kept local backups live there), or WP's
+	 * transient upgrade dir. Each call re-walks the tree and deletes up to
+	 * $limit files depth-first (then prunes now-empty dirs), so the import
+	 * poller can just call it repeatedly until 'done'.
+	 *
+	 * @param int $limit Max files to delete this call.
+	 * @return array { deleted:int, done:bool }
+	 */
+	public static function clean_content_batch( $limit ) {
+		$content   = untrailingslashit( WP_CONTENT_DIR );
+		$protected = array(
+			untrailingslashit( ISX_PATH ),
+			untrailingslashit( ISX_STORAGE_PATH ),
+			$content . '/upgrade',
+		);
+
+		$deleted = 0;
+		$iterator = new RecursiveIteratorIterator(
+			new RecursiveDirectoryIterator( $content, FilesystemIterator::SKIP_DOTS ),
+			RecursiveIteratorIterator::CHILD_FIRST
+		);
+		foreach ( $iterator as $entry ) {
+			if ( $deleted >= $limit ) {
+				return array( 'deleted' => $deleted, 'done' => false );
+			}
+			$abs = $entry->getPathname();
+			if ( self::is_excluded( $abs, $protected ) ) {
+				continue;
+			}
+			if ( $entry->isDir() && ! $entry->isLink() ) {
+				// CHILD_FIRST: children come before their dir, so by the time
+				// we see a dir it's empty unless something inside is protected
+				// (e.g. plugins/ still holds this plugin) — rmdir just fails
+				// silently on non-empty dirs, which is exactly what we want.
+				@rmdir( $abs );
+				continue;
+			}
+			if ( @unlink( $abs ) ) {
+				$deleted++;
+			}
+		}
+
+		return array( 'deleted' => $deleted, 'done' => true );
+	}
+
+	/**
 	 * Stream one archive entry back to disk when it belongs to the content
 	 * namespace. Returns true if it handled the entry.
 	 *

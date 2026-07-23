@@ -107,7 +107,7 @@ class ISX_Export {
 		$manifest['total_files'] = $total_files;
 		$job->set( 'manifest', $manifest );
 
-		$job->set( 'cursor', array( 'ti' => 0, 'off' => 0 ) );
+		$job->set( 'cursor', array( 'ti' => 0, 'off' => 0, 'table_rows' => 0 ) );
 		$job->set( 'step', 'database' );
 		$job->set( 'progress', 5 );
 		$job->save();
@@ -119,7 +119,7 @@ class ISX_Export {
 		global $wpdb;
 
 		$tables = (array) $job->get( 'tables', array() );
-		$cursor = (array) $job->get( 'cursor', array( 'ti' => 0, 'off' => 0 ) );
+		$cursor = (array) $job->get( 'cursor', array( 'ti' => 0, 'off' => 0, 'table_rows' => 0 ) );
 		$ti     = (int) $cursor['ti'];
 		$off    = (int) $cursor['off'];
 
@@ -142,6 +142,17 @@ class ISX_Export {
 		$search  = isset( $options['replace_old'] ) ? array_values( (array) $options['replace_old'] ) : array();
 		$replace = isset( $options['replace_new'] ) ? array_values( (array) $options['replace_new'] ) : array();
 
+		// table_rows is captured once per table (at off === 0) purely for
+		// progress reporting below — dump_rows()'s own LIMIT offset/off is
+		// what actually drives resume, this is just so the bar can move
+		// smoothly *within* a big table instead of jumping only at table
+		// boundaries (same idea All-in-One WP Migration's DB exporter uses:
+		// track table_offset/table_rows alongside the query offset).
+		if ( $off === 0 ) {
+			$cursor['table_rows'] = ISX_Database::row_count( $table );
+		}
+		$table_rows = (int) $cursor['table_rows'];
+
 		$fh = fopen( $job->db_dump(), 'ab' );
 
 		if ( $off === 0 ) {
@@ -151,21 +162,29 @@ class ISX_Export {
 		fclose( $fh );
 
 		if ( $written < self::ROWS_PER_BATCH ) {
-			$cursor['ti']  = $ti + 1;
-			$cursor['off'] = 0;
+			$cursor['ti']         = $ti + 1;
+			$cursor['off']        = 0;
+			$cursor['table_rows'] = 0;
 		} else {
 			$cursor['off'] = $off + $written;
 		}
 		$job->set( 'cursor', $cursor );
 
-		$progress = 5 + (int) ( 45 * ( $ti / max( 1, count( $tables ) ) ) );
+		// Fractional progress within the current table (row offset / total
+		// rows) blended into the per-table step, so a single huge table
+		// (e.g. millions of rows in wp_postmeta) still shows the bar moving
+		// tick by tick instead of sitting still until the whole table is done.
+		$table_fraction = $table_rows > 0 ? min( 1, ( $off + $written ) / $table_rows ) : 1;
+		$progress       = 5 + (int) ( 45 * ( ( $ti + $table_fraction ) / max( 1, count( $tables ) ) ) );
 		$job->set( 'progress', $progress );
 		$job->save();
 
 		return array(
 			'progress' => $progress,
 			'done'     => false,
-			'message'  => sprintf( 'ส่งออกตาราง %s...', $table ),
+			'message'  => $table_rows > 0
+				? sprintf( 'ส่งออกตาราง %s (%d/%d แถว)...', $table, min( $off + $written, $table_rows ), $table_rows )
+				: sprintf( 'ส่งออกตาราง %s...', $table ),
 		);
 	}
 
