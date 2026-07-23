@@ -10,14 +10,16 @@
 
 ## คุณสมบัติ
 
-- **ส่งออก (Export)** — แพ็กฐานข้อมูล + `uploads`/`plugins`/`themes`/`mu-plugins` เป็นไฟล์ `.wpress` เดียว ดาวน์โหลดเป็นไฟล์ หรือส่งขึ้น S3 โดยตรง
+- **ส่งออก (Export)** — แพ็กฐานข้อมูล + ทั้ง `wp-content` (`uploads`/`plugins`/`themes`/`mu-plugins` และไฟล์/โฟลเดอร์อื่นๆ ที่อยู่ใต้ `wp-content` เช่น drop-in ไฟล์, `languages/`) เป็นไฟล์ `.wpress` เดียว ดาวน์โหลดเป็นไฟล์ หรือส่งขึ้น S3 โดยตรง
 - **นำเข้า (Import)** — อัปโหลดไฟล์ `.wpress` (ลากวางหรือเลือกไฟล์) หรือนำเข้าจาก S3 โดยตรง ระบบกู้คืนไฟล์ + ฐานข้อมูล พร้อมแทนที่ URL/path/table-prefix ให้อัตโนมัติ
-- **ข้อมูลสำรอง (Backups)** — ทุกครั้งที่ export จะถูกเก็บสำเนาไว้ในเครื่องเสมอ ดูรายการ, กู้คืน, ดาวน์โหลด, ดูเนื้อหาไฟล์ข้างใน, หรือลบได้จากหน้าเดียว
-- **ตั้งค่า Storage** — เชื่อมต่อ Amazon S3, Minio, Garage, Cloudflare R2, DigitalOcean Spaces, Google Cloud Storage หรือปลายทาง S3-compatible อื่นๆ ได้พร้อมกันหลายเจ้า ตั้งค่าแยกอิสระต่อ provider — ทดสอบเชื่อมต่อจริงทุกครั้งที่บันทึก ไม่ใช่แค่เช็คว่ากรอกครบ
+- **ข้อมูลสำรอง (Backups)** — ทุกครั้งที่ export จะถูกเก็บสำเนาไว้ในเครื่องเสมอ ดูรายการ, กู้คืน, ดาวน์โหลด, ดูเนื้อหาไฟล์ข้างใน (พร้อมยอดรวมขนาดต่อโฟลเดอร์), หรือลบได้จากหน้าเดียว
+- **การเชื่อมต่อ** — ตั้งค่า credential ของ Amazon S3, Minio, Garage, Cloudflare R2, DigitalOcean Spaces, Google Cloud Storage หรือปลายทาง S3-compatible อื่นๆ ได้พร้อมกันหลายเจ้า แยกการ์ดอิสระต่อ provider — ทดสอบเชื่อมต่อจริงทุกครั้งที่บันทึก ไม่ใช่แค่เช็คว่ากรอกครบ
+- **ตั้งค่า Storage** — เลือกโฟลเดอร์เก็บ backup/job scratch ในเครื่องเอง (ค่าเริ่มต้นคือในปลั๊กอิน) และตั้ง **backup อัตโนมัติ** (รายวัน/รายสัปดาห์/รายเดือน ผ่าน WP-Cron, เลือกส่งขึ้น Storage ได้, จำกัดจำนวนไฟล์เก่าที่เก็บไว้)
 - **Find & Replace** — แทนที่ข้อความในฐานข้อมูลตอน export ได้หลายคู่
-- **ตัวเลือกขั้นสูง** — เข้ารหัสด้วยรหัสผ่าน, บีบอัด GZip, ไม่รวมฐานข้อมูล/ตารางที่เลือก/คอมเมนต์สแปม/revision, ไม่รวมสื่อ/ธีม/ปลั๊กอิน (ทั้งหมดหรือเฉพาะที่ไม่ได้ใช้งาน)/ไฟล์แคช/ไฟล์ที่เลือกเอง
-- **แสดงความคืบหน้าแบบละเอียด** — เปอร์เซ็นต์, เวลาที่ใช้ไปแล้ว, และเวลาที่เหลือโดยประมาณ ระหว่าง export/import/กู้คืน
-- **รันต่อเนื่องแม้ปิดแท็บ** — งาน export/import ขับเคลื่อนด้วย WP-Cron เป็นตัวสำรอง นอกเหนือจากการ poll ของเบราว์เซอร์ — สลับหน้าหรือปิดแท็บระหว่างทำงานได้ งานจะยังเดินต่อในเบื้องหลัง (ต้องมีการเข้าเว็บ/ทราฟฟิกใดๆ เพื่อกระตุ้น WP-Cron ตามปกติของ WordPress)
+- **ตัวเลือกขั้นสูง** — เข้ารหัสด้วยรหัสผ่าน, บีบอัด GZip (ต่อไฟล์ระหว่างแพ็ก ไม่ใช่ทั้งก้อนตอนจบ), ไม่รวมฐานข้อมูล/ตารางที่เลือก/คอมเมนต์สแปม/revision, ไม่รวมสื่อ/ธีม/ปลั๊กอิน (ทั้งหมดหรือเฉพาะที่ไม่ได้ใช้งาน)/ไฟล์แคช (เลือกเองเสมอ ไม่ exclude อัตโนมัติ)/ไฟล์ที่เลือกเอง
+- **แสดงความคืบหน้าแบบละเอียด** — เปอร์เซ็นต์ (คำนวณจากจำนวนไฟล์จริงในแพ็กเกจ ไม่ใช่สูตรเดา), เวลาที่ใช้ไปแล้ว, และเวลาที่เหลือโดยประมาณ ระหว่าง export/import/กู้คืน (รวมช่วงอัปโหลดไฟล์ตอน import ด้วย)
+- **รันต่อเนื่องแม้ปิดแท็บ** — งาน export/import ขับเคลื่อนด้วย WP-Cron เป็นตัวสำรอง นอกเหนือจากการ poll ของเบราว์เซอร์ — สลับหน้าหรือปิดแท็บระหว่างทำงานได้ งานจะยังเดินต่อในเบื้องหลัง (ต้องมีการเข้าเว็บ/ทราฟฟิกใดๆ เพื่อกระตุ้น WP-Cron ตามปกติของ WordPress) การ poll ยังทำงานต่อได้แม้ session หลุดกลางทาง (ดูหัวข้อความปลอดภัย)
+- **WP-CLI** — `wp isx export` / `wp isx import <file>` / `wp isx providers` รันบนเซิร์ฟเวอร์ตรงๆ ไม่ต้องเปิดเบราว์เซอร์
 
 ---
 
@@ -25,7 +27,7 @@
 
 1. วางโฟลเดอร์ `insightx-backup` ไว้ที่ `wp-content/plugins/`
 2. เปิดใช้งานปลั๊กอินจากเมนู **Plugins**
-3. เมนู **InsightX Backup** จะปรากฏใน sidebar ของ wp-admin (มี 4 หน้าย่อย: ส่งออก / นำเข้า / ข้อมูลสำรอง / ตั้งค่า Storage)
+3. เมนู **InsightX Backup** จะปรากฏใน sidebar ของ wp-admin (มี 5 หน้าย่อย: ส่งออก / นำเข้า / ข้อมูลสำรอง / การเชื่อมต่อ / ตั้งค่า Storage)
 
 **ความต้องการของระบบ:**
 - PHP 7.4 ขึ้นไป
@@ -45,7 +47,7 @@
    - **การบีบอัด:** ไม่บีบอัด หรือ GZip (ไฟล์เล็กลง ใช้เวลานานขึ้นเล็กน้อย)
    - **ฐานข้อมูล:** ไม่รวมคอมเมนต์สแปม / ไม่รวม post revision / ไม่รวมฐานข้อมูลทั้งหมด / ไม่รวมตารางที่เลือกเอง (เปิด picker เลือกทีละตาราง) / ไม่ต้องแทนที่โดเมนอีเมล
    - **ไฟล์:** ไม่รวมคลังสื่อ / ไม่รวมธีม (ทั้งหมด หรือเฉพาะที่ไม่ได้ใช้งาน) / ไม่รวมปลั๊กอิน must-use / ไม่รวมปลั๊กอิน (ทั้งหมด หรือเฉพาะที่ไม่ได้เปิดใช้งาน) / ไม่รวมไฟล์แคช / ไม่รวมไฟล์ที่เลือกเอง (พิมพ์ path บรรทัดละ 1 รายการ เทียบกับ `wp-content/`)
-3. **เลือกปลายทาง** — ถ้าจะส่งขึ้น Storage ให้เลือก provider จากการ์ด (ต้องตั้งค่าที่เมนู "ตั้งค่า Storage" ก่อน — provider ที่ยังไม่ตั้งค่าจะแสดงจางลง)
+3. **เลือกปลายทาง** — ถ้าจะส่งขึ้น Storage ให้เลือก provider จากการ์ด (ต้องตั้งค่าที่เมนู "การเชื่อมต่อ" ก่อน — provider ที่ยังไม่ตั้งค่าจะแสดงจางลง)
 4. กด **"ส่งออกเป็นไฟล์"** เพื่อดาวน์โหลด หรือ **"ส่งออกไปยัง Storage"** เพื่ออัปขึ้น bucket โดยตรง
    - ไฟล์ที่ใหญ่กว่า 80MB จะอัปโหลดขึ้น Storage แบบ multipart อัตโนมัติ (แบ่งเป็นชิ้นละ 20MB) กันโดน reverse proxy หน้า bucket (เช่น Cloudflare) ตัดด้วย `413 Payload Too Large`
 5. ไฟล์ที่ export เสร็จจะถูกเก็บสำเนาไว้ในเมนู "ข้อมูลสำรอง" เสมอ ไม่ว่าจะเลือกปลายทางไหน
@@ -59,6 +61,7 @@
   - ถ้าไม่มีสิทธิ์ list bucket ให้ใช้ตัวเลือก "กรอกชื่อไฟล์เอง" (พิมพ์ object key เต็ม)
 - ถ้าไฟล์เข้ารหัสด้วยรหัสผ่าน ระบบจะถามรหัสผ่านกลางกระบวนการนำเข้าอัตโนมัติ
 - ไฟล์ที่บีบอัดด้วย GZip จะถูกคลายให้อัตโนมัติ ไม่ต้องทำอะไรเพิ่ม
+- ตอนอัปโหลดไฟล์ในเครื่อง ถ้า chunk ไหนอัปโหลดไม่สำเร็จ (เน็ตสะดุด/เซิร์ฟเวอร์ error ชั่วคราว) ระบบจะลองใหม่อัตโนมัติสูงสุด 5 ครั้งก่อนค่อยแจ้งเตือนให้เริ่มใหม่
 
 ### ข้อมูลสำรอง (เมนู "ข้อมูลสำรอง")
 
@@ -69,7 +72,7 @@
   - **ดูรายการ** — แสดงเนื้อหาข้างในแพ็กเกจเป็น folder tree (ขยาย/ยุบได้ทีละโฟลเดอร์) พร้อมขนาดไฟล์ โดยไม่ต้องแตกไฟล์ (ใช้ไม่ได้กับไฟล์ที่เข้ารหัส)
   - **ลบ** — ลบแถวออกทันทีไม่ต้องรีโหลดหน้า ถ้าเป็นแถวสุดท้ายจะขึ้นข้อความ "ยังไม่มีข้อมูลสำรอง" แทนตาราง
 
-### ตั้งค่า Storage (เมนู "ตั้งค่า Storage")
+### การเชื่อมต่อ (เมนู "การเชื่อมต่อ")
 
 ตั้งค่า credential ของแต่ละ provider แยกอิสระจากกัน (endpoint, region, bucket, access key, secret key, path-style URL) กด **"บันทึก"** ทีละ provider
 
@@ -80,34 +83,64 @@
 
 Object ที่ export ขึ้น S3 จะถูกเก็บไว้ใต้ prefix `insightx-migrate/` ในแต่ละ bucket (prefix นี้คงชื่อเดิมไว้ตั้งใจ ไม่ตามชื่อปลั๊กอินที่เปลี่ยน — กัน backup เก่าที่อัปโหลดไปแล้วหายจากลิสต์)
 
+### ตั้งค่า Storage (เมนู "ตั้งค่า Storage")
+
+**โฟลเดอร์เก็บ Backup ในเครื่อง** — พิมพ์ absolute path เอง (โฟลเดอร์แม่ต้องมีอยู่แล้วและเขียนได้) แล้วกด "บันทึก" ปล่อยว่างไว้ = ใช้ค่าเริ่มต้น (ในโฟลเดอร์ปลั๊กอินเอง) เปลี่ยน path ไม่ย้ายไฟล์เก่าให้อัตโนมัติ
+
+**Backup อัตโนมัติ** — เปิดสวิตช์ เลือกความถี่ (รายวัน/รายสัปดาห์/รายเดือน) และปลายทาง (เก็บในเครื่องอย่างเดียว หรือ provider ที่ตั้งค่าไว้แล้วในเมนู "การเชื่อมต่อ") พร้อมจำนวน backup สูงสุดที่จะเก็บไว้ในเครื่อง (เกินแล้วลบตัวเก่าสุดทิ้งอัตโนมัติหลัง backup ใหม่สำเร็จ) — ขับด้วย WP-Cron เหมือน export/import ปกติ ต้องมีทราฟฟิกเข้าเว็บเพื่อกระตุ้นตามปกติของ WordPress
+
+---
+
+## WP-CLI
+
+```bash
+# ส่งออก ดาวน์โหลดไว้ในเครื่อง (storage/backups/)
+wp isx export
+
+# ส่งออกแล้วอัปขึ้น Storage provider ที่ตั้งค่าไว้แล้ว (ดู slug จาก wp isx providers)
+wp isx export --to=amazon_s3
+
+# นำเข้าไฟล์ .wpress ที่อยู่บนเซิร์ฟเวอร์แล้ว (ยืนยันก่อนเขียนทับเว็บ ข้ามด้วย --yes)
+wp isx import /path/to/backup.wpress
+wp isx import /path/to/backup.wpress --yes
+
+# ดู slug ของ provider ที่ตั้งค่า/เชื่อมต่อสำเร็จแล้ว
+wp isx providers
+```
+
 ---
 
 ## โครงสร้างปลั๊กอิน
 
 ```
-insightx-backup.php           entry point, define constants, load classes
+insightx-backup.php           entry point, define constants, load classes, isx_resolve_storage_path(),
+                               ลงทะเบียน cron (isx_cron_step, isx_scheduled_backup) + WP-CLI (cli_init)
 includes/
-  class-isx-admin.php          เมนู wp-admin + AJAX router ทั้งหมด
+  class-isx-admin.php          เมนู wp-admin + AJAX router ทั้งหมด + run_job_to_completion() (ใช้ร่วมกับ CLI/cron)
+  class-isx-cli.php            WP-CLI command (wp isx export/import/providers) — โหลดเฉพาะตอน WP_CLI active
   class-isx-job.php            job state บนดิสก์ (per-job secret, resumable cursor)
   class-isx-export.php         pipeline ส่งออก (init→database→pack→files→finalize→upload)
   class-isx-import.php         pipeline นำเข้า (init→extract→database→finalize)
-  class-isx-archive.php        ฟอร์แมตแพ็กเกจ .wpress เอง (สตรีม อ่าน/เขียนทีละ chunk)
-  class-isx-database.php       dump/import ฐานข้อมูลผ่าน $wpdb
+  class-isx-archive.php        ฟอร์แมตแพ็กเกจ .wpress เอง — สตรีม อ่าน/เขียนทีละ chunk, บีบอัดต่อไฟล์แบบ raw-DEFLATE ได้ (ไม่พึ่ง ZipArchive)
+  class-isx-database.php       dump/import ฐานข้อมูลผ่าน $wpdb เป็น SQL text จริง (CREATE TABLE/INSERT ตรงๆ) ยังอ่าน format เก่า (T\t/R\t) ได้เพื่อ backward-compat
   class-isx-serialize.php      serialized-safe find & replace (ป้องกันข้อมูล PHP serialize พัง)
-  class-isx-files.php          enumerate/pack/restore ไฟล์ wp-content
+  class-isx-files.php          enumerate/pack/restore ไฟล์ wp-content ทั้งโฟลเดอร์ (ไม่ใช่แค่ 4 โฟลเดอร์ตายตัว)
   class-isx-backups.php        เก็บสำเนา backup ถาวรในเครื่อง
   class-isx-destinations.php   credential S3 ต่อ provider (เข้ารหัสไว้)
   class-isx-s3-client.php      S3 client เอง (AWS Signature V4, ไม่พึ่ง SDK ภายนอก)
   class-isx-crypto.php         เข้ารหัส string/ไฟล์ (AES-256-CBC แบบสตรีม)
-  class-isx-compress.php       บีบอัด/คลาย GZip แบบสตรีม
-views/                         หน้า export.php / import.php / backups.php / settings.php
+  class-isx-compress.php       คลาย GZip ทั้งไฟล์แบบสตรีม (backward-compat สำหรับแพ็กเกจเก่าที่ยัง gzip ทั้งก้อน)
+views/                         หน้า export.php / import.php / backups.php / connections.php / settings.php
 assets/                        CSS/JS ฝั่งแอดมิน
-storage/                       job scratch data + backups/ (gitignored, สร้างอัตโนมัติตอน activate)
+storage/                       job scratch data + backups/ (gitignored, สร้างอัตโนมัติตอน activate — ย้ายไปโฟลเดอร์อื่นได้จากเมนู "ตั้งค่า Storage")
 ```
+
+**โครงสร้างไฟล์ .wpress:** `package.json` (metadata: siteurl, table_prefix, total_files ฯลฯ) + `database.sql` (SQL statements ตรงๆ อ่านด้วยตาได้) + เนื้อหาเว็บ namespace ใต้ `wpcontent/` — แพ็กเกจเก่าที่ export ก่อนอัปเดตนี้ (`manifest.json`/`database.isxdb`) ยัง import ได้ปกติ
 
 ## ความปลอดภัย
 
 - โฟลเดอร์ `storage/` ถูกกัน HTTP access โดยตรงด้วย `.htaccess` (`Deny from all`) + `index.php` ว่างเปล่า
-- แต่ละ export/import job มี secret แยกต่อ job เก็บบนดิสก์ ใช้ยืนยันตัวตนแทน WP session ระหว่าง poll (เพราะ import เขียนทับ `wp_users`/`wp_options` กลางทาง ทำให้ session เดิมหลุด)
+- แต่ละ export/import job มี secret แยกต่อ job เก็บบนดิสก์ ใช้ยืนยันตัวตนแทน WP session ระหว่าง poll (เพราะ import เขียนทับ `wp_users`/`wp_options` กลางทาง ทำให้ session เดิมหลุด) — endpoint poll (`isx_run`) ลงทะเบียนทั้งแบบ `wp_ajax_` และ `wp_ajax_nopriv_` เพื่อให้ยัง poll ต่อได้แม้ WP มองว่า "ไม่ login" แล้ว โดยที่ยังปลอดภัยเพราะเช็ค secret เท่านั้น ไม่เช็ค capability ใดๆ ที่ endpoint นี้
+- ปิด WP Heartbeat API ทุกหน้าของปลั๊กอินระหว่าง export/import/กู้คืน กัน modal "session expired" ของ WP core มาแทรกกลาง progress UI
 - Secret Key ของ S3 destinations เข้ารหัสด้วยกุญแจที่มาจาก `wp_salt('auth')` ของเว็บนั้นๆ ก่อนเก็บลง `wp_options`
 - ไฟล์กลางทาง (archive/DB dump/file list) ของ job ถูกลบทิ้งทันทีเมื่อ export/import เสร็จสมบูรณ์ — เหลือแค่ state ชิ้นเล็กๆ ไว้ประมาณ 5 นาทีกันงานชนกัน (browser poll กับ WP-Cron driver) แล้วค่อยถูกกวาดทิ้งตอนมีการสร้าง job ถัดไป

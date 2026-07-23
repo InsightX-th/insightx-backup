@@ -72,14 +72,54 @@ class ISX_Files {
 	}
 
 	/**
-	 * Absolute paths that must never be packed (our own working data, VCS, deps).
+	 * Anything living directly under wp-content that isn't one of the named
+	 * dirs() above — language files, drop-ins (advanced-cache.php,
+	 * object-cache.php, db.php…), or custom folders another plugin creates
+	 * right at the wp-content root. Included generically (same approach as
+	 * All-in-One WP Migration) rather than via a fixed whitelist, so a
+	 * package captures the whole wp-content tree, not just these four dirs.
+	 *
+	 * @return array Absolute paths (files or dirs).
+	 */
+	private static function other_entries() {
+		$content  = untrailingslashit( WP_CONTENT_DIR );
+		$known    = array_values( self::dirs() );
+		$excluded = self::excluded();
+		$entries  = array();
+
+		$names = @scandir( $content ); // phpcs:ignore
+		if ( ! is_array( $names ) ) {
+			return $entries;
+		}
+
+		foreach ( $names as $name ) {
+			if ( $name === '.' || $name === '..' ) {
+				continue;
+			}
+			$abs = $content . '/' . $name;
+			if ( in_array( $abs, $known, true ) || self::is_excluded( $abs, $excluded ) ) {
+				continue;
+			}
+			$entries[] = $abs;
+		}
+
+		return $entries;
+	}
+
+	/**
+	 * Absolute paths that must never be packed (our own working data; WP's own
+	 * transient upgrade scratch space, which core empties out after every
+	 * update and has no restore value). Cache is deliberately NOT in this
+	 * list — unlike these, a "cache" dir can hold real, restorable output
+	 * (e.g. a page-cache plugin), so whether to skip it is the opt-in
+	 * "ไม่รวมไฟล์แคช" filter (exclude_cache) instead, same as AI1WM's
+	 * default-include-unless-asked behaviour.
 	 *
 	 * @return array
 	 */
 	private static function excluded() {
 		return array(
 			untrailingslashit( ISX_STORAGE_PATH ),
-			untrailingslashit( WP_CONTENT_DIR ) . '/cache',
 			untrailingslashit( WP_CONTENT_DIR ) . '/upgrade',
 		);
 	}
@@ -162,6 +202,44 @@ class ISX_Files {
 			}
 		}
 
+		// Everything else directly under wp-content (drop-ins, languages/, a
+		// custom folder some other plugin created there) — not gated by
+		// exclude_dirs/keep_only_subdirs since those options only make sense
+		// for the four named dirs above.
+		foreach ( self::other_entries() as $abs_entry ) {
+			if ( is_dir( $abs_entry ) ) {
+				$iterator = new RecursiveIteratorIterator(
+					new RecursiveDirectoryIterator( $abs_entry, FilesystemIterator::SKIP_DOTS ),
+					RecursiveIteratorIterator::LEAVES_ONLY
+				);
+				foreach ( $iterator as $file ) {
+					if ( ! $file->isFile() ) {
+						continue;
+					}
+					$abs = $file->getPathname();
+					if ( self::is_excluded( $abs, $excluded ) ) {
+						continue;
+					}
+					$rel = ltrim( str_replace( '\\', '/', substr( $abs, strlen( $content ) ) ), '/' );
+					if ( $exclude_cache && self::has_cache_segment( $rel ) ) {
+						continue;
+					}
+					if ( ! empty( $exclude_paths ) && self::path_excluded( $rel, $exclude_paths ) ) {
+						continue;
+					}
+					fwrite( $fh, $abs . "\t" . self::NS . $rel . "\n" );
+					$count++;
+				}
+			} elseif ( is_file( $abs_entry ) ) {
+				$rel = ltrim( str_replace( '\\', '/', substr( $abs_entry, strlen( $content ) ) ), '/' );
+				if ( ! empty( $exclude_paths ) && self::path_excluded( $rel, $exclude_paths ) ) {
+					continue;
+				}
+				fwrite( $fh, $abs_entry . "\t" . self::NS . $rel . "\n" );
+				$count++;
+			}
+		}
+
 		fclose( $fh );
 		return $count;
 	}
@@ -173,9 +251,10 @@ class ISX_Files {
 	 * @param string $list_file
 	 * @param int    $byte_offset  Where to resume reading the list.
 	 * @param int    $limit        Max files this batch.
+	 * @param bool   $compress     Store each file raw-DEFLATE compressed.
 	 * @return array { added:int, offset:int, done:bool }
 	 */
-	public static function pack_batch( $archive_path, $list_file, $byte_offset, $limit ) {
+	public static function pack_batch( $archive_path, $list_file, $byte_offset, $limit, $compress = false ) {
 		$fh = fopen( $list_file, 'rb' );
 		if ( $fh === false ) {
 			return array( 'added' => 0, 'offset' => $byte_offset, 'done' => true );
@@ -196,7 +275,7 @@ class ISX_Files {
 			}
 			$parts = explode( "\t", $line, 2 );
 			if ( count( $parts ) === 2 ) {
-				ISX_Archive::add_file( $archive_path, $parts[0], $parts[1] );
+				ISX_Archive::add_file( $archive_path, $parts[0], $parts[1], $compress );
 				$added++;
 			}
 		}
@@ -224,20 +303,7 @@ class ISX_Files {
 		$dest = untrailingslashit( WP_CONTENT_DIR ) . '/' . $rel;
 		wp_mkdir_p( dirname( $dest ) );
 
-		$out       = fopen( $dest, 'wb' );
-		$remaining = (int) $header['s'];
-		if ( $out !== false ) {
-			while ( $remaining > 0 ) {
-				$read   = min( 1048576, $remaining );
-				$buffer = fread( $handle, $read );
-				if ( $buffer === false || $buffer === '' ) {
-					break;
-				}
-				fwrite( $out, $buffer );
-				$remaining -= strlen( $buffer );
-			}
-			fclose( $out );
-		}
+		ISX_Archive::stream_entry_to_file( $handle, $header, $dest );
 		return true;
 	}
 

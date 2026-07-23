@@ -108,25 +108,16 @@ class ISX_Import {
 			function ( $header, $handle ) use ( $db_dump, &$manifest_ref ) {
 				$path = isset( $header['p'] ) ? $header['p'] : '';
 
-				if ( $path === 'manifest.json' ) {
-					$json               = fread( $handle, (int) $header['s'] );
-					$manifest_ref['data'] = json_decode( $json, true );
+				// "package.json"/"database.sql" are current; "manifest.json"/
+				// "database.isxdb" are what packages exported before this
+				// format change used — keep reading both so old backups still
+				// import fine.
+				if ( $path === 'package.json' || $path === 'manifest.json' ) {
+					$manifest_ref['data'] = json_decode( ISX_Archive::read_entry_string( $handle, $header ), true );
 					return;
 				}
-				if ( $path === 'database.isxdb' ) {
-					$out       = fopen( $db_dump, 'wb' );
-					$remaining = (int) $header['s'];
-					if ( $out !== false ) {
-						while ( $remaining > 0 ) {
-							$buf = fread( $handle, min( 1048576, $remaining ) );
-							if ( $buf === false || $buf === '' ) {
-								break;
-							}
-							fwrite( $out, $buf );
-							$remaining -= strlen( $buf );
-						}
-						fclose( $out );
-					}
+				if ( $path === 'database.sql' || $path === 'database.isxdb' ) {
+					ISX_Archive::stream_entry_to_file( $handle, $header, $db_dump );
 					return;
 				}
 				// Content files.
@@ -141,7 +132,17 @@ class ISX_Import {
 		$done_entries = (int) $job->get( 'done_entries', 0 ) + self::ENTRIES_PER_BATCH;
 		$job->set( 'done_entries', $done_entries );
 
-		$progress = min( 60, 3 + (int) ( $done_entries / 20 ) );
+		// Prefer a real files-done/total ratio (total_files is in manifest.json,
+		// always the archive's first entry, so it's known from the first batch
+		// on for any package exported after this field was added) — falls back
+		// to the old fixed-cap guess for older packages that don't have it, so
+		// this doesn't hard-depend on re-exporting everything.
+		$total_files = isset( $manifest_ref['data']['total_files'] ) ? (int) $manifest_ref['data']['total_files'] : 0;
+		if ( $total_files > 0 ) {
+			$progress = 3 + (int) ( 57 * min( 1, $done_entries / ( $total_files + 2 ) ) );
+		} else {
+			$progress = min( 60, 3 + (int) ( $done_entries / 20 ) );
+		}
 		if ( $result['done'] ) {
 			$job->set( 'cursor', array( 'db_offset' => 0 ) );
 			$job->set( 'step', 'database' );
@@ -168,14 +169,33 @@ class ISX_Import {
 		$fh     = fopen( $job->db_dump(), 'rb' );
 		fseek( $fh, (int) $cursor['db_offset'] );
 
+		// {source_prefix}options is what every single WP request needs just to
+		// bootstrap (active_plugins, siteurl, template, ...) — if its rows got
+		// split across more than one poll the normal way, a request landing in
+		// between would find the table only half-rebuilt, fail to see this
+		// plugin in active_plugins, never load it at all, and the import would
+		// be permanently stuck (no wp_ajax_isx_run left to poll). All-in-One WP
+		// Migration hits the exact same problem and solves it the same way —
+		// see their set_atomic_tables() call for wp_options. Every other table
+		// still cuts at the normal per-request line cap.
+		$options_table = $old_prefix . 'options';
+
 		$processed = 0;
 		$done      = false;
-		while ( $processed < self::DB_LINES_PER_BATCH ) {
+		while ( true ) {
+			$pos  = ftell( $fh );
 			$line = fgets( $fh );
 			if ( $line === false ) {
 				$done = true;
 				break;
 			}
+
+			$is_options = ISX_Database::line_table( $line ) === $options_table;
+			if ( ! $is_options && $processed >= self::DB_LINES_PER_BATCH ) {
+				fseek( $fh, $pos );
+				break;
+			}
+
 			ISX_Database::import_line( $line, $search, $replace, $old_prefix, $new_prefix, $skip_emails );
 			$processed++;
 		}
@@ -202,6 +222,18 @@ class ISX_Import {
 		// Flush rewrite rules on next load; clear caches.
 		delete_option( 'rewrite_rules' );
 		wp_cache_flush();
+
+		// Safety net on top of database()'s atomic-options handling: if this
+		// plugin's own entry still didn't survive the active_plugins rewrite
+		// for some unforeseen reason, put it back before finishing — otherwise
+		// the next request wouldn't load this plugin at all and the import
+		// would look finished here but be unrecoverable from the UI.
+		$active = (array) get_option( 'active_plugins', array() );
+		$self   = plugin_basename( ISX_FILE );
+		if ( ! in_array( $self, $active, true ) ) {
+			$active[] = $self;
+			update_option( 'active_plugins', $active );
+		}
 
 		// The package has been fully extracted onto the site; the job's scratch
 		// files (copied archive, extracted DB dump) can go. finish() keeps a

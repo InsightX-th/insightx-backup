@@ -14,7 +14,7 @@ $isx_default   = 'amazon_s3';
 <div class="wrap isx-wrap">
 	<div class="isx-card">
 		<h1 class="isx-title"><span class="dashicons dashicons-database-export"></span> <?php esc_html_e( 'ส่งออกเว็บไซต์', 'insightx-backup' ); ?></h1>
-		<p class="isx-muted"><?php esc_html_e( 'แพ็กฐานข้อมูล + ไฟล์ (uploads / plugins / themes) เป็นแพ็กเกจ .wpress เดียว ดาวน์โหลดเป็นไฟล์ หรือส่งขึ้น Storage โดยตรง', 'insightx-backup' ); ?></p>
+		<p class="isx-muted"><?php esc_html_e( 'แพ็กฐานข้อมูลไฟล์เป็นแพ็กเกจ .wpress เดียว ดาวน์โหลดเป็นไฟล์ หรือส่งขึ้น Storage โดยตรง', 'insightx-backup' ); ?></p>
 
 		<div id="isx-export-idle">
 			<input type="hidden" id="isx-to-storage" value="" />
@@ -111,7 +111,7 @@ $isx_default   = 'amazon_s3';
 			</div>
 
 			<p class="isx-hint">
-				<?php esc_html_e( 'ยังไม่ได้ตั้งค่า? ไปที่เมนู "ตั้งค่า Storage" เพื่อกรอก credential ของแต่ละ provider ก่อน', 'insightx-backup' ); ?>
+				<?php esc_html_e( 'ยังไม่ได้ตั้งค่า? ไปที่เมนู "การเชื่อมต่อ" เพื่อกรอก credential ของแต่ละ provider ก่อน', 'insightx-backup' ); ?>
 			</p>
 
 			<div class="isx-actions">

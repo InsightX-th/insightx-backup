@@ -62,7 +62,6 @@ class ISX_Export {
 			'wp_version'              => get_bloginfo( 'version' ),
 			'no_replace_email_domain' => ! empty( $options['no_replace_email_domain'] ),
 		);
-		$job->set( 'manifest', $manifest );
 
 		$tables = empty( $options['exclude_database'] ) ? ISX_Database::tables() : array();
 		if ( ! empty( $options['exclude_selected_tables'] ) ) {
@@ -98,7 +97,15 @@ class ISX_Export {
 			'exclude_cache'     => ! empty( $options['exclude_cache_files'] ),
 			'exclude_paths'     => isset( $options['exclude_selected_files'] ) ? (array) $options['exclude_selected_files'] : array(),
 		);
-		$job->set( 'total_files', ISX_Files::build_list( $job->file_list(), $filters ) );
+		$total_files = ISX_Files::build_list( $job->file_list(), $filters );
+		$job->set( 'total_files', $total_files );
+
+		// Written into manifest.json (inside the archive itself) — not just the
+		// job's own state — so the import side can compute a true files-done/
+		// total percentage instead of the old fixed-cap guess once it reads this
+		// back on the other site.
+		$manifest['total_files'] = $total_files;
+		$job->set( 'manifest', $manifest );
 
 		$job->set( 'cursor', array( 'ti' => 0, 'off' => 0 ) );
 		$job->set( 'step', 'database' );
@@ -163,9 +170,15 @@ class ISX_Export {
 	}
 
 	private static function pack_meta( ISX_Job $job ) {
-		ISX_Archive::add_data( $job->archive(), 'manifest.json', wp_json_encode( $job->get( 'manifest', array() ) ) );
+		$options  = (array) $job->get( 'options', array() );
+		$compress = ! empty( $options['compression'] ) && $options['compression'] === 'gzip';
+
+		// package.json stays uncompressed — it's a few hundred bytes, and
+		// keeping it plain lets a package be sanity-checked by eye/grep
+		// without needing this plugin's own inflate step.
+		ISX_Archive::add_data( $job->archive(), 'package.json', wp_json_encode( $job->get( 'manifest', array() ) ) );
 		if ( is_file( $job->db_dump() ) ) {
-			ISX_Archive::add_file( $job->archive(), $job->db_dump(), 'database.isxdb' );
+			ISX_Archive::add_file( $job->archive(), $job->db_dump(), 'database.sql', $compress );
 		}
 		$job->set( 'cursor', array( 'fo' => 0 ) );
 		$job->set( 'step', 'files' );
@@ -176,8 +189,11 @@ class ISX_Export {
 	}
 
 	private static function files( ISX_Job $job ) {
+		$options  = (array) $job->get( 'options', array() );
+		$compress = ! empty( $options['compression'] ) && $options['compression'] === 'gzip';
+
 		$cursor = (array) $job->get( 'cursor', array( 'fo' => 0 ) );
-		$result = ISX_Files::pack_batch( $job->archive(), $job->file_list(), (int) $cursor['fo'], self::FILES_PER_BATCH );
+		$result = ISX_Files::pack_batch( $job->archive(), $job->file_list(), (int) $cursor['fo'], self::FILES_PER_BATCH, $compress );
 
 		$cursor['fo'] = $result['offset'];
 		$job->set( 'cursor', $cursor );
@@ -197,7 +213,7 @@ class ISX_Export {
 		return array(
 			'progress' => $progress,
 			'done'     => false,
-			'message'  => sprintf( 'แพ็กไฟล์ %d/%d...', $done_files, $total ),
+			'message'  => sprintf( 'แพ็กไฟล์ %d/%d รายการ', $done_files, $total ),
 		);
 	}
 
@@ -211,17 +227,11 @@ class ISX_Export {
 
 		$options = (array) $job->get( 'options', array() );
 
-		// Compress before encrypting — encrypted data doesn't compress.
-		if ( $backup_path !== null && isset( $options['compression'] ) && $options['compression'] === 'gzip' ) {
-			$tmp    = $backup_path . '.gz';
-			$result = ISX_Compress::gzip_file( $backup_path, $tmp );
-			if ( ! is_wp_error( $result ) ) {
-				@unlink( $backup_path );
-				rename( $tmp, $backup_path );
-			} else {
-				@unlink( $tmp );
-			}
-		}
+		// Compression now happens per-entry during packing (see files()/
+		// pack_meta()) — container-level, like All-in-One WP Migration's own
+		// archive format — rather than gzip-wrapping the whole finished file
+		// here afterwards. That old whole-file step would just double up on
+		// (and undo the readability of) what's already compressed inside.
 
 		if ( $backup_path !== null && ! empty( $options['encrypt'] ) ) {
 			$password = ISX_Crypto::decrypt_string( (string) $job->get( 'encrypt_password_enc', '' ) );

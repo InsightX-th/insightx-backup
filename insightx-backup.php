@@ -24,7 +24,31 @@ define( 'ISX_VERSION', '0.1.0' );
 define( 'ISX_FILE', __FILE__ );
 define( 'ISX_PATH', plugin_dir_path( __FILE__ ) );
 define( 'ISX_URL', plugin_dir_url( __FILE__ ) );
-define( 'ISX_STORAGE_PATH', ISX_PATH . 'storage' );
+
+/**
+ * Where in-progress job data and finished local backups live. Defaults to the
+ * plugin's own storage/ dir, but an admin can point it elsewhere from Settings
+ * (see ISX_Admin::ajax_storage_dir_save()) so backups survive a plugin
+ * delete/reinstall or land on a bigger disk. Falls back to the default and
+ * forgets the option if the saved path is no longer usable.
+ *
+ * @return string
+ */
+function isx_resolve_storage_path() {
+	$default = untrailingslashit( ISX_PATH . 'storage' );
+	$custom  = get_option( 'isx_storage_path', '' );
+	if ( $custom === '' ) {
+		return $default;
+	}
+	$custom = untrailingslashit( $custom );
+	$parent = dirname( $custom );
+	if ( ! is_dir( $parent ) || ! is_writable( $parent ) ) {
+		delete_option( 'isx_storage_path' );
+		return $default;
+	}
+	return $custom;
+}
+define( 'ISX_STORAGE_PATH', isx_resolve_storage_path() );
 
 /**
  * Simple, explicit class loader (no reliance on any third-party autoloader).
@@ -48,9 +72,24 @@ require_once ISX_PATH . 'includes/class-isx-admin.php';
 // no callback to invoke and a job would only ever advance while a browser
 // tab is actively polling it.
 add_action( 'isx_cron_step', array( 'ISX_Admin', 'cron_step' ) );
+add_action( 'isx_scheduled_backup', array( 'ISX_Admin', 'run_scheduled_backup' ) );
 
 if ( is_admin() ) {
 	ISX_Admin::boot();
+}
+
+if ( defined( 'WP_CLI' ) && WP_CLI ) {
+	require_once ISX_PATH . 'includes/class-isx-cli.php';
+	// Registered on cli_init rather than directly here — All-in-One WP
+	// Migration's own changelog notes moving their command registration from
+	// plugins_loaded to cli_init specifically to fix ordering issues, so we
+	// follow the same, already-proven-safe hook.
+	add_action(
+		'cli_init',
+		function () {
+			WP_CLI::add_command( 'isx', 'ISX_CLI_Command' );
+		}
+	);
 }
 
 /**
@@ -71,3 +110,12 @@ function isx_activate() {
 	}
 }
 register_activation_hook( __FILE__, 'isx_activate' );
+
+/**
+ * Deactivation: stop the scheduled-backup cron so it doesn't keep firing
+ * (and failing to find its own hook) after the plugin is off.
+ */
+function isx_deactivate() {
+	wp_clear_scheduled_hook( 'isx_scheduled_backup' );
+}
+register_deactivation_hook( __FILE__, 'isx_deactivate' );

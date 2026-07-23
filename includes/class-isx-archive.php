@@ -8,8 +8,11 @@
  *   [8 bytes]  magic "ISXPK\0\0\1"
  *   repeated entries, each:
  *     [4 bytes]  header length  (uint32, little-endian)
- *     [N bytes]  header JSON     {"p":"path","s":size,"m":mtime}
- *     [size bytes] raw content
+ *     [N bytes]  header JSON     {"p":"path","s":size,"m":mtime,"z":0|1,"u":origSize}
+ *     [size bytes] content — raw, or raw-DEFLATE (RFC1951) compressed when "z":1.
+ *       "s" is always the stored (on-disk) byte count, used to seek to the next
+ *       entry regardless of compression; "u" (only present when "z":1) is the
+ *       original decompressed size, for progress/size display.
  *   end marker:
  *     [4 bytes]  0x00000000  (a zero-length header terminates the archive)
  *
@@ -48,18 +51,71 @@ class ISX_Archive {
 	 * @param string $path         Archive path.
 	 * @param string $source_abs   Absolute path to the source file.
 	 * @param string $archive_name Relative name to store it under.
+	 * @param bool   $compress     Store raw-DEFLATE compressed instead of raw.
 	 * @return bool
 	 */
-	public static function add_file( $path, $source_abs, $archive_name ) {
+	public static function add_file( $path, $source_abs, $archive_name, $compress = false ) {
 		if ( ! is_file( $source_abs ) || ! is_readable( $source_abs ) ) {
 			return false;
 		}
-		$size = filesize( $source_abs );
-		$out  = fopen( $path, 'ab' );
+		$original_size = filesize( $source_abs );
+		$mtime         = @filemtime( $source_abs );
+
+		if ( $compress ) {
+			// Compress to a scratch file first so the real stored size is known
+			// up front (headers precede content in this append-only format, so
+			// there's no going back to patch it in afterwards) — still fully
+			// streamed via a filter, never buffers the whole file in memory,
+			// so this is safe for large uploads too.
+			$tmp = $path . '.entrytmp';
+			$tmp_out = fopen( $tmp, 'wb' );
+			if ( $tmp_out === false ) {
+				return false;
+			}
+			stream_filter_append( $tmp_out, 'zlib.deflate', STREAM_FILTER_WRITE );
+			$in = fopen( $source_abs, 'rb' );
+			if ( $in === false ) {
+				fclose( $tmp_out );
+				@unlink( $tmp );
+				return false;
+			}
+			while ( ! feof( $in ) ) {
+				$buffer = fread( $in, self::CHUNK );
+				if ( $buffer === false ) {
+					break;
+				}
+				fwrite( $tmp_out, $buffer );
+			}
+			fclose( $in );
+			fclose( $tmp_out ); // Flushes the deflate filter.
+
+			$out = fopen( $path, 'ab' );
+			if ( $out === false ) {
+				@unlink( $tmp );
+				return false;
+			}
+			self::write_header( $out, $archive_name, filesize( $tmp ), $mtime, true, $original_size );
+			$tin = fopen( $tmp, 'rb' );
+			if ( $tin !== false ) {
+				while ( ! feof( $tin ) ) {
+					$buffer = fread( $tin, self::CHUNK );
+					if ( $buffer === false ) {
+						break;
+					}
+					fwrite( $out, $buffer );
+				}
+				fclose( $tin );
+			}
+			fclose( $out );
+			@unlink( $tmp );
+			return true;
+		}
+
+		$out = fopen( $path, 'ab' );
 		if ( $out === false ) {
 			return false;
 		}
-		self::write_header( $out, $archive_name, $size, @filemtime( $source_abs ) );
+		self::write_header( $out, $archive_name, $original_size, $mtime );
 
 		$in = fopen( $source_abs, 'rb' );
 		if ( $in !== false ) {
@@ -82,17 +138,79 @@ class ISX_Archive {
 	 * @param string $path
 	 * @param string $archive_name
 	 * @param string $content
+	 * @param bool   $compress
 	 * @return bool
 	 */
-	public static function add_data( $path, $archive_name, $content ) {
+	public static function add_data( $path, $archive_name, $content, $compress = false ) {
 		$out = fopen( $path, 'ab' );
 		if ( $out === false ) {
 			return false;
 		}
-		self::write_header( $out, $archive_name, strlen( $content ), time() );
-		fwrite( $out, $content );
+		if ( $compress ) {
+			$deflated = gzdeflate( $content );
+			self::write_header( $out, $archive_name, strlen( $deflated ), time(), true, strlen( $content ) );
+			fwrite( $out, $deflated );
+		} else {
+			self::write_header( $out, $archive_name, strlen( $content ), time() );
+			fwrite( $out, $content );
+		}
 		fclose( $out );
 		return true;
+	}
+
+	/**
+	 * Stream an entry's content out to a destination file, transparently
+	 * inflating first if it was stored compressed. Shared by every consumer
+	 * that materialises an entry back onto disk (restore_stream(), the DB
+	 * dump restore copy, extract_all()) so the decompression logic — the
+	 * fiddly part — exists in exactly one place.
+	 *
+	 * @param resource $handle    Archive handle, positioned at the entry's content.
+	 * @param array    $header
+	 * @param string   $dest_path
+	 * @return bool
+	 */
+	public static function stream_entry_to_file( $handle, $header, $dest_path ) {
+		$out = fopen( $dest_path, 'wb' );
+		if ( $out === false ) {
+			return false;
+		}
+		if ( ! empty( $header['z'] ) ) {
+			stream_filter_append( $out, 'zlib.inflate' );
+		}
+
+		$remaining = (int) $header['s'];
+		while ( $remaining > 0 ) {
+			$read   = min( self::CHUNK, $remaining );
+			$buffer = fread( $handle, $read );
+			if ( $buffer === false || $buffer === '' ) {
+				break;
+			}
+			fwrite( $out, $buffer );
+			$remaining -= strlen( $buffer );
+		}
+		fclose( $out );
+		return true;
+	}
+
+	/**
+	 * Read an entry's full content into memory as a string (for small entries
+	 * like manifest/package.json — never used for arbitrarily large files,
+	 * see stream_entry_to_file() for those), inflating first if compressed.
+	 *
+	 * @param resource $handle
+	 * @param array    $header
+	 * @return string|false
+	 */
+	public static function read_entry_string( $handle, $header ) {
+		$data = fread( $handle, (int) $header['s'] );
+		if ( $data === false ) {
+			return false;
+		}
+		if ( ! empty( $header['z'] ) ) {
+			$data = @gzinflate( $data ); // phpcs:ignore
+		}
+		return $data;
 	}
 
 	/**
@@ -198,21 +316,7 @@ class ISX_Archive {
 				}
 				$dest = rtrim( $base_dir, '/\\' ) . '/' . $rel;
 				wp_mkdir_p( dirname( $dest ) );
-
-				$out       = fopen( $dest, 'wb' );
-				$remaining = (int) $header['s'];
-				if ( $out !== false ) {
-					while ( $remaining > 0 ) {
-						$read   = min( self::CHUNK, $remaining );
-						$buffer = fread( $handle, $read );
-						if ( $buffer === false || $buffer === '' ) {
-							break;
-						}
-						fwrite( $out, $buffer );
-						$remaining -= strlen( $buffer );
-					}
-					fclose( $out );
-				}
+				self::stream_entry_to_file( $handle, $header, $dest );
 				return true;
 			}
 		);
@@ -281,18 +385,23 @@ class ISX_Archive {
 	 *
 	 * @param resource $out
 	 * @param string   $name
-	 * @param int      $size
+	 * @param int      $size           Stored (on-disk) byte count.
 	 * @param int      $mtime
+	 * @param bool     $compressed
+	 * @param int|null $original_size  Only meaningful when $compressed is true.
 	 * @return void
 	 */
-	private static function write_header( $out, $name, $size, $mtime ) {
-		$header = wp_json_encode(
-			array(
-				'p' => self::sanitize_relative( $name ),
-				's' => (int) $size,
-				'm' => (int) $mtime,
-			)
+	private static function write_header( $out, $name, $size, $mtime, $compressed = false, $original_size = null ) {
+		$data = array(
+			'p' => self::sanitize_relative( $name ),
+			's' => (int) $size,
+			'm' => (int) $mtime,
 		);
+		if ( $compressed ) {
+			$data['z'] = 1;
+			$data['u'] = (int) $original_size;
+		}
+		$header = wp_json_encode( $data );
 		fwrite( $out, pack( 'V', strlen( $header ) ) );
 		fwrite( $out, $header );
 	}

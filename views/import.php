@@ -53,7 +53,6 @@ $isx_providers = ISX_Destinations::providers();
 			<div class="isx-bar"><div class="isx-bar-fill"></div></div>
 			<div class="isx-progress-meta">
 				<span class="isx-percent">0%</span>
-				<span class="isx-elapsed"></span>
 				<span class="isx-eta"></span>
 			</div>
 			<p class="isx-status"></p>
