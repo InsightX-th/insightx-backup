@@ -4,7 +4,7 @@ Tags: backup, migration, export, import, s3
 Requires at least: 3.3
 Tested up to: 7.0.2
 Requires PHP: 5.3
-Stable tag: 0.1.3
+Stable tag: 0.1.4
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -22,6 +22,7 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 * **การเชื่อมต่อ Storage** — Amazon S3, Minio, Garage, Cloudflare R2, DigitalOcean Spaces, Google Cloud Storage หรือปลายทาง S3-compatible อื่นๆ พร้อมกันหลายเจ้า
 * **Backup อัตโนมัติ** — ตั้งเวลา export อัตโนมัติผ่าน WP-Cron (รายวัน/รายสัปดาห์/รายเดือน)
 * **Find & Replace** — แทนที่ข้อความในฐานข้อมูลตอน export ได้หลายคู่
+* **ศูนย์รีเซ็ต (Reset Hub)** — ล้างปลั๊กอิน / รีเซ็ตธีม / ล้างคลังสื่อ / รีเซ็ตฐานข้อมูล / รีเซ็ตทั้งเว็บไซต์ พร้อมยืนยันด้วยรหัสผ่านก่อนทำรายการทุกครั้ง
 * **WP-CLI** — `wp isx export` / `wp isx import <file>` / `wp isx providers`
 
 > ⚠️ ไฟล์ .wpress ของปลั๊กอินนี้เป็นฟอร์แมตของ InsightX เอง ไม่ compatible กับไฟล์ .wpress ของ All-in-One WP Migration แม้ใช้นามสกุลเดียวกัน
@@ -44,6 +45,9 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 **ความต้องการของระบบ:** PHP 7.4+, ส่วนขยาย cURL/zlib/openssl
 
 == Changelog ==
+
+= 0.1.4 =
+* เพิ่มเมนู "ศูนย์รีเซ็ต" (Reset Hub) — ล้างปลั๊กอิน, รีเซ็ตธีม, ล้างคลังสื่อ, รีเซ็ตฐานข้อมูล, รีเซ็ตทั้งเว็บไซต์ ทุกรายการต้องยืนยันด้วยรหัสผ่านบัญชีก่อนทำ และมีปุ่มสร้างข้อมูลสำรองก่อนทำรายการในตัว
 
 = 0.1.3 =
 * แก้เวลาที่เหลือประมาณการ (ETA) ไม่แสดงหน่วยชั่วโมง (ค้างที่นาทีอย่างเดียว เช่น "65 นาที" แทนที่จะเป็น "1 ชั่วโมง 5 นาที")

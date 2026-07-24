@@ -3,7 +3,7 @@
  * Plugin Name: InsightX Backup
  * Plugin URI: https://insightx.in.th/
  * Description: ย้าย/สำรอง WordPress ทั้งเว็บ (ฐานข้อมูล + ไฟล์) เป็นแพ็กเกจเดียว แล้ว import กลับหรือส่งขึ้น S3 ได้ — เขียนขึ้นใหม่ทั้งหมดโดย InsightX.
- * Version: 0.1.3
+ * Version: 0.1.4
  * Author: InsightX
  * Author URI: https://insightx.in.th/
  * Text Domain: insightx-backup
@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ISX_VERSION', '0.1.3' );
+define( 'ISX_VERSION', '0.1.4' );
 define( 'ISX_FILE', __FILE__ );
 define( 'ISX_PATH', plugin_dir_path( __FILE__ ) );
 define( 'ISX_URL', plugin_dir_url( __FILE__ ) );
@@ -45,6 +45,18 @@ $isx_update_checker = new ISX_VcsPluginUpdateChecker(
 	'insightx-backup'
 );
 $isx_update_checker->getVcsApi()->enableReleaseAssets();
+
+// gitlab.insightx.dev is only reachable over the office LAN/VPN, where
+// latency is higher than a public host — the library's own 3s default
+// (GitLabApi::api()) times out there more often than not. 10s matches what
+// the library itself already uses for its WP-Cron path (wp_doing_cron() ? 10 : 3).
+add_filter(
+	'puc_request_info_options-insightx-backup',
+	function ( $options ) {
+		$options['timeout'] = 10;
+		return $options;
+	}
+);
 
 /**
  * Where in-progress job data and finished local backups live. Defaults to the
