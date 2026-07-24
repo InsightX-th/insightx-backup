@@ -163,6 +163,9 @@ class ISX_Admin {
 	public static function ajax_export_start() {
 		self::guard( 'export' );
 		$job = ISX_Job::create( 'export' );
+		if ( ! $job ) {
+			wp_send_json_error( array( 'message' => 'สร้างงานไม่สำเร็จ ดูสาเหตุได้ที่หน้า Log' ) );
+		}
 
 		$provider = isset( $_POST['to_storage'] ) ? sanitize_key( wp_unslash( $_POST['to_storage'] ) ) : '';
 		if ( $provider !== '' && isset( ISX_Destinations::providers()[ $provider ] ) ) {
@@ -238,6 +241,9 @@ class ISX_Admin {
 	public static function ajax_import_create() {
 		self::guard( 'import' );
 		$job = ISX_Job::create( 'import' );
+		if ( ! $job ) {
+			wp_send_json_error( array( 'message' => 'สร้างงานไม่สำเร็จ ดูสาเหตุได้ที่หน้า Log' ) );
+		}
 		file_put_contents( $job->archive(), '' );
 		wp_send_json_success( array( 'job' => $job->id(), 'secret' => $job->get( 'secret' ) ) );
 	}
@@ -616,6 +622,9 @@ class ISX_Admin {
 		}
 
 		$job = ISX_Job::create( 'import' );
+		if ( ! $job ) {
+			wp_send_json_error( array( 'message' => 'สร้างงานไม่สำเร็จ ดูสาเหตุได้ที่หน้า Log' ) );
+		}
 		copy( $path, $job->archive() );
 
 		wp_send_json_success( array( 'job' => $job->id(), 'secret' => $job->get( 'secret' ) ) );
@@ -805,6 +814,9 @@ class ISX_Admin {
 		}
 
 		$job = ISX_Job::create( 'export' );
+		if ( ! $job ) {
+			return;
+		}
 		$job->set( 'options', array() );
 		$to_storage = isset( $schedule['to_storage'] ) ? $schedule['to_storage'] : '';
 		if ( $to_storage !== '' && ISX_Destinations::is_configured( $to_storage ) ) {
@@ -928,7 +940,10 @@ class ISX_Admin {
 
 		@set_time_limit( 0 );
 
-		$job    = ISX_Job::create( 'import' );
+		$job = ISX_Job::create( 'import' );
+		if ( ! $job ) {
+			wp_send_json_error( array( 'message' => 'สร้างงานไม่สำเร็จ ดูสาเหตุได้ที่หน้า Log' ) );
+		}
 		$client = new ISX_S3_Client( ISX_Destinations::get( $slug ) );
 		$result = $client->get_object( $key, $job->archive() );
 

@@ -273,6 +273,7 @@ class ISX_Import {
 		// Flush rewrite rules on next load; clear caches.
 		delete_option( 'rewrite_rules' );
 		wp_cache_flush();
+		self::purge_content_cache();
 
 		// Safety net on top of database()'s atomic-options handling: if this
 		// plugin's own entry still didn't survive the active_plugins rewrite
@@ -298,6 +299,37 @@ class ISX_Import {
 			'done'     => true,
 			'message'  => 'นำเข้าเสร็จสิ้น — โปรดล็อกอินใหม่',
 		);
+	}
+
+	/**
+	 * Empty wp-content/cache/ after the DB rewrite. Restored packages can carry
+	 * a minifier/page-cache plugin's static output (Autoptimize CSS/JS, etc.)
+	 * byte-verbatim — ISX_Serialize::replace() only rewrites serialized DB
+	 * values, never these on-disk files — so without this they'd keep serving
+	 * asset URLs baked for the old domain until the cache plugin happens to
+	 * regenerate them on its own. Every cache plugin already tolerates a
+	 * missing/empty cache dir and rebuilds on the next request, so this is
+	 * safe to do unconditionally instead of guessing which plugin is active.
+	 *
+	 * @return void
+	 */
+	private static function purge_content_cache() {
+		$dir = untrailingslashit( WP_CONTENT_DIR ) . '/cache';
+		if ( ! is_dir( $dir ) ) {
+			return;
+		}
+
+		$iterator = new RecursiveIteratorIterator(
+			new RecursiveDirectoryIterator( $dir, FilesystemIterator::SKIP_DOTS ),
+			RecursiveIteratorIterator::CHILD_FIRST
+		);
+		foreach ( $iterator as $item ) {
+			if ( $item->isDir() ) {
+				@rmdir( $item->getPathname() ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			} else {
+				@unlink( $item->getPathname() ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			}
+		}
 	}
 
 	/**
