@@ -17,9 +17,13 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Local tooling (if this plugin is ever built/tested with Node/Composer)
+# Local tooling (if this plugin is ever built/tested with Node/Composer).
+# The bare "vendor/" rule is for a future Composer setup at the plugin root —
+# plugin-update-checker's bundled vendor/ (PucReadmeParser, Parsedown) must
+# ship with the plugin, or every release zip fatals on "Check for updates".
 node_modules/
 vendor/
+!libs/plugin-update-checker/vendor/
 composer.lock
 package-lock.json
 
