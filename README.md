@@ -26,11 +26,11 @@
 
 ## การติดตั้ง
 
-### ดาวน์โหลด zip จาก GitLab
+### ดาวน์โหลด zip จาก GitHub
 
-1. เข้า `https://gitlab.insightx.dev/plugin-wordpress/insightx-backup`
-2. เมนูซ้าย **Deploy → Releases** — เลือกเวอร์ชันล่าสุด แล้วดาวน์โหลดไฟล์ `insightx-backup.zip` จากส่วน "assets" (ไฟล์นี้ build จาก CI แล้ว ไม่มี `.git`/`.gitlab-ci.yml` ติดมา พร้อมอัปโหลดได้เลย)
-   - ถ้า repo ยังไม่มี release เลย (ยังไม่เคย push tag) ให้ไปที่ **Code → Tags** แทน แล้วกดดาวน์โหลด "Source code (zip)" ของ tag ที่ต้องการแทนได้ — ได้ผลเหมือนกัน
+1. เข้า `https://github.com/Noppakalo/insightx-backup`
+2. เมนูขวา **Releases** — เลือกเวอร์ชันล่าสุด แล้วดาวน์โหลดไฟล์ `insightx-backup-vX.X.X.zip` จากส่วน "Assets" (ไฟล์นี้ build จาก GitHub Actions แล้ว ไม่มี `.git`/`.github` ติดมา พร้อมอัปโหลดได้เลย)
+   - ถ้า repo ยังไม่มี release เลย (ยังไม่เคย push tag) ให้ไปที่ **Tags** แทน แล้วกดดาวน์โหลด "Source code (zip)" ของ tag ที่ต้องการแทนได้ — ได้ผลเหมือนกัน
 3. ไปที่เว็บ WordPress ปลายทาง → **Plugins → Add New → Upload Plugin**
 4. เลือกไฟล์ zip ที่ดาวน์โหลดมา → กด **Install Now**
 5. ถ้าเว็บนั้นเคยลงปลั๊กอินตัวนี้เวอร์ชันเก่ามาก่อน ให้ **Deactivate + Delete ตัวเก่าก่อน** แล้วค่อยอัปโหลดใหม่ (อย่าทับ) — กันปัญหา cache JS/CSS เก่าค้าง (ดูหัวข้อ "การอัปเดตปลั๊กอิน")
@@ -137,15 +137,15 @@ wp isx providers
 
 ## การอัปเดตปลั๊กอิน
 
-เช็คเวอร์ชันใหม่อัตโนมัติจาก GitLab (self-hosted, `gitlab.insightx.dev/plugin-wordpress/insightx-backup`) ผ่าน [plugin-update-checker](https://github.com/YahnisElsts/plugin-update-checker) (vendored ไว้ใน `libs/`) — ขึ้น "There is a new version available... update now" ในหน้า Plugins แบบเดียวกับปลั๊กอินที่อัปเดตผ่าน WordPress.org
+เช็คเวอร์ชันใหม่อัตโนมัติจาก GitHub (`github.com/Noppakalo/insightx-backup`) ผ่าน [plugin-update-checker](https://github.com/YahnisElsts/plugin-update-checker) (vendored ไว้ใน `libs/`) — ขึ้น "There is a new version available... update now" ในหน้า Plugins แบบเดียวกับปลั๊กอินที่อัปเดตผ่าน WordPress.org
 
 **วิธี release เวอร์ชันใหม่:**
 1. อัปเดตเลข `Version:` ใน `insightx-backup.php` (header + `ISX_VERSION`)
-2. Commit + push แล้ว `git tag v0.1.x && git push origin v0.1.x`
-3. `.gitlab-ci.yml` จะรันอัตโนมัติตอน push tag — build zip ด้วย `git archive` (จาก tracked tree ของ tag นั้น, ไม่มี `.git`/ไฟล์ dev-only ติดไปเพราะ `.gitattributes` สั่ง `export-ignore`), อัปโหลดขึ้น GitLab generic package registry แล้วสร้าง GitLab Release แนบ zip เป็น release asset
+2. Commit + push แล้ว `git tag v0.1.x && git push origin v0.1.x` (push ขึ้น remote GitHub)
+3. `.github/workflows/release.yml` จะรันอัตโนมัติตอน push tag — build zip ด้วย `git archive` (จาก tracked tree ของ tag นั้น, ไม่มี `.git`/ไฟล์ dev-only ติดไปเพราะ `.gitattributes` สั่ง `export-ignore`) แล้วสร้าง GitHub Release แนบ zip เป็น release asset
 4. เว็บที่ลงปลั๊กอินไว้จะเห็นอัปเดตใหม่ภายในรอบเช็คถัดไป (หรือกด "Check again" ในหน้า Plugins)
 
-Repo เป็น public ไม่ต้องตั้งค่า access token ฝั่ง WordPress — ถ้าเปลี่ยนเป็น private ทีหลัง ต้องเพิ่ม token ตอน `new ISX_GitLabApi(...)` ใน `insightx-backup.php`
+Repo เป็น public ไม่ต้องตั้งค่า access token ฝั่ง WordPress — ถ้าเปลี่ยนเป็น private ทีหลัง ต้องเพิ่ม token ให้ `PucFactory::buildUpdateChecker()` ใน `insightx-backup.php`
 
 ---
 
@@ -154,11 +154,11 @@ Repo เป็น public ไม่ต้องตั้งค่า access token
 ```
 insightx-backup.php           entry point, define constants, load classes, isx_resolve_storage_path(),
                                ลงทะเบียน cron (isx_cron_step, isx_scheduled_backup) + WP-CLI (cli_init) +
-                               GitLab update checker (plugin-update-checker)
-.gitlab-ci.yml                 CI: build zip จาก git tag แล้วสร้าง GitLab Release พร้อม release asset
-.gitattributes                 export-ignore ไฟล์ dev-only (.gitlab-ci.yml เอง) ตอน git archive
+                               GitHub update checker (plugin-update-checker)
+.github/workflows/release.yml  CI: build zip จาก git tag แล้วสร้าง GitHub Release พร้อม release asset
+.gitattributes                 export-ignore ไฟล์ dev-only (.github เอง) ตอน git archive
 libs/
-  plugin-update-checker/       เช็ค/แจ้งเตือนเวอร์ชันใหม่จาก GitLab release (vendored, YahnisElsts)
+  plugin-update-checker/       เช็ค/แจ้งเตือนเวอร์ชันใหม่จาก GitHub release (vendored, YahnisElsts)
 includes/
   class-isx-admin.php          เมนู wp-admin + AJAX router ทั้งหมด + run_job_to_completion() (ใช้ร่วมกับ CLI/cron)
   class-isx-cli.php            WP-CLI command (wp isx export/import/providers) — โหลดเฉพาะตอน WP_CLI active

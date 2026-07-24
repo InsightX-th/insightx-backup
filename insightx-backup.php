@@ -25,38 +25,25 @@ define( 'ISX_FILE', __FILE__ );
 define( 'ISX_PATH', plugin_dir_path( __FILE__ ) );
 define( 'ISX_URL', plugin_dir_url( __FILE__ ) );
 
-// === GitLab Plugin Update Checker ===
-// Self-hosted GitLab (not gitlab.com), so PucFactory::buildUpdateChecker()'s
-// URL-based auto-detection doesn't apply (it only recognizes the exact host
-// "gitlab.com" and only accepts a URL string, not a pre-built API object) —
-// instantiate the versioned VCS classes directly instead, same as PUC's own
-// docs recommend for self-hosted/enterprise VCS. Public repo, no access
-// token needed. CI (.gitlab-ci.yml) attaches a built zip to each tag's
-// GitLab Release; enableReleaseAssets() makes updates install that zip
-// instead of GitLab's raw (un-built) source archive for the tag.
+// === GitHub Plugin Update Checker ===
+// gitlab.insightx.dev is an internal self-hosted GitLab, only reachable over
+// the office LAN/VPN — customer sites (e.g. sounddd.shop) couldn't reach it
+// to check for updates (cURL error 28 / puc-no-update-source). Moved to a
+// public GitHub repo so update checks work from anywhere. GitHub is
+// URL-autodetected by PucFactory, so no need to build the VCS API by hand.
+// GitHub Actions (.github/workflows/release.yml) attaches a built zip to
+// each tag's GitHub Release; enableReleaseAssets() makes updates install
+// that zip instead of GitHub's raw (un-built) source archive for the tag.
 require_once ISX_PATH . 'libs/plugin-update-checker/plugin-update-checker.php';
 
-use YahnisElsts\PluginUpdateChecker\v5p6\Vcs\GitLabApi as ISX_GitLabApi;
-use YahnisElsts\PluginUpdateChecker\v5p6\Vcs\PluginUpdateChecker as ISX_VcsPluginUpdateChecker;
+use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
 
-$isx_update_checker = new ISX_VcsPluginUpdateChecker(
-	new ISX_GitLabApi( 'https://gitlab.insightx.dev/plugin-wordpress/insightx-backup' ),
+$isx_update_checker = PucFactory::buildUpdateChecker(
+	'https://github.com/Noppakalo/insightx-backup',
 	__FILE__,
 	'insightx-backup'
 );
 $isx_update_checker->getVcsApi()->enableReleaseAssets();
-
-// gitlab.insightx.dev is only reachable over the office LAN/VPN, where
-// latency is higher than a public host — the library's own 3s default
-// (GitLabApi::api()) times out there more often than not. 10s matches what
-// the library itself already uses for its WP-Cron path (wp_doing_cron() ? 10 : 3).
-add_filter(
-	'puc_request_info_options-insightx-backup',
-	function ( $options ) {
-		$options['timeout'] = 10;
-		return $options;
-	}
-);
 
 /**
  * Where in-progress job data and finished local backups live. Defaults to the

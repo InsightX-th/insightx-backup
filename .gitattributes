@@ -1,2 +1,2 @@
-/.gitlab-ci.yml export-ignore
+/.github export-ignore
 /.gitattributes export-ignore

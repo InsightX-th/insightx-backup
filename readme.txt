@@ -29,10 +29,10 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 
 == Installation ==
 
-**ดาวน์โหลด zip จาก GitLab**
+**ดาวน์โหลด zip จาก GitHub**
 
-1. เข้า `https://gitlab.insightx.dev/plugin-wordpress/insightx-backup`
-2. เมนู Deploy → Releases เลือกเวอร์ชันล่าสุด ดาวน์โหลด `insightx-backup.zip` จากส่วน assets
+1. เข้า `https://github.com/Noppakalo/insightx-backup`
+2. เมนู Releases เลือกเวอร์ชันล่าสุด ดาวน์โหลด `insightx-backup-vX.X.X.zip` จากส่วน Assets
 3. ไปที่เว็บ WordPress ปลายทาง → Plugins → Add New → Upload Plugin
 4. เลือกไฟล์ zip → Install Now → Activate Plugin
 
@@ -64,4 +64,4 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 * เชื่อมต่อ S3-compatible storage หลาย provider พร้อมกัน
 * ข้อมูลสำรองในเครื่อง + backup อัตโนมัติผ่าน WP-Cron
 * WP-CLI commands (`wp isx export` / `wp isx import` / `wp isx providers`)
-* ตรวจสอบเวอร์ชันใหม่อัตโนมัติผ่าน GitLab
+* ตรวจสอบเวอร์ชันใหม่อัตโนมัติผ่าน GitHub
