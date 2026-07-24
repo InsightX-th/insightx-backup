@@ -26,14 +26,30 @@ class ISX_Job {
 	 * Create a fresh job.
 	 *
 	 * @param string $type export|import
-	 * @return ISX_Job
+	 * @return ISX_Job|null null if the job directory/state file couldn't be
+	 *                       written — logged with the actual cause instead of
+	 *                       silently handing back a job that reads as
+	 *                       "ไม่พบงาน" on the first poll.
 	 */
 	public static function create( $type ) {
 		self::gc_done_jobs();
 
 		$id  = 'isx_' . wp_generate_password( 20, false, false );
 		$job = new self( $id );
-		wp_mkdir_p( $job->dir );
+
+		if ( ! wp_mkdir_p( $job->dir ) ) {
+			ISX_Logger::log_error(
+				$type,
+				'สร้างโฟลเดอร์งานไม่สำเร็จ',
+				array(
+					'job'     => $id,
+					'dir'     => $job->dir,
+					'parent_writable' => is_writable( dirname( $job->dir ) ) ? 'yes' : 'no',
+				)
+			);
+			return null;
+		}
+
 		$job->state = array(
 			'id'       => $id,
 			'type'     => $type,
@@ -46,7 +62,20 @@ class ISX_Job {
 			// keep authenticating against the on-disk job instead of the database.
 			'secret'   => wp_generate_password( 32, false, false ),
 		);
-		$job->save();
+
+		if ( ! $job->save() ) {
+			ISX_Logger::log_error(
+				$type,
+				'เขียนไฟล์ state ของงานไม่สำเร็จ',
+				array(
+					'job'      => $id,
+					'dir'      => $job->dir,
+					'writable' => is_writable( $job->dir ) ? 'yes' : 'no',
+				)
+			);
+			return null;
+		}
+
 		return $job;
 	}
 
@@ -107,7 +136,7 @@ class ISX_Job {
 	}
 
 	public function save() {
-		file_put_contents( $this->dir . '/state.json', wp_json_encode( $this->state ) );
+		return false !== file_put_contents( $this->dir . '/state.json', wp_json_encode( $this->state ) );
 	}
 
 	/**
