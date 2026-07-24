@@ -93,6 +93,18 @@ class ISX_Backups {
 	}
 
 	/**
+	 * Format a timestamp as a Thai Buddhist-era date, e.g. "24/07/69"
+	 * (24 July 2026 → พ.ศ. 2569).
+	 *
+	 * @param int $timestamp
+	 * @return string
+	 */
+	public static function format_thai_date( $timestamp ) {
+		$buddhist_year = ( (int) wp_date( 'Y', $timestamp ) + 543 ) % 100;
+		return wp_date( 'd/m/', $timestamp ) . sprintf( '%02d', $buddhist_year );
+	}
+
+	/**
 	 * @param string $name
 	 * @return string
 	 */

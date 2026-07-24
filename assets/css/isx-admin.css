@@ -5,10 +5,10 @@
   --isx-accent-hover: #0062d1;
   --isx-accent-soft: #e6f2ff;
   --isx-accent-line: #bfe0ff;
-  --isx-ok: #10b981;
-  --isx-ok-soft: #e3f9f0;
-  --isx-ok-line: #a7ecd2;
-  --isx-danger: #fb3019;
+  --isx-ok: #16a34a;
+  --isx-ok-soft: #e6f7ec;
+  --isx-ok-line: #a7e3bc;
+  --isx-danger: #db0000;
   --isx-danger-soft: #ffe8e8;
   --isx-ink: #0f172a;
   --isx-muted: #5a6881;
@@ -121,6 +121,24 @@
   color: var(--isx-accent-hover);
 }
 
+.isx-btn.isx-btn-danger {
+  background: var(--isx-danger);
+  border-color: var(--isx-danger);
+  border-radius: var(--isx-radius-sm);
+  padding: 4px 20px;
+  height: auto;
+  line-height: 2.2;
+  box-shadow: none;
+  font-weight: 600;
+  color: #fff;
+}
+
+.isx-btn.isx-btn-danger:hover {
+  background: #d9260f;
+  border-color: #d9260f;
+  color: #fff;
+}
+
 .isx-actions {
   display: flex;
   gap: 12px;
@@ -129,32 +147,23 @@
 
 /* ---------- Warning / progress / done ---------- */
 
-.isx-warning {
-  background: #fff7ed;
-  border: 1px solid #fed7aa;
-  color: #9a3412;
+.isx-warning,
+.isx-progress-warning {
+  background: #fef6e5;
+  border: 1px solid #fbaa19;
+  color: #fbaa19;
   border-radius: var(--isx-radius-sm);
-  padding: 12px 16px;
+  padding: 8px 16px;
   margin: 14px 0;
-  font-size: 13px;
+  font-size: 0.75rem;
+}
+
+.isx-warning .dashicons {
+  color: #fbaa19;
 }
 
 .isx-progress-box {
   margin-top: 20px;
-}
-
-.isx-progress-warning {
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  color: #b91c1c;
-  border-radius: var(--isx-radius-sm);
-  padding: 10px 14px;
-  margin-bottom: 14px;
-  font-size: 13px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .isx-progress-warning .dashicons {
@@ -176,13 +185,13 @@
 
 .isx-step-label {
   flex: 1;
-  font-size: 13px;
+  font-size: 0.75rem;
   color: var(--isx-ink);
   font-weight: 600;
 }
 
 .isx-step-pct {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--isx-accent);
   font-weight: 700;
 }
@@ -207,7 +216,7 @@
 /* A soft light sweep drifting across the fill, so the bar visibly "works"
    even during long stretches where phase_progress barely moves. */
 .isx-step-bar-fill::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   width: 60%;
@@ -698,6 +707,7 @@ table.isx-backups-table tbody tr:hover td {
 }
 
 .isx-b-date,
+.isx-b-time,
 .isx-b-size {
   color: var(--isx-muted);
   font-size: 13px;
@@ -1323,4 +1333,59 @@ table.isx-backups-table tbody td.isx-b-actions {
 
 .isx-terminal-ctx {
   color: #6fd58c;
+}
+
+/* ---------- Reset Hub ---------- */
+
+.isx-reset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.isx-reset-tool {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--isx-line);
+  border-radius: var(--isx-radius-sm);
+  padding: 18px;
+  background: var(--isx-bg);
+}
+
+.isx-reset-tool-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--isx-ink);
+  margin: 0 0 8px;
+}
+
+.isx-reset-tool-title .dashicons {
+  color: var(--isx-danger);
+}
+
+.isx-reset-tool-desc {
+  flex: 1 1 auto;
+  color: var(--isx-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0 0 16px;
+}
+
+.isx-reset-tool .isx-actions {
+  margin-top: auto;
+  flex-wrap: wrap;
+}
+
+.isx-reset-progress {
+  margin-top: 14px;
+}
+
+@media (max-width: 640px) {
+  .isx-reset-grid {
+    grid-template-columns: 1fr;
+  }
 }

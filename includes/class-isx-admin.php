@@ -48,6 +48,8 @@ class ISX_Admin {
 
 		add_action( 'wp_ajax_isx_schedule_save', array( __CLASS__, 'ajax_schedule_save' ) );
 		add_filter( 'cron_schedules', array( __CLASS__, 'cron_schedules' ) ); // phpcs:ignore WordPress.WP.CronInterval
+
+		add_action( 'wp_ajax_isx_reset_run', array( __CLASS__, 'ajax_reset_run' ) );
 	}
 
 	/**
@@ -82,6 +84,9 @@ class ISX_Admin {
 		add_submenu_page( 'isx_export', __( 'ข้อมูลสำรอง', 'insightx-backup' ), __( 'ข้อมูลสำรอง', 'insightx-backup' ), 'export', 'isx_backups', array( __CLASS__, 'page_backups' ) );
 		add_submenu_page( 'isx_export', __( 'การเชื่อมต่อ', 'insightx-backup' ), __( 'การเชื่อมต่อ', 'insightx-backup' ), 'export', 'isx_connections', array( __CLASS__, 'page_connections' ) );
 		add_submenu_page( 'isx_export', __( 'ตั้งค่า Storage', 'insightx-backup' ), __( 'ตั้งค่า Storage', 'insightx-backup' ), 'export', 'isx_settings', array( __CLASS__, 'page_settings' ) );
+		// Stricter cap than the rest of this plugin ('export'/'import') — these
+		// tools purge plugins/themes/media or wipe the database outright.
+		add_submenu_page( 'isx_export', __( 'ศูนย์รีเซ็ต', 'insightx-backup' ), __( 'ศูนย์รีเซ็ต', 'insightx-backup' ), 'manage_options', 'isx_reset_hub', array( __CLASS__, 'page_reset_hub' ) );
 		add_submenu_page( 'isx_export', __( 'Log', 'insightx-backup' ), __( 'Log', 'insightx-backup' ), 'export', 'isx_log', array( __CLASS__, 'page_log' ) );
 	}
 
@@ -91,7 +96,8 @@ class ISX_Admin {
 			|| strpos( $hook, 'isx_backups' ) !== false
 			|| strpos( $hook, 'isx_connections' ) !== false
 			|| strpos( $hook, 'isx_settings' ) !== false
-			|| strpos( $hook, 'isx_log' ) !== false;
+			|| strpos( $hook, 'isx_log' ) !== false
+			|| strpos( $hook, 'isx_reset_hub' ) !== false;
 
 		if ( ! $is_isx_page ) {
 			return;
@@ -127,6 +133,10 @@ class ISX_Admin {
 				'providers' => ISX_Destinations::js_data(),
 			)
 		);
+
+		if ( strpos( $hook, 'isx_reset_hub' ) !== false ) {
+			wp_enqueue_script( 'isx-reset', ISX_URL . 'assets/js/isx-reset.js', array( 'jquery', 'isx-admin' ), ISX_VERSION, true );
+		}
 	}
 
 	public static function page_export() {
@@ -156,6 +166,10 @@ class ISX_Admin {
 			exit;
 		}
 		require ISX_PATH . 'views/log.php';
+	}
+
+	public static function page_reset_hub() {
+		require ISX_PATH . 'views/reset-hub.php';
 	}
 
 	/* ---------------- Export / Import pipeline AJAX ---------------- */
@@ -958,6 +972,58 @@ class ISX_Admin {
 		}
 
 		wp_send_json_success( array( 'job' => $job->id(), 'secret' => $job->get( 'secret' ) ) );
+	}
+
+	/* ---------------- Reset Hub AJAX ---------------- */
+
+	private static $reset_dispatch = array(
+		'plugins'  => array( 'ISX_Reset', 'purge_plugins' ),
+		'theme'    => array( 'ISX_Reset', 'reset_theme' ),
+		'media'    => array( 'ISX_Reset', 'clean_media' ),
+		'database' => array( 'ISX_Reset', 'reset_database' ),
+		'full'     => array( 'ISX_Reset', 'full_site_reset' ),
+	);
+
+	/**
+	 * Single entry point for all 5 Reset Hub tools. Every tool here is
+	 * destructive and irreversible, so — on top of guard()'s capability+nonce
+	 * check — the current user's account password must also be re-entered
+	 * and verified before anything runs.
+	 */
+	public static function ajax_reset_run() {
+		self::guard( 'manage_options' );
+		self::verify_reset_password();
+
+		$tool = isset( $_POST['tool'] ) ? sanitize_key( wp_unslash( $_POST['tool'] ) ) : '';
+		if ( ! isset( self::$reset_dispatch[ $tool ] ) ) {
+			wp_send_json_error( array( 'message' => 'ไม่รู้จักเครื่องมือนี้' ) );
+		}
+
+		ISX_Logger::log_error( 'reset', "เริ่มใช้งาน Reset Hub: {$tool}", array( 'user' => wp_get_current_user()->user_login ) );
+
+		$result = call_user_func( self::$reset_dispatch[ $tool ] );
+
+		if ( empty( $result['ok'] ) ) {
+			wp_send_json_error( $result );
+		}
+		wp_send_json_success( $result );
+	}
+
+	/**
+	 * Gate for every Reset Hub tool — checked in addition to guard(), since
+	 * capability + nonce alone isn't enough confirmation before wiping data.
+	 * Terminates the request (wp_send_json_error exits) on failure.
+	 */
+	private static function verify_reset_password() {
+		$password = isset( $_POST['password'] ) ? (string) wp_unslash( $_POST['password'] ) : '';
+		if ( $password === '' ) {
+			wp_send_json_error( array( 'message' => 'กรุณากรอกรหัสผ่านเพื่อยืนยัน' ) );
+		}
+
+		$user = wp_get_current_user();
+		if ( ! $user->exists() || ! wp_check_password( $password, $user->user_pass, $user->ID ) ) {
+			wp_send_json_error( array( 'message' => 'รหัสผ่านไม่ถูกต้อง' ) );
+		}
 	}
 
 	private static function guard( $cap ) {

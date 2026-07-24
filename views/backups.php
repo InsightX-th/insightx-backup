@@ -22,7 +22,8 @@ $isx_backups = ISX_Backups::all();
 				<thead>
 					<tr>
 						<th><?php esc_html_e( 'ชื่อ', 'insightx-backup' ); ?></th>
-						<th><?php esc_html_e( 'วันที่', 'insightx-backup' ); ?></th>
+						<th><?php esc_html_e( 'วันที่สร้าง', 'insightx-backup' ); ?></th>
+						<th><?php esc_html_e( 'เวลา', 'insightx-backup' ); ?></th>
 						<th><?php esc_html_e( 'ขนาด', 'insightx-backup' ); ?></th>
 						<th></th>
 					</tr>
@@ -31,7 +32,8 @@ $isx_backups = ISX_Backups::all();
 					<?php foreach ( $isx_backups as $isx_backup ) : ?>
 						<tr data-name="<?php echo esc_attr( $isx_backup['name'] ); ?>">
 							<td class="isx-b-name"><span class="dashicons dashicons-media-archive"></span> <?php echo esc_html( $isx_backup['name'] ); ?></td>
-							<td class="isx-b-date"><?php echo esc_html( human_time_diff( $isx_backup['mtime'] ) . ' ' . __( 'ที่แล้ว', 'insightx-backup' ) ); ?></td>
+							<td class="isx-b-date"><?php echo esc_html( ISX_Backups::format_thai_date( $isx_backup['mtime'] ) ); ?></td>
+							<td class="isx-b-time"><?php echo esc_html( wp_date( 'H:i', $isx_backup['mtime'] ) ); ?></td>
 							<td class="isx-b-size"><?php echo esc_html( $isx_backup['size_human'] ); ?></td>
 							<td class="isx-b-actions">
 								<div class="isx-backup-dots-wrap">

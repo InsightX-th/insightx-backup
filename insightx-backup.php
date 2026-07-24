@@ -87,6 +87,7 @@ require_once ISX_PATH . 'includes/class-isx-destinations.php';
 require_once ISX_PATH . 'includes/class-isx-s3-client.php';
 require_once ISX_PATH . 'includes/class-isx-export.php';
 require_once ISX_PATH . 'includes/class-isx-import.php';
+require_once ISX_PATH . 'includes/class-isx-reset.php';
 require_once ISX_PATH . 'includes/class-isx-admin.php';
 
 // The background driver hook must be registered on every request — including
