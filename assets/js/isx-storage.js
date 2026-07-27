@@ -302,6 +302,8 @@
 				endpoint: $block.find('[data-field="endpoint"]').val(),
 				region: $block.find('[data-field="region"]').val(),
 				bucket: $block.find('[data-field="bucket"]').val(),
+				// Optional — blank means the server falls back to its default folder.
+				prefix: $block.find('[data-field="prefix"]').val(),
 				access_key: $block.find('[data-field="access_key"]').val(),
 				secret_key: secret,
 				path_style: $block.find('[data-field="path_style"]').is(':checked') ? 1 : ''

@@ -17,8 +17,50 @@ class ISX_S3_Client {
 	// A single PUT above this size risks tripping a reverse proxy's request-body
 	// cap in front of the endpoint (Cloudflare's free-plan limit is 100MB) —
 	// switch to S3 multipart upload instead of one giant request.
-	const MULTIPART_THRESHOLD = 80 * 1024 * 1024;
-	const MULTIPART_PART_SIZE = 20 * 1024 * 1024;
+	//
+	// The threshold is the part size itself: anything big enough to need a second
+	// part should take the multipart path, because that's the only path the
+	// export step can pause and resume across requests. A single PUT, however
+	// small the file, is all-or-nothing within one PHP request.
+	//
+	// 5MB is S3's minimum part size (every part but the last must reach it), and
+	// small parts are what make the upload feel responsive: progress moves once
+	// per part, a failed part costs 5MB of re-transfer rather than 20MB, and peak
+	// memory stays low.
+	const MULTIPART_PART_SIZE = 5 * 1024 * 1024;
+
+	// S3 refuses a multipart upload with more parts than this.
+	const MULTIPART_MAX_PARTS = 10000;
+
+	/**
+	 * @return int Bytes per multipart part; never below S3's 5MB floor.
+	 */
+	public static function part_size() {
+		$size = (int) apply_filters( 'isx_s3_part_size', self::MULTIPART_PART_SIZE );
+		return max( self::MULTIPART_PART_SIZE, $size );
+	}
+
+	/**
+	 * Part size for a file of a known size — the base part size, grown just
+	 * enough that the file fits within S3's 10,000-part ceiling.
+	 *
+	 * At the 5MB default that ceiling lands at 50GB, which a large media library
+	 * can exceed; without this the upload would run for hours and only then be
+	 * rejected at the last part.
+	 *
+	 * @param int $total Archive size in bytes.
+	 * @return int
+	 */
+	public static function part_size_for( $total ) {
+		$size  = self::part_size();
+		$total = max( 0, (int) $total );
+
+		if ( $total > $size * self::MULTIPART_MAX_PARTS ) {
+			// Round up to a whole MB so the numbers stay readable in the log.
+			$size = (int) ( ceil( $total / self::MULTIPART_MAX_PARTS / 1048576 ) * 1048576 );
+		}
+		return $size;
+	}
 
 	private $region;
 	private $bucket;
@@ -192,6 +234,27 @@ class ISX_S3_Client {
 	}
 
 	/**
+	 * Resolve an object key into the (host, uri) pair every signed request for
+	 * it needs — virtual-hosted vs. path-style is a per-endpoint decision, so a
+	 * caller driving a multipart upload across several HTTP requests has to
+	 * carry the resolved pair rather than re-derive it each round.
+	 *
+	 * @param string $key
+	 * @return array{key:string,host:string,uri:string}
+	 */
+	public function resolve_target( $key ) {
+		$key  = ltrim( $key, '/' );
+		$host = $this->path_style ? $this->host : $this->bucket . '.' . $this->host;
+		$path = $this->path_style ? '/' . $this->bucket . '/' . $key : '/' . $key;
+
+		return array(
+			'key'  => $key,
+			'host' => $host,
+			'uri'  => self::encode_path( $path ),
+		);
+	}
+
+	/**
 	 * Stream-upload a local file.
 	 *
 	 * @param string $key
@@ -207,11 +270,11 @@ class ISX_S3_Client {
 			return new WP_Error( 'isx_s3_no_file', __( 'ไม่พบไฟล์ที่จะอัปโหลด', 'insightx-backup' ) );
 		}
 
-		$key  = ltrim( $key, '/' );
-		$host = $this->path_style ? $this->host : $this->bucket . '.' . $this->host;
-		$path = $this->path_style ? '/' . $this->bucket . '/' . $key : '/' . $key;
-		$uri  = self::encode_path( $path );
-		$size = filesize( $file_path );
+		$target = $this->resolve_target( $key );
+		$key    = $target['key'];
+		$host   = $target['host'];
+		$uri    = $target['uri'];
+		$size   = filesize( $file_path );
 
 		ISX_Logger::log_info(
 			's3',
@@ -220,11 +283,11 @@ class ISX_S3_Client {
 				'host' => $host,
 				'key'  => $key,
 				'size' => $size,
-				'mode' => $size > self::MULTIPART_THRESHOLD ? 'multipart' : 'single',
+				'mode' => $size > self::part_size() ? 'multipart' : 'single',
 			)
 		);
 
-		if ( $size > self::MULTIPART_THRESHOLD ) {
+		if ( $size > self::part_size() ) {
 			return $this->put_object_multipart( $host, $uri, $file_path, $size, $content_type );
 		}
 
@@ -286,25 +349,17 @@ class ISX_S3_Client {
 			return $upload_id;
 		}
 
-		$handle = fopen( $file_path, 'rb' );
-		if ( $handle === false ) {
-			$this->multipart_abort( $host, $uri, $upload_id );
-			return new WP_Error( 'isx_s3_open', __( 'เปิดไฟล์เพื่ออัปโหลดไม่สำเร็จ', 'insightx-backup' ) );
-		}
-
+		$part_size   = self::part_size_for( $size );
 		$parts       = array();
 		$part_number = 0;
+		$offset      = 0;
 
-		while ( ! feof( $handle ) ) {
-			$chunk = fread( $handle, self::MULTIPART_PART_SIZE );
-			if ( $chunk === false || $chunk === '' ) {
-				break;
-			}
+		while ( $offset < $size ) {
+			$length = min( $part_size, $size - $offset );
 			++$part_number;
 
-			$etag = $this->multipart_upload_part( $host, $uri, $upload_id, $part_number, $chunk );
+			$etag = $this->multipart_upload_part( $host, $uri, $upload_id, $part_number, $file_path, $offset, $length );
 			if ( is_wp_error( $etag ) ) {
-				fclose( $handle );
 				$this->multipart_abort( $host, $uri, $upload_id );
 				return $etag;
 			}
@@ -312,8 +367,8 @@ class ISX_S3_Client {
 				'number' => $part_number,
 				'etag'   => $etag,
 			);
+			$offset += $length;
 		}
-		fclose( $handle );
 
 		if ( empty( $parts ) ) {
 			$this->multipart_abort( $host, $uri, $upload_id );
@@ -339,9 +394,12 @@ class ISX_S3_Client {
 	}
 
 	/**
+	 * Public because ISX_Export drives a multipart upload one part per HTTP
+	 * request (see ISX_Export::upload()) rather than looping to completion here.
+	 *
 	 * @return string|WP_Error UploadId
 	 */
-	private function multipart_initiate( $host, $uri, $content_type ) {
+	public function multipart_initiate( $host, $uri, $content_type = 'application/octet-stream' ) {
 		$query   = 'uploads=';
 		$url     = $this->scheme . '://' . $host . $uri . '?' . $query;
 		$payload = hash( 'sha256', '' );
@@ -378,19 +436,59 @@ class ISX_S3_Client {
 	}
 
 	/**
+	 * Upload one part, streamed straight off disk.
+	 *
+	 * Takes a file/offset/length rather than the bytes themselves: handing cURL
+	 * a string via CURLOPT_POSTFIELDS means the part exists twice in memory (our
+	 * copy plus cURL's), which is what used to push peak memory to ~3x the part
+	 * size. A read callback bounded by $length keeps it at one small buffer.
+	 *
+	 * @param string $file_path
+	 * @param int    $offset Byte offset of this part within the file.
+	 * @param int    $length Bytes to send; must be S3's 5MB minimum unless last.
 	 * @return string|WP_Error ETag of the uploaded part
 	 */
-	private function multipart_upload_part( $host, $uri, $upload_id, $part_number, $chunk ) {
+	public function multipart_upload_part( $host, $uri, $upload_id, $part_number, $file_path, $offset, $length ) {
+		$handle = fopen( $file_path, 'rb' );
+		if ( $handle === false ) {
+			return new WP_Error( 'isx_s3_open', __( 'เปิดไฟล์เพื่ออัปโหลดไม่สำเร็จ', 'insightx-backup' ) );
+		}
+		if ( fseek( $handle, $offset ) === -1 ) {
+			fclose( $handle );
+			return new WP_Error( 'isx_s3_seek', __( 'เลื่อนตำแหน่งไฟล์เพื่ออัปโหลดไม่สำเร็จ', 'insightx-backup' ) );
+		}
+
 		$query   = 'partNumber=' . (int) $part_number . '&uploadId=' . rawurlencode( $upload_id );
 		$url     = $this->scheme . '://' . $host . $uri . '?' . $query;
 		$payload = 'UNSIGNED-PAYLOAD';
 		$headers = $this->signed_headers( 'PUT', $host, $uri, $query, $payload );
-		$headers[] = 'Content-Length: ' . strlen( $chunk );
+		$headers[] = 'Content-Length: ' . (int) $length;
 		$headers[] = 'Expect:';
 
+		// Stop at exactly $length even though the handle can read past it —
+		// every part but the last ends mid-file.
+		$remaining = (int) $length;
+
 		$ch = curl_init( $url );
+		curl_setopt( $ch, CURLOPT_UPLOAD, true );
 		curl_setopt( $ch, CURLOPT_CUSTOMREQUEST, 'PUT' );
-		curl_setopt( $ch, CURLOPT_POSTFIELDS, $chunk );
+		curl_setopt( $ch, CURLOPT_INFILE, $handle );
+		curl_setopt( $ch, CURLOPT_INFILESIZE, (int) $length );
+		curl_setopt(
+			$ch,
+			CURLOPT_READFUNCTION,
+			function ( $curl_handle, $file_handle, $want ) use ( &$remaining ) {
+				if ( $remaining <= 0 ) {
+					return '';
+				}
+				$chunk = fread( $file_handle, (int) min( $want, $remaining ) );
+				if ( $chunk === false || $chunk === '' ) {
+					return '';
+				}
+				$remaining -= strlen( $chunk );
+				return $chunk;
+			}
+		);
 		curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers );
 		curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true );
 		curl_setopt( $ch, CURLOPT_CONNECTTIMEOUT, 15 );
@@ -404,10 +502,12 @@ class ISX_S3_Client {
 				'op'        => 'multipart_part',
 				'host'      => $host,
 				'part'      => (int) $part_number,
-				'part_size' => strlen( $chunk ),
+				'part_size' => (int) $length,
+				'offset'    => (int) $offset,
 				'upload_id' => $upload_id,
 			)
 		);
+		fclose( $handle );
 
 		if ( ! $res['ok'] ) {
 			return self::curl_error_to_wp( $res );
@@ -421,9 +521,10 @@ class ISX_S3_Client {
 	}
 
 	/**
+	 * @param array $parts Ordered list of {number, etag}.
 	 * @return true|WP_Error
 	 */
-	private function multipart_complete( $host, $uri, $upload_id, array $parts ) {
+	public function multipart_complete( $host, $uri, $upload_id, array $parts ) {
 		$query = 'uploadId=' . rawurlencode( $upload_id );
 		$url   = $this->scheme . '://' . $host . $uri . '?' . $query;
 
@@ -469,7 +570,7 @@ class ISX_S3_Client {
 	 *
 	 * @return void
 	 */
-	private function multipart_abort( $host, $uri, $upload_id ) {
+	public function multipart_abort( $host, $uri, $upload_id ) {
 		$query   = 'uploadId=' . rawurlencode( $upload_id );
 		$url     = $this->scheme . '://' . $host . $uri . '?' . $query;
 		$payload = hash( 'sha256', '' );

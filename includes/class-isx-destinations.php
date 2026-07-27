@@ -16,6 +16,13 @@ class ISX_Destinations {
 	const ENC_PREFIX = 'ISXENC1:';
 
 	/**
+	 * Folder every backup is written under when a destination doesn't name its
+	 * own. Also what installs from before the folder field existed are using,
+	 * so it has to stay the fallback — changing it would orphan their backups.
+	 */
+	const DEFAULT_PREFIX = 'insightx-migrate';
+
+	/**
 	 * Supported providers: slug => meta. All are S3-compatible; the defaults
 	 * just seed sensible path-style / endpoint hints per provider.
 	 *
@@ -146,6 +153,10 @@ class ISX_Destinations {
 				'endpoint'   => isset( $config['endpoint'] ) ? $config['endpoint'] : '',
 				'region'     => isset( $config['region'] ) ? $config['region'] : '',
 				'bucket'     => isset( $config['bucket'] ) ? $config['bucket'] : '',
+				// Empty means "use DEFAULT_PREFIX" — stored as typed so the
+				// settings field can show blank rather than pre-filling a value
+				// the user never chose.
+				'prefix'     => isset( $config['prefix'] ) ? $config['prefix'] : '',
 				'access_key' => isset( $config['access_key'] ) ? $config['access_key'] : '',
 				'secret_key' => self::maybe_decrypt( isset( $config['secret_key'] ) ? $config['secret_key'] : '' ),
 				'path_style' => isset( $config['path_style'] ) ? (bool) $config['path_style'] : $meta['path_style'],
@@ -161,6 +172,49 @@ class ISX_Destinations {
 	public static function get( $slug ) {
 		$all = self::all();
 		return isset( $all[ $slug ] ) ? $all[ $slug ] : null;
+	}
+
+	/**
+	 * Object-key prefix for a destination, always with a trailing slash so it
+	 * concatenates straight onto a filename.
+	 *
+	 * @param string $slug
+	 * @return string e.g. "insightx-migrate/" or "backups/production/"
+	 */
+	public static function prefix( $slug ) {
+		$config = self::get( $slug );
+		$prefix = $config && isset( $config['prefix'] ) ? self::sanitize_prefix( $config['prefix'] ) : '';
+
+		return ( $prefix === '' ? self::DEFAULT_PREFIX : $prefix ) . '/';
+	}
+
+	/**
+	 * Reduce a typed folder name to something safe to paste into an S3 key.
+	 *
+	 * Nested folders are allowed ("backups/production"), but each segment is
+	 * stripped to characters S3 handles without escaping, and "." / ".." are
+	 * dropped — a key is not a filesystem path, so traversal segments would
+	 * just create bizarrely-named folders rather than escape anywhere, but they
+	 * also break the prefix match that finds backups again later.
+	 *
+	 * @param string $value
+	 * @return string No leading or trailing slash.
+	 */
+	public static function sanitize_prefix( $value ) {
+		$value    = str_replace( '\\', '/', trim( (string) $value ) );
+		$segments = array();
+
+		foreach ( explode( '/', $value ) as $segment ) {
+			$segment = preg_replace( '/[^A-Za-z0-9._-]/', '', $segment );
+			// Drop empties and any all-dots segment — "." and ".." plus the
+			// "..." variants, none of which name a real folder.
+			if ( $segment === '' || trim( $segment, '.' ) === '' ) {
+				continue;
+			}
+			$segments[] = $segment;
+		}
+
+		return implode( '/', $segments );
 	}
 
 	/**
@@ -186,6 +240,7 @@ class ISX_Destinations {
 				'endpoint'   => isset( $config['endpoint'] ) ? esc_url_raw( trim( $config['endpoint'] ) ) : '',
 				'region'     => isset( $config['region'] ) ? sanitize_text_field( $config['region'] ) : '',
 				'bucket'     => isset( $config['bucket'] ) ? sanitize_text_field( $config['bucket'] ) : '',
+				'prefix'     => isset( $config['prefix'] ) ? self::sanitize_prefix( $config['prefix'] ) : '',
 				'access_key' => isset( $config['access_key'] ) ? sanitize_text_field( $config['access_key'] ) : '',
 				'secret_key' => self::maybe_encrypt( isset( $config['secret_key'] ) ? trim( $config['secret_key'] ) : '' ),
 				'path_style' => ! empty( $config['path_style'] ),
@@ -211,6 +266,8 @@ class ISX_Destinations {
 				'endpoint'      => isset( $config['endpoint'] ) ? $config['endpoint'] : '',
 				'region'        => isset( $config['region'] ) ? $config['region'] : 'us-east-1',
 				'bucket'        => isset( $config['bucket'] ) ? $config['bucket'] : '',
+				'prefix'        => isset( $config['prefix'] ) ? $config['prefix'] : '',
+				'prefix_default' => self::DEFAULT_PREFIX,
 				'access_key'    => isset( $config['access_key'] ) ? $config['access_key'] : '',
 				'path_style'    => ! empty( $config['path_style'] ),
 				'has_secret'    => ! empty( $config['secret_key'] ),

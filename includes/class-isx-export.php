@@ -325,7 +325,10 @@ class ISX_Export {
 			$job->set( 'step', 'upload' );
 			$job->set( 'progress', 97 );
 			$job->save();
-			return array( 'progress' => 97, 'done' => false, 'message' => 'กำลังอัปโหลดไปยัง Storage...' );
+			// The upload step reports its own "กำลังอัปโหลด..." progress from here
+			// on; saying it in finalize's message left the UI showing that text
+			// with finalize's frozen 100% bar behind it.
+			return array( 'progress' => 97, 'done' => false, 'message' => 'สร้างไฟล์สำรองเสร็จแล้ว' );
 		}
 
 		// The finished archive already lives in the backups dir; the job's
@@ -344,6 +347,30 @@ class ISX_Export {
 		);
 	}
 
+	/**
+	 * Number of times a single part may fail before the whole upload is
+	 * abandoned. Each retry costs one round-trip, not a blocking sleep, so the
+	 * worker is free in between — a flaky endpoint gets several chances without
+	 * a 260MB archive being thrown away over one dropped connection.
+	 */
+	const UPLOAD_MAX_RETRIES = 5;
+
+	/**
+	 * Push the finished archive to the configured Storage provider.
+	 *
+	 * Unlike every other step this one used to run to completion inside a single
+	 * request: one put_object() call that looped through every multipart part
+	 * back to back. On a big archive that meant one PHP request holding the job
+	 * lock for minutes — long enough for the stall watchdog to declare the job
+	 * wedged while it was still uploading, with the progress bar frozen because
+	 * nothing reported back until it was over, and with every poll/loopback/cron
+	 * tick piling onto the same PHP worker pool behind that lock.
+	 *
+	 * Now it behaves like database()/files(): send parts until the time budget
+	 * is spent, persist the cursor, return. The upload survives a killed worker
+	 * (it resumes at up_offset), reports real byte-level progress, and each
+	 * request stays short.
+	 */
 	private static function upload( ISX_Job $job ) {
 		$provider    = $job->get( 'to_storage', '' );
 		$backup_name = $job->get( 'backup_name', '' );
@@ -361,20 +388,167 @@ class ISX_Export {
 		}
 
 		$client = new ISX_S3_Client( ISX_Destinations::get( $provider ) );
-		$key    = 'insightx-migrate/' . basename( $backup );
-		$result = $client->put_object( $key, $backup );
+		$key    = ISX_Destinations::prefix( $provider ) . basename( $backup );
+		$total  = (int) filesize( $backup );
 
-		if ( is_wp_error( $result ) ) {
-			$message = 'อัปโหลดไม่สำเร็จ: ' . $result->get_error_message();
-			$job->finish( $message );
+		// Small enough to fit one request: a single PUT is both faster (no
+		// initiate/complete round-trips) and can't be resumed anyway.
+		if ( $total <= ISX_S3_Client::part_size() ) {
+			$result = $client->put_object( $key, $backup );
+			return is_wp_error( $result )
+				? self::upload_failed( $job, $result->get_error_message() )
+				: self::upload_finished( $job, $backup_name );
+		}
+
+		$target = $client->resolve_target( $key );
+
+		// First visit: open the multipart upload and hand the UploadId to the
+		// next round-trip. Nothing else happens this tick — CreateMultipartUpload
+		// is the one call that must not be repeated after parts exist.
+		$upload_id = (string) $job->get( 'up_id', '' );
+		if ( $upload_id === '' ) {
+			$upload_id = $client->multipart_initiate( $target['host'], $target['uri'] );
+			if ( is_wp_error( $upload_id ) ) {
+				return self::upload_failed( $job, $upload_id->get_error_message() );
+			}
+
+			$job->set( 'up_id', $upload_id );
+			$job->set( 'up_host', $target['host'] );
+			$job->set( 'up_uri', $target['uri'] );
+			$job->set( 'up_offset', 0 );
+			$job->set( 'up_total', $total );
+			// Pinned for the life of this upload: every part but the last must be
+			// exactly this size, so it cannot be recomputed (or refiltered) on a
+			// later request without corrupting the assembled object.
+			$job->set( 'up_part_size', ISX_S3_Client::part_size_for( $total ) );
+			$job->set( 'up_parts', array() );
+			$job->set( 'up_retries', 0 );
+			$job->save();
+
 			return array(
-				'progress' => 100,
-				'done'     => true,
-				'error'    => true,
-				'message'  => $message,
+				'progress' => 97,
+				'done'     => false,
+				'message'  => sprintf( 'เริ่มอัปโหลดไปยัง Storage (%s)', size_format( $total ) ),
 			);
 		}
 
+		$host      = (string) $job->get( 'up_host', $target['host'] );
+		$uri       = (string) $job->get( 'up_uri', $target['uri'] );
+		$offset    = (int) $job->get( 'up_offset', 0 );
+		$total     = max( 1, (int) $job->get( 'up_total', $total ) );
+		$parts     = (array) $job->get( 'up_parts', array() );
+		$part_size = max( 1, (int) $job->get( 'up_part_size', ISX_S3_Client::part_size_for( $total ) ) );
+		$deadline  = self::deadline();
+
+		// Send parts back to back while the budget lasts, saving after each one
+		// so a worker killed mid-upload resumes at the next part rather than
+		// restarting the whole archive.
+		while ( $offset < $total ) {
+			$length = (int) min( $part_size, $total - $offset );
+			$number = count( $parts ) + 1;
+
+			$etag = $client->multipart_upload_part( $host, $uri, $upload_id, $number, $backup, $offset, $length );
+
+			if ( is_wp_error( $etag ) ) {
+				$retries = (int) $job->get( 'up_retries', 0 ) + 1;
+				$job->set( 'up_retries', $retries );
+				$job->save();
+
+				if ( $retries > self::UPLOAD_MAX_RETRIES ) {
+					$client->multipart_abort( $host, $uri, $upload_id );
+					return self::upload_failed( $job, $etag->get_error_message() );
+				}
+
+				// Hand control back instead of sleeping on it: the driver's next
+				// tick retries this same part with the worker released in between.
+				ISX_Logger::log_error(
+					'export',
+					sprintf( 'อัปโหลดส่วนที่ %d ไม่สำเร็จ กำลังลองใหม่ (%d/%d)', $number, $retries, self::UPLOAD_MAX_RETRIES ),
+					array(
+						'job'    => $job->id(),
+						'part'   => $number,
+						'offset' => $offset,
+						'error'  => $etag->get_error_message(),
+					)
+				);
+
+				return array(
+					'progress' => 97 + 3 * ( $offset / $total ),
+					'done'     => false,
+					'message'  => sprintf( 'อัปโหลดขัดข้อง กำลังลองใหม่ (%d/%d)', $retries, self::UPLOAD_MAX_RETRIES ),
+				);
+			}
+
+			$parts[] = array(
+				'number' => $number,
+				'etag'   => $etag,
+			);
+			$offset += $length;
+
+			$job->set( 'up_parts', $parts );
+			$job->set( 'up_offset', $offset );
+			$job->set( 'up_retries', 0 );
+			$job->set( 'progress', 97 + 3 * ( $offset / $total ) );
+			$job->save();
+
+			if ( microtime( true ) >= $deadline ) {
+				break;
+			}
+		}
+
+		if ( $offset < $total ) {
+			$progress = 97 + 3 * ( $offset / $total );
+			return array(
+				'progress' => $progress,
+				'done'     => false,
+				'message'  => sprintf(
+					'กำลังอัปโหลดไปยัง Storage... %s / %s (%d%%)',
+					size_format( $offset ),
+					size_format( $total ),
+					(int) round( $offset / $total * 100 )
+				),
+			);
+		}
+
+		$result = $client->multipart_complete( $host, $uri, $upload_id, $parts );
+		if ( is_wp_error( $result ) ) {
+			$client->multipart_abort( $host, $uri, $upload_id );
+			return self::upload_failed( $job, $result->get_error_message() );
+		}
+
+		ISX_Logger::log_info(
+			's3',
+			'อัปโหลด multipart สำเร็จ',
+			array(
+				'host'  => $host,
+				'parts' => count( $parts ),
+				'size'  => $total,
+			)
+		);
+
+		return self::upload_finished( $job, $backup_name );
+	}
+
+	/**
+	 * @param string $message Reason, already human-readable.
+	 * @return array Step result.
+	 */
+	private static function upload_failed( ISX_Job $job, $message ) {
+		$message = 'อัปโหลดไม่สำเร็จ: ' . $message;
+		$job->finish( $message );
+
+		return array(
+			'progress' => 100,
+			'done'     => true,
+			'error'    => true,
+			'message'  => $message,
+		);
+	}
+
+	/**
+	 * @return array Step result.
+	 */
+	private static function upload_finished( ISX_Job $job, $backup_name ) {
 		$message = 'ส่งออกและอัปโหลดไปยัง Storage สำเร็จ';
 		$job->finish( $message );
 

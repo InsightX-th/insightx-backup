@@ -644,15 +644,18 @@ class ISX_Admin {
 					$locked_job->set( 'last_phase', $result['phase'] );
 					$locked_job->set( 'last_phase_progress', $result['phase_progress'] );
 
-					// Heartbeat: remember the last time overall progress actually
-					// moved forward, so the watchdog below can tell a job that's
-					// simply slow from one that's genuinely wedged.
-					$cur_progress  = isset( $result['progress'] ) ? (int) $result['progress'] : 0;
-					$prev_progress = (int) $locked_job->get( 'heartbeat_progress', -1 );
-					if ( $cur_progress > $prev_progress ) {
-						$locked_job->set( 'heartbeat', time() );
-						$locked_job->set( 'heartbeat_progress', $cur_progress );
-					}
+					// Heartbeat: proof that a step actually executed, which is all
+					// this branch can mean — it is only reachable by the driver
+					// holding the lock, right after run() returned.
+					//
+					// It deliberately does NOT require progress to have increased.
+					// A step can do real work without moving the integer bar (a
+					// multipart part is ~1% of the upload phase, which is 3% of
+					// the job), and the watchdog below used to kill exactly those:
+					// a long upload reported 97 every tick, so after 5 minutes it
+					// was declared wedged mid-transfer.
+					$locked_job->set( 'heartbeat', time() );
+					$locked_job->set( 'heartbeat_progress', isset( $result['progress'] ) ? (int) $result['progress'] : 0 );
 
 					$locked_job->save();
 				}
@@ -661,7 +664,9 @@ class ISX_Admin {
 			}
 		);
 
-		if ( $result === false ) {
+		$lock_skipped = ( $result === false );
+
+		if ( $lock_skipped ) {
 			// Lock held by the other driver right now — echo the last known
 			// state instead of executing (and definitely instead of double-running).
 			// Logged because a run of nothing *but* these means every driver is
@@ -713,14 +718,20 @@ class ISX_Admin {
 			}
 		}
 
-		// A step just ran (successfully or "busy") and isn't finished yet — keep
-		// the job advancing even if this is the last poll the browser ever sends
-		// (tab closed, user navigated away). Two independent fallbacks: a
-		// non-blocking loopback request that chains itself to completion (the
-		// reliable driver — doesn't depend on site traffic), plus a WP-Cron tick
-		// as a backstop. Both funnel through the same per-job lock, so they never
-		// double-run a step.
-		if ( empty( $result['done'] ) && ! self::$driving_synchronously ) {
+		// A step just ran and isn't finished yet — keep the job advancing even if
+		// this is the last poll the browser ever sends (tab closed, user
+		// navigated away). Two independent fallbacks: a non-blocking loopback
+		// request that chains itself to completion (the reliable driver — doesn't
+		// depend on site traffic), plus a WP-Cron tick as a backstop. Both funnel
+		// through the same per-job lock, so they never double-run a step.
+		//
+		// Not when we just bounced off the lock, though: someone else is mid-step
+		// and will spawn its own successor when it returns. Calling for
+		// reinforcements here meant every 200ms browser poll during a slow step
+		// added a loopback request and a cron tick that could do nothing but
+		// bounce off the same lock — a self-sustaining request storm competing
+		// for the very PHP workers the running step needed.
+		if ( empty( $result['done'] ) && ! self::$driving_synchronously && ! $lock_skipped ) {
 			self::schedule_cron( $job->id() );
 			self::spawn_loopback( $job );
 		}
@@ -1519,7 +1530,7 @@ class ISX_Admin {
 		}
 
 		$client = new ISX_S3_Client( ISX_Destinations::get( $slug ) );
-		$result = $client->list_objects( 'insightx-migrate/' );
+		$result = $client->list_objects( ISX_Destinations::prefix( $slug ) );
 
 		if ( is_wp_error( $result ) ) {
 			wp_send_json_error( array( 'message' => $result->get_error_message() ) );
@@ -1556,7 +1567,9 @@ class ISX_Admin {
 		if ( ! ISX_Destinations::is_configured( $slug ) ) {
 			wp_send_json_error( array( 'message' => 'ยังไม่ได้ตั้งค่า provider นี้' ) );
 		}
-		if ( strpos( $key, 'insightx-migrate/' ) !== 0 || substr( $key, -7 ) !== '.wpress' ) {
+		// Confine imports to the folder this destination writes to, so a crafted
+		// key can't pull an arbitrary object out of the bucket.
+		if ( strpos( $key, ISX_Destinations::prefix( $slug ) ) !== 0 || substr( $key, -7 ) !== '.wpress' ) {
 			wp_send_json_error( array( 'message' => 'ชื่อไฟล์ไม่ถูกต้อง' ) );
 		}
 

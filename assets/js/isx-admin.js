@@ -99,6 +99,15 @@
 		var failStreak = 0;
 		var startedAt = Date.now();
 		var lastPhase = '';
+		// Adaptive poll spacing. A step that reports the same progress and
+		// message as last time has nothing new to say, and asking again 200ms
+		// later just spends a PHP worker that the running step needs — during a
+		// multi-minute upload that was ~300 pointless requests a minute. Back off
+		// while nothing changes, snap back to responsive the moment it does.
+		var POLL_MIN_MS = 300;
+		var POLL_MAX_MS = 2000;
+		var pollDelay = POLL_MIN_MS;
+		var lastSignature = null;
 
 		function step() {
 			var sentAt = Date.now();
@@ -137,23 +146,38 @@
 						return;
 					}
 
+					failStreak = 0;
+
+					var phaseChanged = !!res.data.phase && res.data.phase !== lastPhase;
+					lastPhase = res.data.phase || lastPhase;
+
+					var signature = lastPhase + '|' + res.data.progress + '|' + (res.data.message || '');
+					if (signature === lastSignature) {
+						pollDelay = Math.min(POLL_MAX_MS, Math.round(pollDelay * 1.5));
+					} else {
+						pollDelay = POLL_MIN_MS;
+					}
+					lastSignature = signature;
+
 					// A request that suddenly takes far longer than the others is
 					// the one about to get cut off — worth seeing in the log
-					// alongside the failure that follows it.
-					failStreak = 0;
-					lastPhase = res.data.phase || lastPhase;
-					logToServer('debug', 'poll สำเร็จ', {
-						job: job,
-						phase: lastPhase,
-						progress: res.data.progress,
-						took_ms: Date.now() - sentAt
-					});
+					// alongside the failure that follows it. Only on a phase
+					// change, though: beaconing every poll doubled the request
+					// count for a line that repeated itself.
+					if (phaseChanged) {
+						logToServer('debug', 'poll สำเร็จ', {
+							job: job,
+							phase: lastPhase,
+							progress: res.data.progress,
+							took_ms: Date.now() - sentAt
+						});
+					}
 
 					onTick(res.data);
 					if (res.data.done) {
 						onDone(res.data);
 					} else {
-						setTimeout(step, 200);
+						setTimeout(step, pollDelay);
 					}
 				})
 				.fail(function (jqXHR, textStatus, errorThrown) {

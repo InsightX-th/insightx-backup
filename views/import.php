@@ -43,7 +43,7 @@ $isx_providers = ISX_Destinations::providers();
 			<details class="isx-manual" id="isx-manual" style="display:none;">
 				<summary><?php esc_html_e( 'ไม่มีสิทธิ์ List? กรอกชื่อไฟล์เอง', 'insightx-backup' ); ?></summary>
 				<div class="isx-manual-row">
-					<input type="text" id="isx-import-key" placeholder="insightx-migrate/site.wpress" />
+					<input type="text" id="isx-import-key" placeholder="<?php echo esc_attr( ISX_Destinations::DEFAULT_PREFIX . '/site.wpress' ); ?>" />
 					<button type="button" class="button isx-btn isx-btn-secondary" id="isx-import-key-go"><?php esc_html_e( 'นำเข้าไฟล์นี้', 'insightx-backup' ); ?></button>
 				</div>
 			</details>
