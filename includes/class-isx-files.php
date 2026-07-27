@@ -25,9 +25,9 @@ class ISX_Files {
 	public static function dirs() {
 		$content = untrailingslashit( WP_CONTENT_DIR );
 		return array(
-			'uploads'    => $content . '/uploads',
 			'plugins'    => $content . '/plugins',
 			'themes'     => $content . '/themes',
+			'uploads'    => $content . '/uploads',
 			'mu-plugins' => $content . '/mu-plugins',
 		);
 	}
@@ -137,12 +137,16 @@ class ISX_Files {
 	 *     @type array $exclude_paths     Content-relative path prefixes to skip, e.g.
 	 *                                    array('uploads/2019', 'plugins/old-plugin').
 	 * }
-	 * @return int Number of files listed.
+	 * @return array { total:int, bounds: array<string,int> } bounds maps each
+	 *               dirs() key (plus 'other' for root-level entries) to the
+	 *               cumulative file count once that category's block ends —
+	 *               lets the files-packing step report which category the
+	 *               current position falls into.
 	 */
 	public static function build_list( $list_file, $filters = array() ) {
 		$fh = fopen( $list_file, 'wb' );
 		if ( $fh === false ) {
-			return 0;
+			return array( 'total' => 0, 'bounds' => array() );
 		}
 
 		$exclude_dirs      = isset( $filters['exclude_dirs'] ) ? (array) $filters['exclude_dirs'] : array();
@@ -153,6 +157,7 @@ class ISX_Files {
 		$content  = untrailingslashit( WP_CONTENT_DIR );
 		$excluded = self::excluded();
 		$count    = 0;
+		$bounds   = array();
 
 		foreach ( self::dirs() as $dir_key => $abs_dir ) {
 			if ( in_array( $dir_key, $exclude_dirs, true ) ) {
@@ -200,6 +205,8 @@ class ISX_Files {
 				fwrite( $fh, $abs . "\t" . self::NS . $rel . "\n" );
 				$count++;
 			}
+
+			$bounds[ $dir_key ] = $count;
 		}
 
 		// Everything else directly under wp-content (drop-ins, languages/, a
@@ -239,9 +246,10 @@ class ISX_Files {
 				$count++;
 			}
 		}
+		$bounds['other'] = $count;
 
 		fclose( $fh );
-		return $count;
+		return array( 'total' => $count, 'bounds' => $bounds );
 	}
 
 	/**

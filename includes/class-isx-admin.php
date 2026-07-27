@@ -25,18 +25,6 @@ class ISX_Admin {
 	const STALL_LIMIT = 300;
 
 	/**
-	 * WP option storing an exponential moving average of how many seconds
-	 * each pipeline phase has taken in past completed jobs, keyed by job
-	 * type then phase name — lets run_step() estimate remaining time for
-	 * phases a job hasn't reached yet instead of assuming a single blended
-	 * rate across the whole job (phases run at very different speeds: a DB
-	 * dump vs packing thousands of files vs an S3 upload).
-	 *
-	 * @var string
-	 */
-	const PHASE_STATS_OPTION = 'isx_phase_duration_stats';
-
-	/**
 	 * True while run_job_to_completion() is driving a job synchronously (WP-CLI /
 	 * scheduled backup). In that mode the background drivers (loopback + WP-Cron
 	 * self-scheduling) are suppressed — the tight loop already runs the job to
@@ -550,17 +538,6 @@ class ISX_Admin {
 		$result = $job->with_lock(
 			function ( ISX_Job $locked_job ) {
 				if ( $locked_job->get( 'step' ) === 'done' ) {
-					// The job just finished — fold whichever phase was running
-					// when it did into the historical average (once only; clear
-					// the tracked name so a later poll of this same finished job
-					// doesn't record it again).
-					$last_phase_name = (string) $locked_job->get( 'phase_started_name', '' );
-					$last_phase_at   = (float) $locked_job->get( 'phase_started', 0 );
-					if ( '' !== $last_phase_name && $last_phase_at > 0 ) {
-						self::record_phase_duration( (string) $locked_job->get( 'type' ), $last_phase_name, microtime( true ) - $last_phase_at );
-						$locked_job->set( 'phase_started_name', '' );
-						$locked_job->save();
-					}
 					return array(
 						'progress'       => 100,
 						'done'           => true,
@@ -570,25 +547,8 @@ class ISX_Admin {
 					);
 				}
 
-				$type       = (string) $locked_job->get( 'type' );
+				$type        = (string) $locked_job->get( 'type' );
 				$step_before = (string) $locked_job->get( 'step', 'init' );
-
-				// Track when the current phase began, so the ETA below can use
-				// this phase's own elapsed-time/progress rate instead of a rate
-				// blended across the whole job. Whenever the tracked phase name
-				// no longer matches the phase this tick is about to run, the
-				// previous phase just ended — fold its actual duration into the
-				// historical average before starting the new phase's timer.
-				$phase_started = (float) $locked_job->get( 'phase_started', 0 );
-				$phase_tracked = (string) $locked_job->get( 'phase_started_name', '' );
-				if ( $phase_tracked !== $step_before || $phase_started <= 0 ) {
-					if ( '' !== $phase_tracked && $phase_started > 0 ) {
-						self::record_phase_duration( $type, $phase_tracked, microtime( true ) - $phase_started );
-					}
-					$phase_started = microtime( true );
-					$locked_job->set( 'phase_started', $phase_started );
-					$locked_job->set( 'phase_started_name', $step_before );
-				}
 
 				$started = microtime( true );
 				$result = ( $type === 'import' ) ? ISX_Import::run( $locked_job ) : ISX_Export::run( $locked_job );
@@ -736,47 +696,6 @@ class ISX_Admin {
 			self::spawn_loopback( $job );
 		}
 
-		$result['eta'] = null;
-		if ( empty( $result['done'] ) && ! empty( $result['phase_progress'] ) ) {
-			// Current phase's own remaining time: its own elapsed-since-started
-			// time, extrapolated by its own progress fraction — not the whole
-			// job's blended rate, which swings wildly between a fast phase (DB
-			// dump) and a slow one (packing thousands of files).
-			$phase_frac         = min( 1, max( 0, (float) $result['phase_progress'] / 100 ) );
-			$phase_started      = (float) $job->get( 'phase_started', 0 );
-			$current_phase_eta  = null;
-			if ( $phase_frac > 0 && $phase_started > 0 ) {
-				$phase_elapsed     = microtime( true ) - $phase_started;
-				$current_phase_eta = $phase_elapsed / $phase_frac * ( 1 - $phase_frac );
-			}
-
-			// Add estimated time for phases the job hasn't reached yet, based
-			// on how long each one has taken in past completed jobs of this
-			// type. Missing data for any of them (e.g. the very first job ever)
-			// falls back to the old whole-job blended estimate below instead of
-			// under-reporting a partial total.
-			$type          = (string) $job->get( 'type', 'export' );
-			$current_phase = (string) $job->get( 'phase_started_name', (string) $result['phase'] );
-			$future_eta    = 0;
-			$missing_stats = false;
-			foreach ( self::phases_after( $type, $current_phase, $job ) as $future_phase ) {
-				$avg = self::phase_duration_avg( $type, $future_phase );
-				if ( null === $avg ) {
-					$missing_stats = true;
-					break;
-				}
-				$future_eta += $avg;
-			}
-
-			if ( null !== $current_phase_eta && ! $missing_stats ) {
-				$result['eta'] = max( 0, (int) round( $current_phase_eta + $future_eta ) );
-			} elseif ( ! empty( $result['progress'] ) && (float) $result['progress'] > 0 ) {
-				$progress        = (float) $result['progress'];
-				$total_estimated = $elapsed / ( $progress / 100 );
-				$result['eta']   = max( 0, (int) round( $total_estimated - $elapsed ) );
-			}
-		}
-
 		return $result;
 	}
 
@@ -828,9 +747,8 @@ class ISX_Admin {
 
 	/**
 	 * The full ordered [0,100] window map for every phase of a job type —
-	 * shared by phase_range() (single-phase lookup) and phases_after()
-	 * (which phases are still ahead, for the ETA estimate below). Order
-	 * matters here: it's the actual pipeline sequence, not just a lookup.
+	 * used by phase_range() to turn the overall job progress number back
+	 * into a 0-100% figure local to just the current step.
 	 *
 	 * @param string  $type import|export
 	 * @param ISX_Job $job
@@ -848,9 +766,7 @@ class ISX_Admin {
 		}
 		// finalize() only stops at 97 (instead of 100), and the 'upload' phase
 		// only exists at all, when the export also uploads to a Storage
-		// destination afterwards — see upload(). Leaving 'upload' in the map
-		// for a non-storage export would make phases_after() think a phase
-		// that will never run is still ahead, throwing off its ETA.
+		// destination afterwards — see upload().
 		$has_upload   = $job->get( 'to_storage', '' ) !== '';
 		$finalize_end = $has_upload ? 97 : 100;
 		$ranges       = array(
@@ -864,54 +780,6 @@ class ISX_Admin {
 			$ranges['upload'] = array( 97, 100 );
 		}
 		return $ranges;
-	}
-
-	/**
-	 * Phase names strictly after $step in the pipeline sequence — the
-	 * phases a job hasn't reached yet, whose durations (if we've seen them
-	 * before) get added to the current phase's own remaining-time estimate.
-	 *
-	 * @param string  $type import|export
-	 * @param string  $step
-	 * @param ISX_Job $job
-	 * @return string[]
-	 */
-	private static function phases_after( $type, $step, ISX_Job $job ) {
-		$names = array_keys( self::phase_ranges( $type, $job ) );
-		$idx   = array_search( $step, $names, true );
-		return false === $idx ? array() : array_slice( $names, $idx + 1 );
-	}
-
-	/**
-	 * @param string $type   import|export
-	 * @param string $phase
-	 * @return float|null Average seconds this phase has taken across past
-	 *                    completed jobs of this type, or null if never seen.
-	 */
-	private static function phase_duration_avg( $type, $phase ) {
-		$stats = get_option( self::PHASE_STATS_OPTION, array() );
-		return isset( $stats[ $type ][ $phase ] ) ? (float) $stats[ $type ][ $phase ] : null;
-	}
-
-	/**
-	 * Fold a just-finished phase's actual duration into the running
-	 * average for (type, phase). Exponential moving average — recent jobs
-	 * matter more than old ones, but one unusually fast/slow run (e.g. a
-	 * one-off huge media import) can't swing the estimate wildly on its own.
-	 *
-	 * @param string $type    import|export
-	 * @param string $phase
-	 * @param float  $seconds
-	 * @return void
-	 */
-	private static function record_phase_duration( $type, $phase, $seconds ) {
-		if ( $seconds <= 0 ) {
-			return;
-		}
-		$stats = get_option( self::PHASE_STATS_OPTION, array() );
-		$prev  = isset( $stats[ $type ][ $phase ] ) ? (float) $stats[ $type ][ $phase ] : null;
-		$stats[ $type ][ $phase ] = null === $prev ? $seconds : ( $prev * 0.7 + $seconds * 0.3 );
-		update_option( self::PHASE_STATS_OPTION, $stats, false );
 	}
 
 	/**

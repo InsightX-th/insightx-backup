@@ -117,8 +117,10 @@ class ISX_Export {
 			'exclude_cache'     => ! empty( $options['exclude_cache_files'] ),
 			'exclude_paths'     => isset( $options['exclude_selected_files'] ) ? (array) $options['exclude_selected_files'] : array(),
 		);
-		$total_files = ISX_Files::build_list( $job->file_list(), $filters );
+		$list_result = ISX_Files::build_list( $job->file_list(), $filters );
+		$total_files = $list_result['total'];
 		$job->set( 'total_files', $total_files );
+		$job->set( 'file_category_bounds', $list_result['bounds'] );
 
 		// Written into manifest.json (inside the archive itself) — not just the
 		// job's own state — so the import side can compute a true files-done/
@@ -282,8 +284,35 @@ class ISX_Export {
 		return array(
 			'progress' => $progress,
 			'done'     => false,
-			'message'  => sprintf( 'แพ็กไฟล์ %d/%d รายการ', $done_files, $total ),
+			'message'  => sprintf( 'กำลังรวบรวม%s — %d/%d รายการ', self::current_category_label( $job, $done_files ), $done_files, $total ),
 		);
+	}
+
+	/**
+	 * Which content category $done_files (the cumulative files-packed count)
+	 * currently falls into, based on the per-category boundaries build_list()
+	 * recorded — so the status message can say "รวบรวมปลั๊กอิน" / "รวบรวมธีม" /
+	 * etc. instead of just a bare item counter.
+	 *
+	 * @param ISX_Job $job
+	 * @param int     $done_files
+	 * @return string
+	 */
+	private static function current_category_label( ISX_Job $job, $done_files ) {
+		$labels = array(
+			'plugins'    => 'ปลั๊กอิน',
+			'themes'     => 'ธีม',
+			'uploads'    => 'คลังสื่อ',
+			'mu-plugins' => 'ปลั๊กอิน', // รวมกับ plugins เป็นหมวดเดียวในสายตาผู้ใช้
+			'other'      => 'ไฟล์อื่นๆ',
+		);
+		$bounds = (array) $job->get( 'file_category_bounds', array() );
+		foreach ( $bounds as $key => $upto ) {
+			if ( $done_files <= $upto ) {
+				return isset( $labels[ $key ] ) ? $labels[ $key ] : 'ไฟล์';
+			}
+		}
+		return 'ไฟล์';
 	}
 
 	private static function finalize( ISX_Job $job ) {

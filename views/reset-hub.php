@@ -141,17 +141,11 @@ $isx_reset_tools = array(
 
 		<div id="isx-backups-progress" class="isx-progress-box" style="display:none;">
 			<p class="isx-progress-warning"><span class="dashicons dashicons-warning"></span> <?php esc_html_e( 'ระบบกำลังสำรองข้อมูล กรุณาอย่าปิดหน้านี้หรือย้ายไปหน้าอื่นจนกว่าจะเสร็จสิ้น', 'insightx-backup' ); ?></p>
-			<div class="isx-progress-meta">
-				<span class="isx-eta"></span>
-			</div>
 			<p class="isx-status"></p>
 		</div>
 
 		<div id="isx-backups-restore-progress" class="isx-progress-box" style="display:none;">
 			<p class="isx-progress-warning"><span class="dashicons dashicons-warning"></span> <?php esc_html_e( 'ระบบกำลังกู้คืนข้อมูล กรุณาอย่าปิดหน้านี้หรือย้ายไปหน้าอื่นจนกว่าจะเสร็จสิ้น', 'insightx-backup' ); ?></p>
-			<div class="isx-progress-meta">
-				<span class="isx-eta"></span>
-			</div>
 			<p class="isx-status"></p>
 		</div>
 

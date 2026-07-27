@@ -647,9 +647,9 @@
 	}
 
 	/**
-	 * Update a .isx-progress-box (percent, bar fill, elapsed, ETA, status
-	 * message) from an isx_run result. Shared by every export/import/restore
-	 * progress box across all four admin pages.
+	 * Update a .isx-progress-box (percent, bar fill, elapsed, status message)
+	 * from an isx_run result. Shared by every export/import/restore progress
+	 * box across all four admin pages.
 	 */
 	function updateProgress($box, result) {
 		updateSteps($box, result);
@@ -657,11 +657,6 @@
 
 		if (typeof result.elapsed === 'number') {
 			$box.find('.isx-elapsed').text('ใช้เวลาไปแล้ว ' + formatDuration(result.elapsed));
-		}
-		if (typeof result.eta === 'number' && result.eta !== null) {
-			$box.find('.isx-eta').text('เหลืออีกประมาณ ' + formatDuration(result.eta));
-		} else {
-			$box.find('.isx-eta').text('');
 		}
 	}
 
@@ -719,7 +714,6 @@
 		$('#isx-import-progress').show();
 		var $box = $('#isx-import-progress');
 		renderSteps($box, 'import', importStepKeys(true));
-		$box.find('.isx-eta').text('');
 		var status = $box.find('.isx-status');
 
 		createJob(
@@ -729,7 +723,6 @@
 				status.text(message + ' — ลองใหม่ (' + attempt + '/' + maxAttempts + ')...');
 			},
 			function (job, secret) {
-				var uploadStart = Date.now();
 				uploadChunks(
 					job,
 					file,
@@ -739,12 +732,6 @@
 							// fake an isx_run-shaped result so it drives the "อัปโหลดไฟล์"
 							// step row the same way every other phase does.
 							updateSteps($box, { phase: 'upload', phase_progress: p.percent });
-							// ...and estimate remaining time client-side from the pace so far.
-							if (p.percent > 0) {
-								var elapsed = (Date.now() - uploadStart) / 1000;
-								var eta = elapsed * (100 - p.percent) / p.percent;
-								$box.find('.isx-eta').text('เหลืออีกประมาณ ' + formatDuration(eta));
-							}
 						}
 						status.text(p.message || '');
 					},
