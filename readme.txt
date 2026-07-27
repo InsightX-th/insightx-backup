@@ -4,7 +4,7 @@ Tags: backup, migration, export, import, s3
 Requires at least: 3.3
 Tested up to: 7.0.2
 Requires PHP: 5.3
-Stable tag: 0.1.1
+Stable tag: 0.1.2
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -31,7 +31,7 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 
 **ดาวน์โหลด zip จาก GitHub**
 
-1. เข้า `https://github.com/Noppakalo/insightx-backup`
+1. เข้า `https://github.com/InsightX-th/insightx-backup`
 2. เมนู Releases เลือกเวอร์ชันล่าสุด ดาวน์โหลด `insightx-backup-vX.X.X.zip` จากส่วน Assets
 3. ไปที่เว็บ WordPress ปลายทาง → Plugins → Add New → Upload Plugin
 4. เลือกไฟล์ zip → Install Now → Activate Plugin
@@ -45,6 +45,9 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 **ความต้องการของระบบ:** PHP 7.4+, ส่วนขยาย cURL/zlib/openssl
 
 == Changelog ==
+
+= 0.1.2 =
+* ตัดบรรทัดข้อความระหว่างอัปโหลดออก — เดิมขึ้น "กำลังอัปโหลดไปยัง Storage... 6 GB / 6 GB (92%)" ซึ่งบอกซ้ำกับแถบความคืบหน้าที่มี % อยู่แล้ว และตัวเลขขนาดไฟล์ถูกปัดเศษจนสองฝั่งเท่ากันตอนใกล้จบ อ่านแล้วเหมือนส่งครบทั้งที่ยังไม่เสร็จ ตอนนี้เหลือแถบ เปอร์เซ็นต์ และเวลาที่เหลืออย่างเดียว ส่วนบรรทัดข้อความจะขึ้นเฉพาะตอนอัปโหลดขัดข้องแล้วกำลังลองใหม่
 
 = 0.1.1 =
 * แก้ปัญหาอัปโหลดขึ้น Storage ค้างนานและแถบความคืบหน้าไม่ขยับ — เดิมส่งไฟล์ทั้งก้อนรวดเดียวใน request เดียว ตอนนี้ทยอยส่งทีละส่วนตามงบเวลาเท่ากับขั้นตอนอื่น รายงานความคืบหน้าและเวลาที่เหลือตามจำนวนข้อมูลที่ส่งไปจริง และกลับมาทำต่อจากส่วนเดิมได้ถ้าถูกตัดกลางคัน

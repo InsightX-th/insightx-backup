@@ -425,10 +425,15 @@ class ISX_Export {
 			$job->set( 'up_retries', 0 );
 			$job->save();
 
+			// No message: the step label, the bar, its percentage and the ETA
+			// line already say everything there is to say about an upload. The
+			// byte counts this used to print only restated the bar — and
+			// size_format() rounded both sides to the same "6 GB" near the end,
+			// so it read as finished while 8% was still in flight.
 			return array(
 				'progress' => 97,
 				'done'     => false,
-				'message'  => sprintf( 'เริ่มอัปโหลดไปยัง Storage (%s)', size_format( $total ) ),
+				'message'  => '',
 			);
 		}
 
@@ -472,10 +477,12 @@ class ISX_Export {
 					)
 				);
 
+				// The one thing the bar can't show — worth a line of its own,
+				// unlike the routine byte counts.
 				return array(
 					'progress' => 97 + 3 * ( $offset / $total ),
 					'done'     => false,
-					'message'  => sprintf( 'อัปโหลดขัดข้อง กำลังลองใหม่ (%d/%d)', $retries, self::UPLOAD_MAX_RETRIES ),
+					'message'  => sprintf( 'อัปโหลดส่วนที่ %d ขัดข้อง กำลังลองใหม่ (%d/%d)', $number, $retries, self::UPLOAD_MAX_RETRIES ),
 				);
 			}
 
@@ -497,16 +504,10 @@ class ISX_Export {
 		}
 
 		if ( $offset < $total ) {
-			$progress = 97 + 3 * ( $offset / $total );
 			return array(
-				'progress' => $progress,
+				'progress' => 97 + 3 * ( $offset / $total ),
 				'done'     => false,
-				'message'  => sprintf(
-					'กำลังอัปโหลดไปยัง Storage... %s / %s (%d%%)',
-					size_format( $offset ),
-					size_format( $total ),
-					(int) round( $offset / $total * 100 )
-				),
+				'message'  => '',
 			);
 		}
 
