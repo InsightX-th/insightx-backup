@@ -1,0 +1,31 @@
+# Runtime data — export/import job scratch dirs and local backups.
+# These are generated at runtime and must never ship with the plugin or be
+# committed; the folder itself (with its .htaccess / index.php guards) stays.
+storage/*
+!storage/.htaccess
+!storage/index.php
+!storage/backups/
+storage/backups/*
+!storage/backups/.htaccess
+!storage/backups/index.php
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Local tooling (if this plugin is ever built/tested with Node/Composer).
+# The bare "vendor/" rule is for a future Composer setup at the plugin root —
+# plugin-update-checker's bundled vendor/ (PucReadmeParser, Parsedown) must
+# ship with the plugin, or every release zip fatals on "Check for updates".
+node_modules/
+vendor/
+!libs/plugin-update-checker/vendor/
+composer.lock
+package-lock.json
+
+# Logs
+*.log
