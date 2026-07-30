@@ -1372,6 +1372,20 @@ class ISX_Admin {
 			$posted['secret_key'] = $current[ $slug ]['secret_key'];
 		}
 
+		// A stale cached copy of isx-storage.js — one built before a field
+		// existed — posts a config without that key at all. Treating "absent"
+		// as "cleared" would silently wipe a stored value the user never
+		// touched, so an absent key keeps whatever is already saved, the same
+		// rule the secret_key fallback above follows. Note this tests isset()
+		// rather than empty(): a key posted as '' is a deliberate clear and
+		// must still go through. path_style stays out of this — an unchecked
+		// box always posts a key, so backfilling it would make it unclickable.
+		foreach ( array( 'endpoint', 'region', 'bucket', 'prefix', 'access_key' ) as $field ) {
+			if ( ! isset( $posted[ $field ] ) && isset( $current[ $slug ][ $field ] ) ) {
+				$posted[ $field ] = $current[ $slug ][ $field ];
+			}
+		}
+
 		$all          = ISX_Destinations::all();
 		$all[ $slug ] = $posted;
 		ISX_Destinations::save( $all );
