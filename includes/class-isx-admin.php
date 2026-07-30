@@ -38,6 +38,7 @@ class ISX_Admin {
 	public static function boot() {
 		add_action( 'admin_menu', array( __CLASS__, 'menu' ) );
 		add_action( 'admin_enqueue_scripts', array( __CLASS__, 'assets' ) );
+		add_action( 'admin_init', array( __CLASS__, 'maybe_sweep_uploads' ) );
 
 		add_action( 'wp_ajax_isx_export_start', array( __CLASS__, 'ajax_export_start' ) );
 		add_action( 'wp_ajax_isx_import_create', array( __CLASS__, 'ajax_import_create' ) );
@@ -54,6 +55,11 @@ class ISX_Admin {
 		// by their own per-job secret key the same way ajax_run() is here.
 		add_action( 'wp_ajax_nopriv_isx_run', array( __CLASS__, 'ajax_run' ) );
 		add_action( 'wp_ajax_isx_import_decrypt', array( __CLASS__, 'ajax_import_decrypt' ) );
+		// Cancelling authenticates on the job secret like isx_run, and needs the
+		// nopriv hook for the same reason: an import can log the session out
+		// mid-job, and that is exactly when someone reaches for "ยกเลิก".
+		add_action( 'wp_ajax_isx_job_cancel', array( __CLASS__, 'ajax_job_cancel' ) );
+		add_action( 'wp_ajax_nopriv_isx_job_cancel', array( __CLASS__, 'ajax_job_cancel' ) );
 		// Browser-side failures (the poll request never coming back) are invisible
 		// server-side, so the JS beacons them here. nopriv for the same reason
 		// isx_run has it — an import can log the session out mid-job.
@@ -273,8 +279,37 @@ class ISX_Admin {
 
 	/* ---------------- Export / Import pipeline AJAX ---------------- */
 
+	/**
+	 * Keep buckets free of multipart uploads that no job can finish any more.
+	 *
+	 * The registry pass is cheap and immediate — it only calls out when there is
+	 * a stranded upload of this site's own to release — so it runs on every
+	 * admin request. The listing pass costs one request per configured provider
+	 * and exists for uploads with no registry entry (left by an older version,
+	 * or by another site sharing the bucket folder), so it is throttled to once
+	 * a day.
+	 */
+	public static function maybe_sweep_uploads() {
+		if ( ! current_user_can( 'export' ) ) {
+			return;
+		}
+
+		$include_foreign = get_transient( 'isx_upload_sweep_done' ) === false;
+		if ( $include_foreign ) {
+			set_transient( 'isx_upload_sweep_done', 1, DAY_IN_SECONDS );
+		}
+
+		ISX_Export::sweep_orphaned_uploads( $include_foreign );
+	}
+
 	public static function ajax_export_start() {
 		self::guard( 'export' );
+
+		// Release anything a previous export left pending on a bucket before
+		// starting another one. Registry-only (no listing call), so this costs
+		// nothing unless there is actually something stranded to clean up.
+		ISX_Export::sweep_orphaned_uploads();
+
 		$job = ISX_Job::create( 'export' );
 		if ( ! $job ) {
 			wp_send_json_error( array( 'message' => 'สร้างงานไม่สำเร็จ ดูสาเหตุได้ที่หน้า Log' ) );
@@ -443,6 +478,63 @@ class ISX_Admin {
 			wp_send_json_error( $result );
 		}
 		wp_send_json_success( $result );
+	}
+
+	/**
+	 * Stop a running job at the user's request.
+	 *
+	 * Ending the job here rather than just closing the tab matters for an
+	 * upload: walking away leaves parts in the bucket as an "ongoing multipart
+	 * upload" that no object browser can delete, and the loopback/cron chain
+	 * would keep re-firing the job in the meantime. Marking it done stops both.
+	 */
+	public static function ajax_job_cancel() {
+		$job_id = isset( $_POST['job'] ) ? sanitize_text_field( wp_unslash( $_POST['job'] ) ) : '';
+		$job    = ISX_Job::load( $job_id );
+		if ( ! $job ) {
+			wp_send_json_error( array( 'message' => 'ไม่พบงาน' ) );
+		}
+
+		// Same on-disk secret as ajax_run(), for the same reason: a restore can
+		// invalidate the WP session partway through the run.
+		$secret = isset( $_POST['secret'] ) ? sanitize_text_field( wp_unslash( $_POST['secret'] ) ) : '';
+		if ( ! hash_equals( (string) $job->get( 'secret' ), $secret ) ) {
+			wp_send_json_error( array( 'message' => 'secret ไม่ถูกต้อง' ) );
+		}
+
+		$message = 'ยกเลิกโดยผู้ใช้';
+
+		if ( $job->get( 'step' ) === 'done' ) {
+			// Already finished between the click and this request — don't
+			// rewrite the outcome it reported.
+			wp_send_json_success(
+				array(
+					'progress' => 100,
+					'done'     => true,
+					'message'  => (string) $job->get( 'last_message', $message ),
+				)
+			);
+		}
+
+		ISX_Logger::log_warn(
+			(string) $job->get( 'type', 'export' ),
+			$message,
+			array(
+				'job'   => $job->id(),
+				'phase' => (string) $job->get( 'step', '' ),
+			)
+		);
+
+		ISX_Export::abort_pending_upload( $job );
+		$job->finish( $message, true );
+
+		wp_send_json_success(
+			array(
+				'progress' => 100,
+				'done'     => true,
+				'message'  => $message,
+			)
+		);
 	}
 
 	/**
@@ -697,6 +789,16 @@ class ISX_Admin {
 				$result['error']   = true;
 				$result['done']    = true;
 				$result['message'] = sprintf( 'งานหยุดค้าง (ไม่มีความคืบหน้าเกิน %d นาที)', (int) round( self::STALL_LIMIT / 60 ) );
+
+				// A job wedged mid-upload has parts sitting in the bucket as an
+				// "ongoing multipart upload" that no object browser can delete.
+				// Then actually end the job: reporting done+error only tells the
+				// browser to stop, and a job left un-finished never reaches
+				// step 'done', so gc_done_jobs() would skip its scratch dir
+				// forever.
+				ISX_Export::abort_pending_upload( $job );
+				$job->finish( $result['message'], true );
+
 				return $result;
 			}
 		}

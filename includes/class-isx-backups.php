@@ -45,7 +45,23 @@ class ISX_Backups {
 	 * @return string
 	 */
 	private static function htaccess_contents() {
-		return "<IfModule mod_mime.c>\n"
+		// Apache applies a directory's .htaccess to every directory beneath it,
+		// so storage/.htaccess ("Require all denied", see
+		// isx_htaccess_deny_all()) reaches in here too and answers 403 for the
+		// very files url() hands out direct links to. Saying nothing was enough
+		// on nginx (which ignores .htaccess entirely) and on Apache with
+		// AllowOverride off, which is exactly why this failed only on some
+		// hosts — and only for some requests on a Plesk-style nginx-in-front-of-
+		// Apache setup, depending on which of the two actually served the file.
+		// Grant access back explicitly for this one directory.
+		return "<IfModule mod_authz_core.c>\n"
+			. "\tRequire all granted\n"
+			. "</IfModule>\n"
+			. "<IfModule !mod_authz_core.c>\n"
+			. "\tOrder allow,deny\n"
+			. "\tAllow from all\n"
+			. "</IfModule>\n"
+			. "<IfModule mod_mime.c>\n"
 			. "\tAddType application/octet-stream .wpress\n"
 			. "</IfModule>\n"
 			. "<IfModule mod_dir.c>\n"

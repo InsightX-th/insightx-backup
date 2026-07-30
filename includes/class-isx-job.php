@@ -13,6 +13,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class ISX_Job {
 
+	// How long a job with no heartbeat at all is presumed abandoned. Well past
+	// ISX_Admin::STALL_LIMIT on purpose: this only catches runs that died with
+	// no request left to notice them, and must never reclaim a job that is
+	// merely between slow ticks.
+	const ABANDONED_GRACE = HOUR_IN_SECONDS;
+
 	private $id;
 	private $dir;
 	private $state = array();
@@ -258,21 +264,48 @@ class ISX_Job {
 	 */
 	private static function gc_done_jobs() {
 		$grace = 5 * MINUTE_IN_SECONDS;
-		$dirs  = glob( ISX_STORAGE_PATH . '/isx_*', GLOB_ONLYDIR );
+
+		// Sweep every directory load() would search, not just the currently
+		// configured one — a job that ran before the storage path changed still
+		// has a dir (and possibly a pending upload) under the old base.
+		$dirs = array();
+		foreach ( self::search_paths() as $base ) {
+			$found = glob( untrailingslashit( $base ) . '/isx_*', GLOB_ONLYDIR );
+			if ( $found ) {
+				$dirs = array_merge( $dirs, $found );
+			}
+		}
 		if ( ! $dirs ) {
 			return;
 		}
+
 		foreach ( $dirs as $dir ) {
 			$id  = basename( $dir );
 			$job = self::load( $id );
 			if ( $job === null ) {
 				continue;
 			}
-			if ( $job->get( 'step' ) !== 'done' ) {
+
+			if ( $job->get( 'step' ) === 'done' ) {
+				if ( time() - (int) $job->get( 'finished', 0 ) < $grace ) {
+					continue;
+				}
+				$job->cleanup();
 				continue;
 			}
-			if ( time() - (int) $job->get( 'finished', 0 ) < $grace ) {
+
+			// Not done, and nothing has touched it for far longer than the
+			// stall watchdog's window: the worker died without any request
+			// left to notice (fatal, OOM, host kill), so the watchdog never
+			// got to run. Release whatever it left pending on the bucket
+			// before the state file — the only record of that upload — goes
+			// away with the directory.
+			$last = (int) $job->get( 'heartbeat', (int) $job->get( 'created', 0 ) );
+			if ( $last === 0 || time() - $last < self::ABANDONED_GRACE ) {
 				continue;
+			}
+			if ( $job->get( 'type', 'export' ) === 'export' ) {
+				ISX_Export::abort_pending_upload( $job );
 			}
 			$job->cleanup();
 		}

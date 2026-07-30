@@ -138,4 +138,94 @@ class ISX_CLI_Command {
 			WP_CLI::log( sprintf( '%-16s %s (%s)', $slug, $meta['label'], $status ) );
 		}
 	}
+
+	/**
+	 * Release multipart uploads a provider still has pending.
+	 *
+	 * An upload that starts and never finishes leaves its parts in the bucket
+	 * without ever becoming an object, so they keep costing storage while being
+	 * invisible to (and undeletable from) a provider's object browser.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--to=<provider>]
+	 * : Only this provider. Defaults to every configured one. See "wp isx providers".
+	 *
+	 * [--dry-run]
+	 * : List what would be released without releasing anything.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp isx cleanup-uploads
+	 *     wp isx cleanup-uploads --to=cloudflare_r2 --dry-run
+	 *
+	 * @subcommand cleanup-uploads
+	 */
+	public function cleanup_uploads( $args, $assoc_args ) {
+		$only    = isset( $assoc_args['to'] ) ? sanitize_key( $assoc_args['to'] ) : '';
+		$dry_run = ! empty( $assoc_args['dry-run'] );
+
+		$slugs = array();
+		foreach ( ISX_Destinations::providers() as $slug => $meta ) {
+			if ( $only !== '' && $slug !== $only ) {
+				continue;
+			}
+			if ( ! ISX_Destinations::is_configured( $slug ) ) {
+				continue;
+			}
+			$slugs[] = $slug;
+		}
+
+		if ( empty( $slugs ) ) {
+			WP_CLI::error( $only !== '' ? 'ยังไม่ได้ตั้งค่า provider นี้' : 'ยังไม่ได้ตั้งค่า provider ใดเลย' );
+		}
+
+		$found  = 0;
+		$closed = 0;
+		$failed = 0;
+
+		foreach ( $slugs as $slug ) {
+			$client  = new ISX_S3_Client( ISX_Destinations::get( $slug ) );
+			$prefix  = ISX_Destinations::prefix( $slug );
+			$uploads = $client->list_multipart_uploads( $prefix );
+
+			if ( is_wp_error( $uploads ) ) {
+				WP_CLI::warning( sprintf( '%s: %s', $slug, $uploads->get_error_message() ) );
+				$failed++;
+				continue;
+			}
+			if ( empty( $uploads ) ) {
+				WP_CLI::log( sprintf( '%s: ไม่มี upload ที่ค้าง', $slug ) );
+				continue;
+			}
+
+			foreach ( $uploads as $upload ) {
+				$found++;
+				WP_CLI::log( sprintf( '%s: %s (เริ่ม %s)', $slug, $upload['key'], $upload['initiated'] ) );
+
+				if ( $dry_run ) {
+					continue;
+				}
+
+				$target = $client->resolve_target( $upload['key'] );
+				$result = $client->multipart_abort( $target['host'], $target['uri'], $upload['upload_id'] );
+
+				if ( is_wp_error( $result ) ) {
+					WP_CLI::warning( sprintf( '  ล้างไม่สำเร็จ: %s', $result->get_error_message() ) );
+					$failed++;
+					continue;
+				}
+				$closed++;
+			}
+		}
+
+		if ( $dry_run ) {
+			WP_CLI::success( sprintf( 'พบ %d รายการที่ค้าง (dry-run — ไม่ได้ล้าง)', $found ) );
+			return;
+		}
+		if ( $failed > 0 ) {
+			WP_CLI::error( sprintf( 'ล้างแล้ว %d รายการ, ไม่สำเร็จ %d รายการ', $closed, $failed ) );
+		}
+		WP_CLI::success( sprintf( 'ล้างแล้ว %d รายการ', $closed ) );
+	}
 }

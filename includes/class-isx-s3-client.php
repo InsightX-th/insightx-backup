@@ -32,6 +32,11 @@ class ISX_S3_Client {
 	// S3 refuses a multipart upload with more parts than this.
 	const MULTIPART_MAX_PARTS = 10000;
 
+	// Marker-following cap for list_multipart_uploads(). A thousand pending
+	// uploads is already far past "something went wrong repeatedly", so this
+	// only exists to keep one admin request bounded.
+	const MULTIPART_LIST_MAX_PAGES = 20;
+
 	/**
 	 * @return int Bytes per multipart part; never below S3's 5MB floor.
 	 */
@@ -564,13 +569,19 @@ class ISX_S3_Client {
 	}
 
 	/**
-	 * Best-effort cleanup so a failed multipart upload doesn't leave orphaned
-	 * parts billing against the bucket. Errors here are swallowed — the
-	 * caller already has a real error to report back to the user.
+	 * Cleanup so a failed multipart upload doesn't leave orphaned parts billing
+	 * against the bucket. The result is returned for callers that clean up on
+	 * the user's behalf and must report what happened (the cleanup screen);
+	 * the in-pipeline callers ignore it on purpose, since they already have a
+	 * real error of their own to report.
 	 *
-	 * @return void
+	 * @return true|WP_Error
 	 */
 	public function multipart_abort( $host, $uri, $upload_id ) {
+		if ( ! function_exists( 'curl_init' ) ) {
+			return new WP_Error( 'isx_s3_no_curl', __( 'ต้องมีส่วนขยาย PHP cURL เพื่อเข้าถึง S3', 'insightx-backup' ) );
+		}
+
 		$query   = 'uploadId=' . rawurlencode( $upload_id );
 		$url     = $this->scheme . '://' . $host . $uri . '?' . $query;
 		$payload = hash( 'sha256', '' );
@@ -583,7 +594,7 @@ class ISX_S3_Client {
 		curl_setopt( $ch, CURLOPT_CONNECTTIMEOUT, 10 );
 		curl_setopt( $ch, CURLOPT_TIMEOUT, 15 );
 
-		$this->exec_curl(
+		$res = $this->exec_curl(
 			$ch,
 			array(
 				'op'        => 'multipart_abort',
@@ -591,6 +602,108 @@ class ISX_S3_Client {
 				'upload_id' => $upload_id,
 			)
 		);
+
+		if ( ! $res['ok'] ) {
+			return self::curl_error_to_wp( $res );
+		}
+		return true;
+	}
+
+	/**
+	 * List multipart uploads that were started but never completed or aborted
+	 * (ListMultipartUploads). These hold uploaded parts in the bucket yet never
+	 * become objects, so they are invisible to ListObjectsV2 and cannot be
+	 * removed through a provider's object browser — only AbortMultipartUpload
+	 * clears them, which is what the cleanup screen uses this listing to do.
+	 *
+	 * @param string $prefix Confine the listing to one folder.
+	 * @return array|WP_Error List of {key, upload_id, initiated}.
+	 */
+	public function list_multipart_uploads( $prefix = '' ) {
+		if ( ! function_exists( 'curl_init' ) ) {
+			return new WP_Error( 'isx_s3_no_curl', __( 'ต้องมีส่วนขยาย PHP cURL เพื่อเข้าถึง S3', 'insightx-backup' ) );
+		}
+
+		$host = $this->path_style ? $this->host : $this->bucket . '.' . $this->host;
+		$path = $this->path_style ? '/' . $this->bucket : '/';
+		$uri  = self::encode_path( $path );
+
+		$uploads    = array();
+		$key_marker = '';
+		$id_marker  = '';
+
+		// A bucket shared by several sites can hold more pending uploads than
+		// one response returns, so follow the markers — but under a hard cap,
+		// since a provider that keeps reporting IsTruncated without advancing
+		// the markers would otherwise spin this request forever.
+		for ( $page = 0; $page < self::MULTIPART_LIST_MAX_PAGES; $page++ ) {
+			// signed_headers() signs the query string verbatim, so the
+			// parameters have to arrive already sorted by name the way SigV4's
+			// canonical query demands: key-marker, prefix, upload-id-marker,
+			// uploads.
+			$params = array();
+			if ( $key_marker !== '' ) {
+				$params[] = 'key-marker=' . rawurlencode( $key_marker );
+			}
+			$params[] = 'prefix=' . rawurlencode( $prefix );
+			if ( $id_marker !== '' ) {
+				$params[] = 'upload-id-marker=' . rawurlencode( $id_marker );
+			}
+			$params[] = 'uploads=';
+
+			$query   = implode( '&', $params );
+			$url     = $this->scheme . '://' . $host . $uri . '?' . $query;
+			$payload = hash( 'sha256', '' );
+			$headers = $this->signed_headers( 'GET', $host, $uri, $query, $payload );
+
+			$ch = curl_init( $url );
+			curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers );
+			curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true );
+			curl_setopt( $ch, CURLOPT_CONNECTTIMEOUT, 30 );
+			curl_setopt( $ch, CURLOPT_TIMEOUT, 60 );
+
+			$res = $this->exec_curl(
+				$ch,
+				array(
+					'op'     => 'list_multipart_uploads',
+					'host'   => $host,
+					'prefix' => $prefix,
+				)
+			);
+
+			if ( ! $res['ok'] ) {
+				return self::curl_error_to_wp( $res );
+			}
+
+			if ( preg_match_all( '#<Upload>(.*?)</Upload>#is', $res['body'], $matches ) ) {
+				foreach ( $matches[1] as $chunk ) {
+					$key       = self::xml_value( $chunk, 'Key' );
+					$upload_id = self::xml_value( $chunk, 'UploadId' );
+					if ( $key === '' || $upload_id === '' ) {
+						continue;
+					}
+					$uploads[] = array(
+						'key'       => $key,
+						'upload_id' => $upload_id,
+						'initiated' => self::xml_value( $chunk, 'Initiated' ),
+					);
+				}
+			}
+
+			if ( strtolower( self::xml_value( $res['body'], 'IsTruncated' ) ) !== 'true' ) {
+				break;
+			}
+
+			$next_key = self::xml_value( $res['body'], 'NextKeyMarker' );
+			$next_id  = self::xml_value( $res['body'], 'NextUploadIdMarker' );
+			if ( $next_key === '' || ( $next_key === $key_marker && $next_id === $id_marker ) ) {
+				break; // No usable cursor — stop rather than re-request the same page.
+			}
+			$key_marker = $next_key;
+			$id_marker  = $next_id;
+		}
+
+		return $uploads;
 	}
 
 	/**

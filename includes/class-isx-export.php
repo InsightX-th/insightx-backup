@@ -430,6 +430,14 @@ class ISX_Export {
 			$job->set( 'up_retries', 0 );
 			$job->save();
 
+			// Also record it outside the job directory. The job's own state file
+			// is the fast path for aborting, but it disappears with the storage
+			// directory — changed path, reinstall, wiped disk — and then nothing
+			// knows the upload id any more. This registry lives in wp_options,
+			// so sweep_orphaned_uploads() can still release the upload the
+			// moment its job is gone, without waiting for an age cutoff.
+			self::register_pending_upload( $upload_id, $provider, $job->id(), $target['host'], $target['uri'] );
+
 			return array(
 				'progress' => 97,
 				'done'     => false,
@@ -458,6 +466,7 @@ class ISX_Export {
 
 				if ( $retries > self::UPLOAD_MAX_RETRIES ) {
 					$client->multipart_abort( $host, $uri, $upload_id );
+					self::forget_pending_upload( $upload_id );
 					return self::upload_failed( $job, $etag->get_error_message() );
 				}
 
@@ -507,8 +516,10 @@ class ISX_Export {
 		$result = $client->multipart_complete( $host, $uri, $upload_id, $parts );
 		if ( is_wp_error( $result ) ) {
 			$client->multipart_abort( $host, $uri, $upload_id );
+			self::forget_pending_upload( $upload_id );
 			return self::upload_failed( $job, $result->get_error_message() );
 		}
+		self::forget_pending_upload( $upload_id );
 
 		ISX_Logger::log_info(
 			's3',
@@ -552,5 +563,214 @@ class ISX_Export {
 			'message'  => $message,
 			'backup'   => $backup_name,
 		);
+	}
+
+	// Registry of multipart uploads this site started, so one can still be
+	// released after its job directory is gone. Keyed by upload id.
+	const PENDING_OPTION = 'isx_pending_uploads';
+
+	// Age cutoff for uploads that are NOT in the registry — leftovers from
+	// before this bookkeeping existed, or from another site sharing the bucket
+	// folder. A pending multipart upload is also what an upload *in progress*
+	// looks like, and there is no way to tell a stranded one from a live one
+	// from the outside, so these need to be clearly stale before being touched.
+	// Uploads this site owns are released immediately instead, no cutoff.
+	const FOREIGN_UPLOAD_MAX_AGE = 12 * HOUR_IN_SECONDS;
+
+	/**
+	 * @return void
+	 */
+	private static function register_pending_upload( $upload_id, $provider, $job_id, $host, $uri ) {
+		$pending = get_option( self::PENDING_OPTION, array() );
+		if ( ! is_array( $pending ) ) {
+			$pending = array();
+		}
+		$pending[ $upload_id ] = array(
+			'provider' => $provider,
+			'job'      => $job_id,
+			'host'     => $host,
+			'uri'      => $uri,
+			'started'  => time(),
+		);
+		update_option( self::PENDING_OPTION, $pending, false );
+	}
+
+	/**
+	 * @return void
+	 */
+	private static function forget_pending_upload( $upload_id ) {
+		$pending = get_option( self::PENDING_OPTION, array() );
+		if ( ! is_array( $pending ) || ! isset( $pending[ $upload_id ] ) ) {
+			return;
+		}
+		unset( $pending[ $upload_id ] );
+		update_option( self::PENDING_OPTION, $pending, false );
+	}
+
+	/**
+	 * Release every multipart upload that can no longer belong to a live job.
+	 *
+	 * Two passes, because "is this upload dead?" is answerable with certainty
+	 * only for uploads this site started:
+	 *
+	 *  1. Registry pass — an entry whose job is finished or gone cannot be
+	 *     uploading any more, so it is aborted right away. No listing call and
+	 *     no waiting: this is what makes a failed export stop costing storage
+	 *     within the same minute rather than a day later.
+	 *  2. Listing pass (only when $include_foreign) — anything the bucket
+	 *     reports under this destination's folder that the registry has never
+	 *     heard of: pre-upgrade leftovers, or another site writing to the same
+	 *     folder. Those get the age cutoff, since aborting one that is actually
+	 *     mid-upload elsewhere would break that site's export.
+	 *
+	 * @param bool $include_foreign Also do the listing pass (one HTTP request
+	 *                              per configured provider).
+	 * @return int Uploads aborted.
+	 */
+	public static function sweep_orphaned_uploads( $include_foreign = false ) {
+		$pending = get_option( self::PENDING_OPTION, array() );
+		$pending = is_array( $pending ) ? $pending : array();
+		$aborted = 0;
+		$known   = array();
+
+		foreach ( $pending as $upload_id => $entry ) {
+			$provider = isset( $entry['provider'] ) ? (string) $entry['provider'] : '';
+			$host     = isset( $entry['host'] ) ? (string) $entry['host'] : '';
+			$uri      = isset( $entry['uri'] ) ? (string) $entry['uri'] : '';
+
+			$known[ $upload_id ] = true;
+
+			if ( $host === '' || $uri === '' || ! ISX_Destinations::is_configured( $provider ) ) {
+				self::forget_pending_upload( $upload_id );
+				continue;
+			}
+
+			// Still being driven by a job that hasn't finished — leave it alone.
+			$job = isset( $entry['job'] ) ? ISX_Job::load( (string) $entry['job'] ) : null;
+			if ( $job !== null && $job->get( 'step' ) !== 'done' ) {
+				continue;
+			}
+
+			$client = new ISX_S3_Client( ISX_Destinations::get( $provider ) );
+			$result = $client->multipart_abort( $host, $uri, $upload_id );
+
+			if ( is_wp_error( $result ) ) {
+				// Keep the entry so the next sweep retries it — the endpoint may
+				// simply have been unreachable this minute.
+				ISX_Logger::log_warn(
+					's3',
+					'ล้าง upload ที่ค้างไม่สำเร็จ: ' . $result->get_error_message(),
+					array( 'provider' => $provider, 'upload_id' => $upload_id )
+				);
+				continue;
+			}
+
+			self::forget_pending_upload( $upload_id );
+			$aborted++;
+			ISX_Logger::log_info(
+				's3',
+				'ล้าง upload ที่ค้างของงานที่จบไปแล้ว',
+				array( 'provider' => $provider, 'upload_id' => $upload_id )
+			);
+		}
+
+		if ( ! $include_foreign ) {
+			return $aborted;
+		}
+
+		$max_age = (int) apply_filters( 'isx_foreign_upload_max_age', self::FOREIGN_UPLOAD_MAX_AGE );
+
+		foreach ( ISX_Destinations::providers() as $slug => $meta ) {
+			if ( ! ISX_Destinations::is_configured( $slug ) ) {
+				continue;
+			}
+			$client  = new ISX_S3_Client( ISX_Destinations::get( $slug ) );
+			$uploads = $client->list_multipart_uploads( ISX_Destinations::prefix( $slug ) );
+			if ( is_wp_error( $uploads ) ) {
+				continue;
+			}
+
+			foreach ( $uploads as $upload ) {
+				if ( isset( $known[ $upload['upload_id'] ] ) ) {
+					continue; // Handled by the registry pass above.
+				}
+				$started = strtotime( (string) $upload['initiated'] );
+				if ( $started === false || time() - $started < $max_age ) {
+					continue;
+				}
+
+				$target = $client->resolve_target( $upload['key'] );
+				$result = $client->multipart_abort( $target['host'], $target['uri'], $upload['upload_id'] );
+				if ( is_wp_error( $result ) ) {
+					continue;
+				}
+				$aborted++;
+				ISX_Logger::log_info(
+					's3',
+					'ล้าง upload ที่ค้างที่ไม่มีเจ้าของ',
+					array( 'provider' => $slug, 'key' => $upload['key'] )
+				);
+			}
+		}
+
+		return $aborted;
+	}
+
+	/**
+	 * Abort the multipart upload this job left pending on the bucket, if any.
+	 *
+	 * upload() only ever aborts from inside a request that still holds the
+	 * upload id in a local variable, so a job that dies any other way — stall
+	 * watchdog, cancelled by the user, worker killed mid-part — leaves parts
+	 * sitting in the bucket as an "ongoing multipart upload" that no object
+	 * browser can delete. The three paths that end a job from the outside call
+	 * this so those parts don't accumulate.
+	 *
+	 * @return bool Whether an upload was pending and is now aborted.
+	 */
+	public static function abort_pending_upload( ISX_Job $job ) {
+		$upload_id = (string) $job->get( 'up_id', '' );
+		$host      = (string) $job->get( 'up_host', '' );
+		$uri       = (string) $job->get( 'up_uri', '' );
+		$provider  = (string) $job->get( 'to_storage', '' );
+
+		if ( $upload_id === '' || $host === '' || $uri === '' ) {
+			return false; // Never reached multipart, or already aborted.
+		}
+		if ( ! ISX_Destinations::is_configured( $provider ) ) {
+			return false; // Credentials are gone; nothing can be signed.
+		}
+
+		// Drop the local record before the call, not after: this job is being
+		// ended either way, and a stale up_id would let a later tick try to
+		// resume or re-abort the same upload. If the abort itself fails the
+		// upload is still findable from the Storage settings cleanup screen,
+		// which lists what the bucket reports rather than what jobs remember.
+		$job->set( 'up_id', '' );
+		$job->save();
+
+		$client = new ISX_S3_Client( ISX_Destinations::get( $provider ) );
+		$result = $client->multipart_abort( $host, $uri, $upload_id );
+
+		if ( ! is_wp_error( $result ) ) {
+			self::forget_pending_upload( $upload_id );
+		}
+		// A failed abort keeps its registry entry on purpose: the next sweep
+		// retries it once the endpoint answers again.
+
+		$context = array(
+			'job'       => $job->id(),
+			'host'      => $host,
+			'upload_id' => $upload_id,
+		);
+
+		if ( is_wp_error( $result ) ) {
+			$context['error'] = $result->get_error_message();
+			ISX_Logger::log_warn( 's3', 'ยกเลิกการอัปโหลดที่ค้างไม่สำเร็จ — ล้างได้จากหน้าตั้งค่า Storage', $context );
+			return false;
+		}
+
+		ISX_Logger::log_info( 's3', 'ยกเลิกการอัปโหลดที่ค้างบน Storage แล้ว', $context );
+		return true;
 	}
 }

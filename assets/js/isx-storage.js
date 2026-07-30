@@ -20,6 +20,41 @@
 		return $('<div>').text(text == null ? '' : String(text)).html();
 	}
 
+	// Icon dropdown used wherever a provider (or another icon-bearing choice)
+	// is picked — reuses the same open/close + menu markup as the import page's
+	// "นำเข้าจาก" picker instead of a plain <select>, since a native <option>
+	// can't render an icon. Expects #<prefix>-picker / -toggle / -icon / -label
+	// plus a hidden #<prefix> holding the value.
+	function wireIconPicker(prefix) {
+		var $picker = $('#' + prefix + '-picker');
+		if (!$picker.length) {
+			return;
+		}
+		var $toggle = $('#' + prefix + '-toggle');
+		var $hidden = $('#' + prefix);
+		var $icon = $('#' + prefix + '-icon');
+		var $label = $('#' + prefix + '-label');
+
+		$toggle.on('click', function (event) {
+			event.preventDefault();
+			event.stopPropagation();
+			$picker.toggleClass('is-open');
+		});
+		$(document).on('click', function (event) {
+			if (!$(event.target).closest($picker).length) {
+				$picker.removeClass('is-open');
+			}
+		});
+		$picker.on('click', '.isx-import-from-menu a', function (event) {
+			event.preventDefault();
+			var $item = $(this);
+			$hidden.val($item.data('value') || '');
+			$label.text($item.data('label') || '');
+			$icon.html($item.find('.isx-card-icon').html());
+			$picker.removeClass('is-open');
+		});
+	}
+
 	/* ================= Export page: destination cards ================= */
 
 	(function exportPage() {
@@ -374,39 +409,6 @@
 			return;
 		}
 
-		// Icon dropdown for "ความถี่" / "ส่งขึ้น Storage" — reuses the same
-		// open/close + menu markup pattern as the import page's "นำเข้าจาก"
-		// picker instead of a plain <select> (native <option> can't render
-		// an icon).
-		function wireIconPicker(prefix) {
-			var $picker = $('#' + prefix + '-picker');
-			if (!$picker.length) {
-				return;
-			}
-			var $toggle = $('#' + prefix + '-toggle');
-			var $hidden = $('#' + prefix);
-			var $icon = $('#' + prefix + '-icon');
-			var $label = $('#' + prefix + '-label');
-
-			$toggle.on('click', function (event) {
-				event.preventDefault();
-				event.stopPropagation();
-				$picker.toggleClass('is-open');
-			});
-			$(document).on('click', function (event) {
-				if (!$(event.target).closest($picker).length) {
-					$picker.removeClass('is-open');
-				}
-			});
-			$picker.on('click', '.isx-import-from-menu a', function (event) {
-				event.preventDefault();
-				var $item = $(this);
-				$hidden.val($item.data('value') || '');
-				$label.text($item.data('label') || '');
-				$icon.html($item.find('.isx-card-icon').html());
-				$picker.removeClass('is-open');
-			});
-		}
 		wireIconPicker('isx-schedule-to-storage');
 		wireIconPicker('isx-schedule-interval');
 

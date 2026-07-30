@@ -91,14 +91,63 @@
 		return 'การเชื่อมต่อล้มเหลว';
 	}
 
+	// Jobs the user cancelled, by id. Kept for the life of the page: the flag has
+	// to outlive the in-flight poll request it is silencing.
+	var cancelledJobs = {};
+
+	// The job poll() is currently driving, so a "ยกเลิก" button can act on it
+	// without every caller having to thread the id and secret through itself.
+	var activeJob = null;
+
+	/**
+	 * Stop a job at the user's request. Tells the server to end it (which also
+	 * releases any half-finished upload sitting on the bucket), silences this
+	 * page's poll loop for that job, then reports the outcome through the same
+	 * onDone the poll would have used.
+	 */
+	function cancelJob(job, secret, onDone) {
+		cancelledJobs[job] = true;
+		activeJob = null;
+
+		return post('isx_job_cancel', { job: job, secret: secret })
+			.done(function (res) {
+				var data = (res && res.data) || {};
+				data.done = true;
+				// A cancelled run is not a success, and the UI's red-message
+				// path is the honest place for it — but never overwrite a
+				// server message saying the job had already finished on its own.
+				if (!res || !res.success) {
+					data.error = true;
+					if (!data.message) {
+						data.message = 'ยกเลิกไม่สำเร็จ';
+					}
+				} else if (data.message !== 'ยกเลิกโดยผู้ใช้') {
+					data.error = false;
+				} else {
+					data.error = true;
+				}
+				onDone(data);
+			})
+			.fail(function () {
+				onDone({ done: true, error: true, message: 'ยกเลิกไม่สำเร็จ' });
+			});
+	}
+
 	/**
 	 * Poll isx_run until done. Calls onTick(result) every step and
 	 * onDone(result) once finished (result.done === true).
 	 */
 	function poll(job, secret, onTick, onDone) {
+		activeJob = { job: job, secret: secret };
 		var failStreak = 0;
 		var startedAt = Date.now();
 		var lastPhase = '';
+		// Set once cancelJob() has taken over reporting for this job, so neither
+		// the next tick nor an already in-flight response drives it further or
+		// overwrites the cancellation with a stale status.
+		var cancelled = function () {
+			return cancelledJobs[job] === true;
+		};
 		// Adaptive poll spacing. A step that reports the same progress and
 		// message as last time has nothing new to say, and asking again 200ms
 		// later just spends a PHP worker that the running step needs — during a
@@ -110,10 +159,16 @@
 		var lastSignature = null;
 
 		function step() {
+			if (cancelled()) {
+				return;
+			}
 			var sentAt = Date.now();
 
 			post('isx_run', { job: job, secret: secret })
 				.done(function (res) {
+					if (cancelled()) {
+						return;
+					}
 					if (!res.success) {
 						// Server-side errors are terminal — stop polling and let the
 						// caller show the message instead of spinning forever.
@@ -181,6 +236,11 @@
 					}
 				})
 				.fail(function (jqXHR, textStatus, errorThrown) {
+					if (cancelled()) {
+						// Cancelling aborts the job server-side, so the poll
+						// failing right afterwards is expected, not a fault.
+						return;
+					}
 					failStreak++;
 
 					var info = describeFailure(jqXHR, textStatus, errorThrown);
@@ -618,6 +678,7 @@
 	window.ISX = {
 		post: post,
 		poll: poll,
+		cancelJob: cancelJob,
 		startExport: startExport,
 		uploadChunks: uploadChunks,
 		downloadUrl: downloadUrl,
@@ -696,6 +757,30 @@
 	});
 	$(document).on('click', '#isx-export-start-file', function () {
 		runExport({});
+	});
+
+	// Cancel applies to whichever export is running — plain file or upload to
+	// Storage — because both are driven by the same poll loop.
+	$(document).on('click', '#isx-export-cancel', function (event) {
+		event.preventDefault();
+		var current = activeJob;
+		if (!current) {
+			return;
+		}
+		if (!window.confirm('ยกเลิกการส่งออก?')) {
+			return;
+		}
+		var $btn = $(this).prop('disabled', true);
+
+		cancelJob(current.job, current.secret, function (res) {
+			$btn.prop('disabled', false);
+			$('#isx-export-progress').hide();
+			var $msg = $('#isx-export-done-msg');
+			$msg.text(res.message || 'ยกเลิกแล้ว');
+			$msg.toggleClass('isx-ok', !res.error).toggleClass('isx-error-msg', !!res.error);
+			$('#isx-export-download').hide();
+			$('#isx-export-done').show();
+		});
 	});
 
 	/* ---------------- Import page wiring (file upload) ---------------- */
