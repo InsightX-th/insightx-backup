@@ -679,13 +679,11 @@
 			},
 			function (res) {
 				$('#isx-export-progress').hide();
-				if (res.error) {
-					$('#isx-export-idle').show();
-					window.alert(res.message || 'เกิดข้อผิดพลาด');
-					return;
-				}
-				$('#isx-export-done-msg').text(res.message + (res.size ? ' (' + res.size + ')' : ''));
-				if (res.backup) {
+				var $msg = $('#isx-export-done-msg');
+				$msg.text(res.message + (res.size ? ' (' + res.size + ')' : ''));
+				$msg.toggleClass('isx-ok', !res.error).toggleClass('isx-error-msg', !!res.error);
+				$('#isx-export-download').toggle(!res.error);
+				if (!res.error && res.backup) {
 					$('#isx-export-download').attr('href', downloadUrl(res.backup));
 				}
 				$('#isx-export-done').show();
@@ -744,12 +742,9 @@
 							},
 							function (res2) {
 								$('#isx-import-progress').hide();
-								if (res2.error) {
-									window.alert(res2.message || 'เกิดข้อผิดพลาด');
-									$('#isx-import-idle').show();
-									return;
-								}
-								$('#isx-import-done-msg').text(res2.message || 'เสร็จสิ้น');
+								var $msg = $('#isx-import-done-msg');
+								$msg.text(res2.message || (res2.error ? 'เกิดข้อผิดพลาด' : 'เสร็จสิ้น'));
+								$msg.toggleClass('isx-ok', !res2.error).toggleClass('isx-error-msg', !!res2.error);
 								$('#isx-import-done').show();
 							}
 						);

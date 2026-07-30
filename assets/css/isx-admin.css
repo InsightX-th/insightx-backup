@@ -259,6 +259,11 @@
   font-weight: 600;
 }
 
+.isx-error-msg {
+  color: var(--isx-danger);
+  font-weight: 600;
+}
+
 /* ---------- Import dropzone ---------- */
 
 .isx-dropzone {

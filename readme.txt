@@ -4,7 +4,7 @@ Tags: backup, migration, export, import, s3
 Requires at least: 3.3
 Tested up to: 7.0.2
 Requires PHP: 5.3
-Stable tag: 0.1.3
+Stable tag: 0.1.4
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -45,6 +45,10 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 **ความต้องการของระบบ:** PHP 7.4+, ส่วนขยาย cURL/zlib/openssl
 
 == Changelog ==
+
+= 0.1.4 =
+* แก้ปัญหา export/import/กู้คืนที่ล้มเหลว (เช่น อัปโหลดขึ้น Storage ไม่สำเร็จ) กลับขึ้นข้อความเหมือนสำเร็จ — ตอนนี้แสดงข้อความสีแดงแยกจากสำเร็จชัดเจน และซ่อนปุ่มดาวน์โหลดเมื่อ export ล้มเหลว
+* เมนู "ข้อมูลสำรอง" ใน sidebar ขึ้นตัวเลขจำนวนไฟล์สำรองที่มีอยู่ (แบบเดียวกับ badge แจ้งเตือนอัปเดตของ WordPress)
 
 = 0.1.3 =
 * ตอนแพ็กไฟล์เข้าไฟล์ .wpress ข้อความใต้ progress bar บอกหมวดที่กำลังเก็บด้วย (เช่น "กำลังรวบรวมปลั๊กอิน — 12345/15589 รายการ") แทนตัวเลขรายการเฉยๆ อย่างเดิม

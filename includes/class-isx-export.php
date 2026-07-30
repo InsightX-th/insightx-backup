@@ -303,7 +303,7 @@ class ISX_Export {
 			'plugins'    => 'ปลั๊กอิน',
 			'themes'     => 'ธีม',
 			'uploads'    => 'คลังสื่อ',
-			'mu-plugins' => 'ปลั๊กอิน', // รวมกับ plugins เป็นหมวดเดียวในสายตาผู้ใช้
+			'mu-plugins' => 'ปลั๊กอิน',
 			'other'      => 'ไฟล์อื่นๆ',
 		);
 		$bounds = (array) $job->get( 'file_category_bounds', array() );
@@ -318,18 +318,10 @@ class ISX_Export {
 	private static function finalize( ISX_Job $job ) {
 		ISX_Archive::finish( $job->archive() );
 
-		// Every finished export is kept as a local backup (listed under
-		// "ข้อมูลสำรอง"), regardless of whether it's also pushed to S3.
 		$backup_name = ISX_Backups::store( $job->archive() );
 		$backup_path = ISX_Backups::path( $backup_name );
 
 		$options = (array) $job->get( 'options', array() );
-
-		// Compression now happens per-entry during packing (see files()/
-		// pack_meta()) — container-level, like All-in-One WP Migration's own
-		// archive format — rather than gzip-wrapping the whole finished file
-		// here afterwards. That old whole-file step would just double up on
-		// (and undo the readability of) what's already compressed inside.
 
 		if ( $backup_path !== null && ! empty( $options['encrypt'] ) ) {
 			$password = ISX_Crypto::decrypt_string( (string) $job->get( 'encrypt_password_enc', '' ) );
@@ -354,17 +346,9 @@ class ISX_Export {
 			$job->set( 'step', 'upload' );
 			$job->set( 'progress', 97 );
 			$job->save();
-			// The upload step reports its own "กำลังอัปโหลด..." progress from here
-			// on; saying it in finalize's message left the UI showing that text
-			// with finalize's frozen 100% bar behind it.
 			return array( 'progress' => 97, 'done' => false, 'message' => 'สร้างไฟล์สำรองเสร็จแล้ว' );
 		}
 
-		// The finished archive already lives in the backups dir; the job's
-		// scratch directory (dump, file list) is no longer needed. finish()
-		// keeps a "done" marker on disk so a duplicate poll racing this one
-		// (browser tab vs. WP-Cron, see with_lock()) reports success instead
-		// of "ไม่พบงาน" for a directory that no longer exists.
 		$job->finish( 'ส่งออกเสร็จสิ้น' );
 
 		return array(
@@ -407,7 +391,7 @@ class ISX_Export {
 
 		if ( $backup === null || ! ISX_Destinations::is_configured( $provider ) ) {
 			$message = 'ยังไม่ได้ตั้งค่า provider นี้ — ไฟล์ถูกเก็บไว้ในข้อมูลสำรองแล้ว';
-			$job->finish( $message );
+			$job->finish( $message, true );
 			return array(
 				'progress' => 100,
 				'done'     => true,
@@ -420,8 +404,6 @@ class ISX_Export {
 		$key    = ISX_Destinations::prefix( $provider ) . basename( $backup );
 		$total  = (int) filesize( $backup );
 
-		// Small enough to fit one request: a single PUT is both faster (no
-		// initiate/complete round-trips) and can't be resumed anyway.
 		if ( $total <= ISX_S3_Client::part_size() ) {
 			$result = $client->put_object( $key, $backup );
 			return is_wp_error( $result )
@@ -431,9 +413,6 @@ class ISX_Export {
 
 		$target = $client->resolve_target( $key );
 
-		// First visit: open the multipart upload and hand the UploadId to the
-		// next round-trip. Nothing else happens this tick — CreateMultipartUpload
-		// is the one call that must not be repeated after parts exist.
 		$upload_id = (string) $job->get( 'up_id', '' );
 		if ( $upload_id === '' ) {
 			$upload_id = $client->multipart_initiate( $target['host'], $target['uri'] );
@@ -446,19 +425,11 @@ class ISX_Export {
 			$job->set( 'up_uri', $target['uri'] );
 			$job->set( 'up_offset', 0 );
 			$job->set( 'up_total', $total );
-			// Pinned for the life of this upload: every part but the last must be
-			// exactly this size, so it cannot be recomputed (or refiltered) on a
-			// later request without corrupting the assembled object.
 			$job->set( 'up_part_size', ISX_S3_Client::part_size_for( $total ) );
 			$job->set( 'up_parts', array() );
 			$job->set( 'up_retries', 0 );
 			$job->save();
 
-			// No message: the step label, the bar, its percentage and the ETA
-			// line already say everything there is to say about an upload. The
-			// byte counts this used to print only restated the bar — and
-			// size_format() rounded both sides to the same "6 GB" near the end,
-			// so it read as finished while 8% was still in flight.
 			return array(
 				'progress' => 97,
 				'done'     => false,
@@ -474,9 +445,6 @@ class ISX_Export {
 		$part_size = max( 1, (int) $job->get( 'up_part_size', ISX_S3_Client::part_size_for( $total ) ) );
 		$deadline  = self::deadline();
 
-		// Send parts back to back while the budget lasts, saving after each one
-		// so a worker killed mid-upload resumes at the next part rather than
-		// restarting the whole archive.
 		while ( $offset < $total ) {
 			$length = (int) min( $part_size, $total - $offset );
 			$number = count( $parts ) + 1;
@@ -493,8 +461,6 @@ class ISX_Export {
 					return self::upload_failed( $job, $etag->get_error_message() );
 				}
 
-				// Hand control back instead of sleeping on it: the driver's next
-				// tick retries this same part with the worker released in between.
 				ISX_Logger::log_error(
 					'export',
 					sprintf( 'อัปโหลดส่วนที่ %d ไม่สำเร็จ กำลังลองใหม่ (%d/%d)', $number, $retries, self::UPLOAD_MAX_RETRIES ),
@@ -506,12 +472,10 @@ class ISX_Export {
 					)
 				);
 
-				// The one thing the bar can't show — worth a line of its own,
-				// unlike the routine byte counts.
 				return array(
 					'progress' => 97 + 3 * ( $offset / $total ),
 					'done'     => false,
-					'message'  => sprintf( 'อัปโหลดส่วนที่ %d ขัดข้อง กำลังลองใหม่ (%d/%d)', $number, $retries, self::UPLOAD_MAX_RETRIES ),
+					'message'  => sprintf( 'กำลังลองใหม่ (%d/%d)', $retries, self::UPLOAD_MAX_RETRIES ),
 				);
 			}
 
@@ -565,7 +529,7 @@ class ISX_Export {
 	 */
 	private static function upload_failed( ISX_Job $job, $message ) {
 		$message = 'อัปโหลดไม่สำเร็จ: ' . $message;
-		$job->finish( $message );
+		$job->finish( $message, true );
 
 		return array(
 			'progress' => 100,

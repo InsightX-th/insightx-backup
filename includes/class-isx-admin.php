@@ -109,7 +109,15 @@ class ISX_Admin {
 		);
 		add_submenu_page( 'isx_export', __( 'ส่งออก', 'insightx-backup' ), __( 'ส่งออก', 'insightx-backup' ), 'export', 'isx_export', array( __CLASS__, 'page_export' ) );
 		add_submenu_page( 'isx_export', __( 'นำเข้า', 'insightx-backup' ), __( 'นำเข้า', 'insightx-backup' ), 'import', 'isx_import', array( __CLASS__, 'page_import' ) );
-		add_submenu_page( 'isx_export', __( 'ข้อมูลสำรอง', 'insightx-backup' ), __( 'ข้อมูลสำรอง', 'insightx-backup' ), 'export', 'isx_backups', array( __CLASS__, 'page_backups' ) );
+		$isx_backups_label = __( 'ข้อมูลสำรอง', 'insightx-backup' );
+		$isx_backup_count  = count( ISX_Backups::all() );
+		if ( $isx_backup_count > 0 ) {
+			$isx_backups_label .= sprintf(
+				' <span class="update-plugins count-%1$d"><span class="plugin-count" aria-hidden="true">%1$d</span></span>',
+				$isx_backup_count
+			);
+		}
+		add_submenu_page( 'isx_export', __( 'ข้อมูลสำรอง', 'insightx-backup' ), $isx_backups_label, 'export', 'isx_backups', array( __CLASS__, 'page_backups' ) );
 		add_submenu_page( 'isx_export', __( 'การเชื่อมต่อ', 'insightx-backup' ), __( 'การเชื่อมต่อ', 'insightx-backup' ), 'export', 'isx_connections', array( __CLASS__, 'page_connections' ) );
 		add_submenu_page( 'isx_export', __( 'ตั้งค่า Storage', 'insightx-backup' ), __( 'ตั้งค่า Storage', 'insightx-backup' ), 'export', 'isx_settings', array( __CLASS__, 'page_settings' ) );
 		// Stricter cap than the rest of this plugin ('export'/'import') — these
@@ -541,6 +549,7 @@ class ISX_Admin {
 					return array(
 						'progress'       => 100,
 						'done'           => true,
+						'error'          => (bool) $locked_job->get( 'last_error', false ),
 						'message'        => (string) $locked_job->get( 'last_message', 'เสร็จสิ้น' ),
 						'phase'          => 'finalize',
 						'phase_progress' => 100,

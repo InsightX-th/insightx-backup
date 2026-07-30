@@ -216,12 +216,17 @@ class ISX_Job {
 	 * gc_done_jobs().
 	 *
 	 * @param string $message
+	 * @param bool   $error Whether this finish represents a failed run — persisted
+	 *                      as 'last_error' so a duplicate poll landing after this
+	 *                      call (see above) still reports the correct outcome
+	 *                      instead of reading as success.
 	 * @return void
 	 */
-	public function finish( $message ) {
+	public function finish( $message, $error = false ) {
 		$this->set( 'step', 'done' );
 		$this->set( 'last_message', $message );
 		$this->set( 'last_progress', 100 );
+		$this->set( 'last_error', (bool) $error );
 		$this->set( 'finished', time() );
 		$this->save();
 
