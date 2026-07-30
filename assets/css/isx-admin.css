@@ -1308,7 +1308,7 @@ table.isx-backups-table tbody td.isx-b-actions {
   padding: 16px;
   max-height: 520px;
   overflow: auto;
-  color: #d6d8f5;
+  color: black;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12.5px;
   line-height: 1.7;

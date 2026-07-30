@@ -4,7 +4,7 @@ Tags: backup, migration, export, import, s3
 Requires at least: 3.3
 Tested up to: 7.0.2
 Requires PHP: 5.3
-Stable tag: 0.1.4
+Stable tag: 0.1.5
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -45,6 +45,9 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 **ความต้องการของระบบ:** PHP 7.4+, ส่วนขยาย cURL/zlib/openssl
 
 == Changelog ==
+
+= 0.1.5 =
+* แก้ปัญหาปุ่ม "ดาวน์โหลด .wpress" บางครั้งกดแล้วไม่มีอะไรเกิดขึ้นทั้งที่ export เสร็จแล้ว — เกิดจากงานที่ขับเคลื่อนด้วยทั้ง browser poll และ WP-Cron backstop พร้อมกัน บางครั้ง poll ที่มาถึงหลัง job เสร็จแล้วไม่ได้ชื่อไฟล์ backup กลับมาด้วย ทำให้ปุ่มไม่ได้ลิงก์จริง ตอนนี้ poll ทุกครั้งได้ชื่อไฟล์กลับมาแน่นอน
 
 = 0.1.4 =
 * แก้ปัญหา export/import/กู้คืนที่ล้มเหลว (เช่น อัปโหลดขึ้น Storage ไม่สำเร็จ) กลับขึ้นข้อความเหมือนสำเร็จ — ตอนนี้แสดงข้อความสีแดงแยกจากสำเร็จชัดเจน และซ่อนปุ่มดาวน์โหลดเมื่อ export ล้มเหลว

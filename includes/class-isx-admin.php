@@ -546,7 +546,7 @@ class ISX_Admin {
 		$result = $job->with_lock(
 			function ( ISX_Job $locked_job ) {
 				if ( $locked_job->get( 'step' ) === 'done' ) {
-					return array(
+					$done_result = array(
 						'progress'       => 100,
 						'done'           => true,
 						'error'          => (bool) $locked_job->get( 'last_error', false ),
@@ -554,6 +554,20 @@ class ISX_Admin {
 						'phase'          => 'finalize',
 						'phase_progress' => 100,
 					);
+
+					// A poll landing after another driver (loopback/cron) already
+					// finished the job would otherwise miss 'backup', leaving the
+					// download button's href stuck at '#'. Read it back here too.
+					$backup_name = (string) $locked_job->get( 'backup_name', '' );
+					if ( $backup_name !== '' ) {
+						$done_result['backup'] = $backup_name;
+						$archive_size          = (int) $locked_job->get( 'archive_size', 0 );
+						if ( $archive_size > 0 ) {
+							$done_result['size'] = size_format( $archive_size );
+						}
+					}
+
+					return $done_result;
 				}
 
 				$type        = (string) $locked_job->get( 'type' );

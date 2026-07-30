@@ -55,7 +55,7 @@ $isx_destinations = ISX_Destinations::all();
 						<div class="isx-field isx-field-wide">
 							<label><?php esc_html_e( 'Secret Key', 'insightx-backup' ); ?></label>
 							<input type="password" class="isx-secret" data-field="secret_key" autocomplete="new-password" data-has-secret="<?php echo $isx_config['secret_key'] !== '' ? '1' : '0'; ?>" value="<?php echo $isx_config['secret_key'] !== '' ? esc_attr( str_repeat( '•', 16 ) ) : ''; ?>" placeholder="<?php esc_attr_e( 'Secret Key', 'insightx-backup' ); ?>" required />
-							<p class="isx-field-hint"><?php esc_html_e( '🔐 เข้ารหัส AES-256-CBC ก่อนบันทึก — ค่าที่โชว์เป็นจุดคือตัวยึดตำแหน่ง ไม่ใช่ค่าจริง', 'insightx-backup' ); ?></p>
+							<p class="isx-field-hint"><?php esc_html_e( '🔐 เข้ารหัส AES-256-CBC ก่อนบันทึก', 'insightx-backup' ); ?></p>
 						</div>
 						<div class="isx-field isx-field-wide">
 							<label><?php esc_html_e( 'โฟลเดอร์ใน Bucket', 'insightx-backup' ); ?></label>
