@@ -520,7 +520,7 @@ class ISX_Export {
 
 				if ( $retries > self::UPLOAD_MAX_RETRIES ) {
 					$client->multipart_abort( $host, $uri, $upload_id );
-					self::forget_pending_upload( $upload_id );
+					self::conclude_upload( $job, $upload_id );
 					return self::upload_failed( $job, $etag->get_error_message() );
 				}
 
@@ -574,10 +574,10 @@ class ISX_Export {
 		$result = $client->multipart_complete( $host, $uri, $upload_id, $parts );
 		if ( is_wp_error( $result ) ) {
 			$client->multipart_abort( $host, $uri, $upload_id );
-			self::forget_pending_upload( $upload_id );
+			self::conclude_upload( $job, $upload_id );
 			return self::upload_failed( $job, $result->get_error_message() );
 		}
-		self::forget_pending_upload( $upload_id );
+		self::conclude_upload( $job, $upload_id );
 
 		ISX_Logger::log_info(
 			's3',
@@ -676,11 +676,39 @@ class ISX_Export {
 	}
 
 	/**
+	 * This multipart upload is over — completed or abandoned — so drop every
+	 * record that could make something try to touch it again.
+	 *
+	 * Clearing the registry alone was not enough: the job's own state kept
+	 * up_id, and the stall watchdog and the cancel path both call
+	 * abort_pending_upload(), which reads exactly that. Aborting an upload that
+	 * already completed earns a 404 NoSuchUpload from S3 — which is how a
+	 * finished, successfully uploaded export could still surface
+	 * "HTTP 404: The specified multipart upload does not exist".
+	 *
+	 * @param string $upload_id
+	 * @return void
+	 */
+	private static function conclude_upload( ISX_Job $job, $upload_id ) {
+		self::forget_pending_upload( $upload_id );
+		$job->set( 'up_id', '' );
+		$job->save();
+	}
+
+	/**
 	 * @param string $message Reason, already human-readable.
 	 * @return array Step result.
 	 */
 	private static function upload_failed( ISX_Job $job, $message ) {
+		// Naming the local copy matters: finalize() stores the package in
+		// ข้อมูลสำรอง *before* the upload step begins, so a failed upload never
+		// costs the export itself. Without saying so, the red error next to a
+		// backup that is sitting right there reads as a contradiction.
+		$backup  = (string) $job->get( 'backup_name', '' );
 		$message = 'อัปโหลดไม่สำเร็จ: ' . $message;
+		if ( $backup !== '' ) {
+			$message .= ' — ไฟล์สำรองถูกสร้างเรียบร้อยแล้วและอยู่ในเมนู "ข้อมูลสำรอง" (' . $backup . ') ดาวน์โหลดหรือสั่งส่งขึ้น Storage ใหม่ได้';
+		}
 		$job->finish( $message, true );
 
 		return array(

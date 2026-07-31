@@ -930,6 +930,16 @@ class ISX_Admin {
 				$result['done']    = true;
 				$result['message'] = sprintf( 'งานหยุดค้าง (ไม่มีความคืบหน้าเกิน %d นาที)', (int) round( self::STALL_LIMIT / 60 ) );
 
+				// An export that already produced its package before stalling
+				// (the stall almost always happens in the upload step, which
+				// runs after finalize() has stored the file) still has a usable
+				// backup. Point at it instead of leaving the user to guess
+				// whether anything survived.
+				$stalled_backup = (string) $job->get( 'backup_name', '' );
+				if ( $stalled_backup !== '' ) {
+					$result['message'] .= ' — ไฟล์สำรองถูกสร้างเรียบร้อยแล้วและอยู่ในเมนู "ข้อมูลสำรอง" (' . $stalled_backup . ')';
+				}
+
 				// A job wedged mid-upload has parts sitting in the bucket as an
 				// "ongoing multipart upload" that no object browser can delete.
 				// Then actually end the job: reporting done+error only tells the

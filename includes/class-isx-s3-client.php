@@ -535,7 +535,11 @@ class ISX_S3_Client {
 
 		$xml = '<CompleteMultipartUpload>';
 		foreach ( $parts as $part ) {
-			$xml .= '<Part><PartNumber>' . (int) $part['number'] . '</PartNumber><ETag>"' . esc_xml( $part['etag'] ) . '"</ETag></Part>';
+			// htmlspecialchars() rather than esc_xml(): that helper only exists
+			// from WordPress 5.5, and calling it on an older install would fatal
+			// on every multipart upload — i.e. every package over 5MB. An ETag
+			// is a hex digest anyway, so this is belt-and-braces either way.
+			$xml .= '<Part><PartNumber>' . (int) $part['number'] . '</PartNumber><ETag>"' . htmlspecialchars( (string) $part['etag'], ENT_QUOTES ) . '"</ETag></Part>';
 		}
 		$xml .= '</CompleteMultipartUpload>';
 
@@ -565,6 +569,40 @@ class ISX_S3_Client {
 		if ( ! $res['ok'] ) {
 			return self::curl_error_to_wp( $res );
 		}
+
+		// CompleteMultipartUpload is the one S3 call where 200 does not mean
+		// success. Assembling the parts can take minutes, so S3 sends the
+		// response headers immediately and drips whitespace to hold the
+		// connection open — by the time it knows the outcome the status line is
+		// long gone, and a failure arrives as an <Error> document under HTTP
+		// 200. Trusting the status alone reports an upload as finished when the
+		// object was never created, which is the worst possible lie for a
+		// backup tool to tell.
+		if ( stripos( $res['body'], '<Error' ) !== false ) {
+			$code = self::xml_value( $res['body'], 'Code' );
+			return new WP_Error(
+				'isx_s3_complete_failed',
+				sprintf(
+					/* translators: 1: S3 error code, 2: message */
+					__( 'รวมไฟล์ที่อัปโหลดไม่สำเร็จ (%1$s): %2$s', 'insightx-backup' ),
+					$code !== '' ? $code : 'unknown',
+					self::extract_error_message( $res['body'] )
+				)
+			);
+		}
+
+		// A genuine success always names the object it created. An empty body
+		// under 200 means the connection was cut mid-assembly (a proxy timing
+		// out on those keep-alive spaces is the usual cause) — the upload may
+		// or may not have landed, and "may have" is not good enough to report
+		// as done.
+		if ( stripos( $res['body'], '<CompleteMultipartUploadResult' ) === false ) {
+			return new WP_Error(
+				'isx_s3_complete_incomplete',
+				__( 'เซิร์ฟเวอร์ตอบกลับไม่ครบระหว่างรวมไฟล์ที่อัปโหลด — ตรวจสอบว่าไฟล์ขึ้นถึง Storage จริงหรือไม่ก่อนลองใหม่', 'insightx-backup' )
+			);
+		}
+
 		return true;
 	}
 
@@ -603,7 +641,12 @@ class ISX_S3_Client {
 			)
 		);
 
-		if ( ! $res['ok'] ) {
+		// 404 NoSuchUpload is the goal state, not a failure: the upload is gone
+		// because it was already aborted, or because it completed and became a
+		// real object. Reporting that as an error is how a finished export ends
+		// up showing "HTTP 404: The specified multipart upload does not exist"
+		// next to a backup that is sitting there perfectly fine.
+		if ( ! $res['ok'] && $res['status'] !== 404 ) {
 			return self::curl_error_to_wp( $res );
 		}
 		return true;
@@ -746,7 +789,10 @@ class ISX_S3_Client {
 				'key'  => $key,
 			)
 		);
-		fclose( $out );
+		// Checked, not assumed: this handle is where a multi-GB package lands,
+		// so a local disk filling up mid-download shows up here as a failed
+		// flush and nowhere else.
+		$closed = fclose( $out );
 
 		if ( ! $res['ok'] ) {
 			// The body landed in the destination file rather than in memory, so
@@ -757,6 +803,30 @@ class ISX_S3_Client {
 			@unlink( $dest_path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
 			return self::curl_error_to_wp( $res );
 		}
+
+		// A short download is the failure this method exists to not hand
+		// onwards: whatever it writes here is about to be treated as a package
+		// to restore a site from. cURL catches most truncation itself
+		// (CURLE_PARTIAL_FILE), but not a body cut exactly at a chunk boundary
+		// by a proxy, and not a local write that came up short — so compare
+		// against what the server said it was sending.
+		clearstatcache( true, $dest_path );
+		$written  = (int) @filesize( $dest_path );
+		$expected = isset( $res['headers']['content-length'] ) ? (int) $res['headers']['content-length'] : -1;
+
+		if ( ! $closed || ( $expected >= 0 && $written !== $expected ) ) {
+			@unlink( $dest_path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			return new WP_Error(
+				'isx_s3_short_download',
+				sprintf(
+					/* translators: 1: bytes received, 2: bytes expected */
+					__( 'ดาวน์โหลดไม่ครบ (ได้ %1$s จาก %2$s) — อาจเน็ตหลุดกลางทางหรือพื้นที่ดิสก์ไม่พอ', 'insightx-backup' ),
+					size_format( $written ),
+					$expected >= 0 ? size_format( $expected ) : '?'
+				)
+			);
+		}
+
 		return true;
 	}
 
