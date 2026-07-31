@@ -127,7 +127,10 @@ class ISX_Backups {
 	 * Move a finished job archive into the backups directory.
 	 *
 	 * @param string $job_archive_path
-	 * @return string The stored file name.
+	 * @return string|null The stored file name, or null if it couldn't be
+	 *                      placed (destination disk full, most likely) — the
+	 *                      finished archive is still sitting at $job_archive_path
+	 *                      in that case, not silently lost.
 	 */
 	public static function store( $job_archive_path ) {
 		// The random part is the only thing standing between a backup and anyone
@@ -138,8 +141,12 @@ class ISX_Backups {
 		$host = wp_parse_url( home_url(), PHP_URL_HOST );
 		$name = ( $host ? $host : 'backup' ) . '-' . gmdate( 'dmY' ) . '-' . wp_generate_password( 16, false, false ) . '.wpress';
 		$dest = self::dir() . '/' . $name;
-		if ( ! @rename( $job_archive_path, $dest ) ) {
-			copy( $job_archive_path, $dest );
+		if ( ! @rename( $job_archive_path, $dest ) && ! @copy( $job_archive_path, $dest ) ) {
+			// Both a same-filesystem move and a cross-filesystem copy failed —
+			// almost always the destination disk being full. The caller checks
+			// path() against the name this returns, so returning it unconditionally
+			// used to report success on a backup that was never actually placed.
+			return null;
 		}
 		return $name;
 	}
@@ -196,6 +203,90 @@ class ISX_Backups {
 			return false;
 		}
 		return @unlink( $path );
+	}
+
+	/**
+	 * Trim a Storage provider's copies down to the newest $retain backups.
+	 *
+	 * The scheduled-backup retention only ever pruned this machine's disk (see
+	 * ISX_Admin::run_scheduled_backup(), which walks all() and calls delete()
+	 * above — both local-only). A site backing up to a bucket every night was
+	 * therefore keeping N files locally while the bucket grew without limit,
+	 * paying storage on every backup ever taken, with the "ข้อมูลสำรอง" screen
+	 * showing a tidy N and nothing anywhere hinting at the other pile.
+	 *
+	 * Only keys this plugin writes are considered: prefix + a name matching
+	 * ISX_Backups::store()'s pattern. A bucket is often shared with other tools
+	 * (or other sites pointed at the same prefix), and retention must never be
+	 * the thing that deletes a stranger's object.
+	 *
+	 * @param string $slug   Provider slug.
+	 * @param int    $retain How many of the newest backups to keep.
+	 * @return int|WP_Error Number deleted.
+	 */
+	public static function prune_remote( $slug, $retain ) {
+		$retain = max( 1, (int) $retain );
+		if ( ! ISX_Destinations::is_configured( $slug ) ) {
+			return 0;
+		}
+
+		$prefix  = ISX_Destinations::prefix( $slug );
+		$client  = new ISX_S3_Client( ISX_Destinations::get( $slug ) );
+		$objects = $client->list_objects( $prefix );
+		if ( is_wp_error( $objects ) ) {
+			return $objects;
+		}
+
+		$ours = array();
+		foreach ( $objects as $object ) {
+			$name = substr( $object['key'], strlen( $prefix ) );
+			if ( $name === false || $name === '' || strpos( $name, '/' ) !== false ) {
+				continue; // Nested deeper than our own flat layout — not ours.
+			}
+			if ( self::sanitize_name( $name ) === '' ) {
+				continue;
+			}
+			$ours[] = array(
+				'key'    => $object['key'],
+				'sortts' => strtotime( (string) $object['last_modified'] ),
+			);
+		}
+
+		if ( count( $ours ) <= $retain ) {
+			return 0;
+		}
+
+		// Newest first, same ordering all() uses locally.
+		usort(
+			$ours,
+			function ( $a, $b ) {
+				return $b['sortts'] - $a['sortts'];
+			}
+		);
+
+		$deleted = 0;
+		foreach ( array_slice( $ours, $retain ) as $old ) {
+			$result = $client->delete_object( $old['key'] );
+			if ( is_wp_error( $result ) ) {
+				ISX_Logger::log_error(
+					's3',
+					'ลบข้อมูลสำรองเก่าบน Storage ไม่สำเร็จ: ' . $result->get_error_message(),
+					array( 'provider' => $slug, 'key' => $old['key'] )
+				);
+				continue;
+			}
+			$deleted++;
+		}
+
+		if ( $deleted > 0 ) {
+			ISX_Logger::log_info(
+				's3',
+				sprintf( 'ลบข้อมูลสำรองเก่าบน Storage %d ไฟล์ (เก็บไว้ %d ล่าสุด)', $deleted, $retain ),
+				array( 'provider' => $slug, 'prefix' => $prefix )
+			);
+		}
+
+		return $deleted;
 	}
 
 	/**

@@ -761,7 +761,15 @@ class ISX_S3_Client {
 	}
 
 	/**
-	 * List objects under a prefix (ListObjectsV2).
+	 * List every object under a prefix (ListObjectsV2), following continuation
+	 * tokens until the bucket says it's done.
+	 *
+	 * The pagination is not optional detail: S3 caps a single response at 1000
+	 * keys and reports the cut with IsTruncated, so the previous single-request
+	 * version silently returned a partial list on any bucket past that mark.
+	 * That was survivable while this only fed a read-only listing screen, but
+	 * retention deletes based on this list — and pruning "everything past the
+	 * newest N" of a truncated list is how you delete the wrong backups.
 	 *
 	 * @param string $prefix
 	 * @return array|WP_Error
@@ -771,17 +779,99 @@ class ISX_S3_Client {
 			return new WP_Error( 'isx_s3_no_curl', __( 'ต้องมีส่วนขยาย PHP cURL เพื่อเข้าถึง S3', 'insightx-backup' ) );
 		}
 
-		$host  = $this->path_style ? $this->host : $this->bucket . '.' . $this->host;
-		$path  = $this->path_style ? '/' . $this->bucket : '/';
-		$uri   = self::encode_path( $path );
-		$query = 'list-type=2&prefix=' . rawurlencode( $prefix );
-		$url   = $this->scheme . '://' . $host . $uri . '?' . $query;
+		$objects = array();
+		$token   = '';
+		// A bucket shared with something else could have a lot under this
+		// prefix; cap the walk so a misconfiguration can't spin forever.
+		$max_pages = 100;
+
+		for ( $page = 0; $page < $max_pages; $page++ ) {
+			$host = $this->path_style ? $this->host : $this->bucket . '.' . $this->host;
+			$path = $this->path_style ? '/' . $this->bucket : '/';
+			$uri  = self::encode_path( $path );
+
+			// SigV4 signs the canonical query string, which must be sorted by
+			// key — "continuation-token" sorts before "list-type" and "prefix".
+			$params = array( 'list-type' => '2', 'prefix' => $prefix );
+			if ( $token !== '' ) {
+				$params['continuation-token'] = $token;
+			}
+			ksort( $params );
+			$pairs = array();
+			foreach ( $params as $k => $v ) {
+				$pairs[] = rawurlencode( $k ) . '=' . rawurlencode( $v );
+			}
+			$query = implode( '&', $pairs );
+			$url   = $this->scheme . '://' . $host . $uri . '?' . $query;
+
+			$payload = hash( 'sha256', '' );
+			$headers = $this->signed_headers( 'GET', $host, $uri, $query, $payload );
+
+			$ch = curl_init( $url );
+			curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers );
+			curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true );
+			curl_setopt( $ch, CURLOPT_CONNECTTIMEOUT, 30 );
+			curl_setopt( $ch, CURLOPT_TIMEOUT, 60 );
+
+			$res = $this->exec_curl(
+				$ch,
+				array(
+					'op'     => 'list_objects',
+					'host'   => $host,
+					'prefix' => $prefix,
+					'page'   => $page + 1,
+				)
+			);
+
+			if ( ! $res['ok'] ) {
+				return self::curl_error_to_wp( $res );
+			}
+
+			if ( preg_match_all( '#<Contents>(.*?)</Contents>#is', $res['body'], $matches ) ) {
+				foreach ( $matches[1] as $chunk ) {
+					$key = self::xml_value( $chunk, 'Key' );
+					if ( $key === '' ) {
+						continue;
+					}
+					$objects[] = array(
+						'key'           => $key,
+						'size'          => (int) self::xml_value( $chunk, 'Size' ),
+						'last_modified' => self::xml_value( $chunk, 'LastModified' ),
+					);
+				}
+			}
+
+			if ( strtolower( self::xml_value( $res['body'], 'IsTruncated' ) ) !== 'true' ) {
+				break;
+			}
+			$token = self::xml_value( $res['body'], 'NextContinuationToken' );
+			if ( $token === '' ) {
+				break; // Truncated but no token to follow — nothing sane left to do.
+			}
+		}
+
+		return $objects;
+	}
+
+	/**
+	 * Delete a single object (DeleteObject).
+	 *
+	 * @param string $key Object key, prefix included.
+	 * @return true|WP_Error
+	 */
+	public function delete_object( $key ) {
+		if ( ! function_exists( 'curl_init' ) ) {
+			return new WP_Error( 'isx_s3_no_curl', __( 'ต้องมีส่วนขยาย PHP cURL เพื่อเข้าถึง S3', 'insightx-backup' ) );
+		}
+
+		$target = $this->resolve_target( $key );
 
 		$payload = hash( 'sha256', '' );
-		$headers = $this->signed_headers( 'GET', $host, $uri, $query, $payload );
+		$headers = $this->signed_headers( 'DELETE', $target['host'], $target['uri'], '', $payload );
 
-		$ch = curl_init( $url );
+		$ch = curl_init( $this->scheme . '://' . $target['host'] . $target['uri'] );
 		curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers );
+		curl_setopt( $ch, CURLOPT_CUSTOMREQUEST, 'DELETE' );
 		curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true );
 		curl_setopt( $ch, CURLOPT_CONNECTTIMEOUT, 30 );
 		curl_setopt( $ch, CURLOPT_TIMEOUT, 60 );
@@ -789,31 +879,19 @@ class ISX_S3_Client {
 		$res = $this->exec_curl(
 			$ch,
 			array(
-				'op'     => 'list_objects',
-				'host'   => $host,
-				'prefix' => $prefix,
+				'op'   => 'delete_object',
+				'host' => $target['host'],
+				'key'  => $key,
 			)
 		);
 
-		if ( ! $res['ok'] ) {
+		// S3 answers DeleteObject with 204, and treats deleting something that
+		// isn't there as success — so does this, since the caller's goal ("that
+		// key is gone") is met either way.
+		if ( ! $res['ok'] && $res['status'] !== 404 ) {
 			return self::curl_error_to_wp( $res );
 		}
-
-		$objects = array();
-		if ( preg_match_all( '#<Contents>(.*?)</Contents>#is', $res['body'], $matches ) ) {
-			foreach ( $matches[1] as $chunk ) {
-				$key = self::xml_value( $chunk, 'Key' );
-				if ( $key === '' ) {
-					continue;
-				}
-				$objects[] = array(
-					'key'           => $key,
-					'size'          => (int) self::xml_value( $chunk, 'Size' ),
-					'last_modified' => self::xml_value( $chunk, 'LastModified' ),
-				);
-			}
-		}
-		return $objects;
+		return true;
 	}
 
 	/**

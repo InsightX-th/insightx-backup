@@ -646,6 +646,53 @@
 			$('#isx-content-overlay').hide();
 		}
 
+		// Walk the package start to finish, a bounded slice per request, so a
+		// multi-GB backup can be checked without any single request running long
+		// enough for a proxy to cut it off. Same check the import pipeline runs
+		// before it wipes anything — just available before you need it.
+		$(document).on('click', '.isx-backup-verify', function (event) {
+			event.preventDefault();
+			closeAllDots();
+			var name = $(this).closest('tr').data('name');
+
+			openContentModal();
+
+			function step(offset, entries) {
+				ISX.post('isx_backups_verify', { name: name, offset: offset, entries: entries })
+					.done(function (res) {
+						if (!res || !res.success) {
+							$('#isx-content-body').html(
+								'<p class="isx-fetch-status is-error">' +
+									escapeHtmlLocal((res && res.data && res.data.message) || 'ตรวจสอบไม่สำเร็จ') +
+									'</p>'
+							);
+							return;
+						}
+						var d = res.data;
+						if (!d.done) {
+							$('#isx-content-body').html(
+								'<p class="isx-fetch-status">' +
+									escapeHtmlLocal('กำลังตรวจสอบ... ' + (d.percent || 0) + '%') +
+									'</p>'
+							);
+							step(d.offset, d.entries);
+							return;
+						}
+						$('#isx-content-body').html(
+							'<p class="isx-fetch-status' + (d.ok ? '' : ' is-error') + '">' +
+								escapeHtmlLocal((d.ok ? '✓ ' : '✕ ') + (d.message || '')) +
+								'</p>'
+						);
+					})
+					.fail(function () {
+						$('#isx-content-body').html('<p class="isx-fetch-status is-error">เชื่อมต่อเซิร์ฟเวอร์ไม่ได้</p>');
+					});
+			}
+
+			$('#isx-content-body').html('<p class="isx-fetch-status">กำลังตรวจสอบ... 0%</p>');
+			step(0, 0);
+		});
+
 		$(document).on('click', '.isx-backup-list-content', function (event) {
 			event.preventDefault();
 			closeAllDots();

@@ -48,6 +48,8 @@ class ISX_Import {
 		switch ( $step ) {
 			case 'init':
 				return self::init( $job );
+			case 'verify':
+				return self::verify( $job );
 			case 'clean':
 				return self::clean( $job );
 			case 'extract':
@@ -84,8 +86,21 @@ class ISX_Import {
 				$job->cleanup();
 				return array( 'progress' => 0, 'done' => true, 'error' => true, 'message' => $result->get_error_message() );
 			}
-			@unlink( $job->archive() );
-			rename( $tmp, $job->archive() );
+			// Overwrite in one step where the OS allows it, so a failed move can
+			// never leave the job with neither the .gz nor the plain archive.
+			if ( ! @rename( $tmp, $job->archive() ) ) {
+				@unlink( $job->archive() );
+				if ( ! @rename( $tmp, $job->archive() ) ) {
+					@unlink( $tmp );
+					$job->cleanup();
+					return array(
+						'progress' => 0,
+						'done'     => true,
+						'error'    => true,
+						'message'  => 'คลายบีบอัดสำเร็จแต่บันทึกไฟล์ไม่ได้ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม',
+					);
+				}
+			}
 			$job->set( 'decompressed', true );
 			$job->save();
 		}
@@ -109,17 +124,86 @@ class ISX_Import {
 			)
 		);
 
-		// Clean-then-restore: the package fully replaces this site, so wipe
-		// the existing wp-content tree (minus this plugin + its storage)
-		// before extracting — otherwise plugins/themes/uploads the old site
-		// had but the package doesn't would silently survive the import.
-		// This only ever runs AFTER the archive validated above, so a corrupt
-		// upload can never wipe a site it then fails to restore.
+		// Verify before clean(), never the other way round. clean() deletes the
+		// existing wp-content tree, and it cannot be undone — so every check
+		// that can reject a package has to happen while the old site is still
+		// standing. is_valid() above compares 8 magic bytes, which a package
+		// truncated at 30% passes; verify() walks the whole thing.
+		$job->set( 'step', 'verify' );
+		$job->set( 'cursor', array( 'vo' => ISX_Archive::first_offset(), 'entries' => 0 ) );
+		$job->set( 'progress', 1 );
+		$job->save();
+
+		return array( 'progress' => 1, 'done' => false, 'message' => 'ตรวจสอบแพ็กเกจ...' );
+	}
+
+	/**
+	 * Confirm the package is complete and readable end to end, before anything
+	 * on this site is touched.
+	 *
+	 * The failure this prevents is the expensive one: a package that is short
+	 * (an upload that hit a full disk, a download from Storage that dropped
+	 * mid-transfer, a file copied between machines incompletely) used to be
+	 * accepted on its magic bytes, after which clean() wiped wp-content and
+	 * extract() then discovered the package ran out — leaving a site with
+	 * neither its old contents nor the new ones. Now a bad package costs
+	 * nothing but the time spent reading it.
+	 *
+	 * Resumable, like every other step: seeks past entry content rather than
+	 * reading it, so even a 6GB package is a handful of quick requests.
+	 */
+	private static function verify( ISX_Job $job ) {
+		$cursor = (array) $job->get( 'cursor', array( 'vo' => ISX_Archive::first_offset(), 'entries' => 0 ) );
+
+		$result = ISX_Archive::verify_batch( $job->archive(), (int) $cursor['vo'], self::deadline() );
+
+		$entries          = (int) $cursor['entries'] + (int) $result['entries'];
+		$cursor['vo']     = $result['offset'];
+		$cursor['entries'] = $entries;
+
+		if ( empty( $result['ok'] ) ) {
+			$message = 'แพ็กเกจไม่สมบูรณ์ จึงยกเลิกการนำเข้าก่อนเริ่ม — ' . $result['error'] . ' (เว็บไซต์ปัจจุบันยังอยู่ครบ ไม่ถูกแก้ไข)';
+			ISX_Logger::log_error(
+				'import',
+				$message,
+				array(
+					'job'     => $job->id(),
+					'entries' => $entries,
+					'offset'  => (int) $result['offset'],
+					'size'    => @filesize( $job->archive() ),
+				)
+			);
+			$job->finish( $message, true );
+			return array( 'progress' => 100, 'done' => true, 'error' => true, 'message' => $message );
+		}
+
+		if ( empty( $result['done'] ) ) {
+			// 1% → 3% of the overall bar, weighted by how much of the file has
+			// been walked, so a big package still shows movement here.
+			$size     = (int) @filesize( $job->archive() );
+			$progress = $size > 0 ? 1 + 2 * min( 1, (int) $result['offset'] / $size ) : 1;
+			$job->set( 'cursor', $cursor );
+			$job->set( 'progress', $progress );
+			$job->save();
+
+			return array(
+				'progress' => $progress,
+				'done'     => false,
+				'message'  => sprintf( 'ตรวจสอบแพ็กเกจ — %d รายการ', $entries ),
+			);
+		}
+
+		ISX_Logger::log_info(
+			'import',
+			sprintf( 'ตรวจสอบแพ็กเกจผ่าน (%d รายการ)', $entries ),
+			array( 'job' => $job->id() )
+		);
+
 		$job->set( 'step', 'clean' );
 		$job->set( 'progress', 3 );
 		$job->save();
 
-		return array( 'progress' => 3, 'done' => false, 'message' => 'ตรวจสอบแพ็กเกจ...' );
+		return array( 'progress' => 3, 'done' => false, 'message' => 'ตรวจสอบแพ็กเกจผ่านแล้ว เริ่มล้างไฟล์เดิม...' );
 	}
 
 	private static function clean( ISX_Job $job ) {
@@ -134,7 +218,15 @@ class ISX_Import {
 			$deferred = ISX_Files::deferred_roots();
 			$job->set( 'deferred_roots', $deferred );
 
-			$total = ISX_Files::build_clean_list( $list, $deferred );
+			$clean_result = ISX_Files::build_clean_list( $list, $deferred );
+			if ( empty( $clean_result['ok'] ) ) {
+				// Nothing has been deleted yet at this point, so the site is
+				// still intact — but the list this whole step walks is short,
+				// and acting on it would delete a subset and call it clean.
+				@unlink( $list );
+				return self::restore_write_failed( $job );
+			}
+			$total = $clean_result['total'];
 			$job->set( 'clean_total', $total );
 			$job->set( 'clean_offset', 0 );
 			$job->set( 'cleaned_files', 0 );
@@ -193,11 +285,10 @@ class ISX_Import {
 				return;
 			}
 			if ( $path === 'database.sql' || $path === 'database.isxdb' ) {
-				ISX_Archive::stream_entry_to_file( $handle, $header, $db_dump );
-				return;
+				return ISX_Archive::stream_entry_to_file( $handle, $header, $db_dump );
 			}
 			// Content files.
-			ISX_Files::restore_stream( $header, $handle );
+			return ISX_Files::restore_stream( $header, $handle );
 		};
 
 		$done_entries = (int) $job->get( 'done_entries', 0 );
@@ -209,7 +300,17 @@ class ISX_Import {
 		do {
 			$result           = ISX_Archive::read_batch( $job->archive(), (int) $cursor['offset'], self::ENTRIES_PER_BATCH, $callback );
 			$cursor['offset'] = $result['offset'];
-			$done_entries    += self::ENTRIES_PER_BATCH;
+			if ( empty( $result['ok'] ) ) {
+				// The site is already mid-restore at this point — wp-content was
+				// cleaned in the previous step — so this is not a "try again
+				// later" failure the way an export one is. Say so plainly rather
+				// than leaving a half-restored site with an ambiguous message.
+				$job->set( 'cursor', $cursor );
+				$job->set( 'done_entries', $done_entries );
+				$job->save();
+				return self::restore_write_failed( $job );
+			}
+			$done_entries += self::ENTRIES_PER_BATCH;
 			if ( $result['done'] ) {
 				$phase_done = true;
 				break;
@@ -240,6 +341,44 @@ class ISX_Import {
 		$job->save();
 
 		return array( 'progress' => $progress, 'done' => false, 'message' => 'กู้คืนไฟล์...' );
+	}
+
+	/**
+	 * A file failed to write while restoring the package onto the site —
+	 * checked via ISX_Archive::read_batch()'s 'ok' flag, which is false when
+	 * ISX_Files::restore_stream() or the database.sql copy in extract()'s
+	 * callback returned false. Same class of bug as the export side
+	 * (ISX_Export::write_failed()): PHP's fwrite() doesn't throw when a disk
+	 * is full, so this used to go completely unnoticed and report
+	 * "นำเข้าเสร็จสิ้น" over a site missing whatever failed to write.
+	 *
+	 * Unlike an export, clean() has already deleted the old wp-content by the
+	 * time this can fire — there is no "your old site is still fine" fallback
+	 * to point at, so the message says so plainly instead of suggesting a
+	 * simple retry.
+	 *
+	 * @return array Step result.
+	 */
+	private static function restore_write_failed( ISX_Job $job ) {
+		$message = 'กู้คืนไฟล์ล้มเหลว (พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม หรือไฟล์ .wpress เสียหาย) — เว็บอยู่ในสถานะกู้คืนไม่สมบูรณ์ กรุณาตรวจสอบพื้นที่ว่างแล้วนำเข้าซ้ำ';
+		$job->finish( $message, true );
+
+		ISX_Logger::log_error(
+			'import',
+			$message,
+			array(
+				'job'        => $job->id(),
+				'step'       => (string) $job->get( 'step', '' ),
+				'free_space' => @disk_free_space( WP_CONTENT_DIR ),
+			)
+		);
+
+		return array(
+			'progress' => 100,
+			'done'     => true,
+			'error'    => true,
+			'message'  => $message,
+		);
 	}
 
 	private static function database( ISX_Job $job ) {

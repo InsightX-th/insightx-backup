@@ -139,7 +139,7 @@ class ISX_Database {
 	 *
 	 * @param resource $fh
 	 * @param string   $table
-	 * @return void
+	 * @return bool False if the write failed (e.g. disk full).
 	 */
 	public static function dump_schema( $fh, $table ) {
 		global $wpdb;
@@ -150,7 +150,8 @@ class ISX_Database {
 		// insignificant outside quoted literals) to keep one dump line per
 		// statement for the resumable batch reader.
 		$create = preg_replace( '/\s*\r?\n\s*/', ' ', $create );
-		fwrite( $fh, $create . ";\n" );
+		$line   = $create . ";\n";
+		return @fwrite( $fh, $line ) === strlen( $line );
 	}
 
 	/**
@@ -169,7 +170,7 @@ class ISX_Database {
 	 * @param string|array $replace
 	 * @param string|null  $keyset_column PK column to seek-paginate on, or null for offset paging.
 	 * @param int|null     $last_pk       Highest PK written so far (keyset mode); null for the first batch.
-	 * @return array { written:int, last_pk:int|null }
+	 * @return array { written:int, last_pk:int|null, ok:bool }
 	 */
 	public static function dump_rows( $fh, $table, $offset, $limit, $extra_where = '', $search = array(), $replace = array(), $keyset_column = null, $last_pk = null ) {
 		global $wpdb;
@@ -193,7 +194,7 @@ class ISX_Database {
 
 		$rows = $wpdb->get_results( $sql, ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL
 		if ( ! is_array( $rows ) || empty( $rows ) ) {
-			return array( 'written' => 0, 'last_pk' => $last_pk );
+			return array( 'written' => 0, 'last_pk' => $last_pk, 'ok' => true );
 		}
 
 		$has_replace = ! empty( $search );
@@ -201,6 +202,7 @@ class ISX_Database {
 		$columns_sql = null;
 		$group       = array();
 		$group_bytes = 0;
+		$ok          = true;
 
 		foreach ( $rows as $row ) {
 			if ( $keyset_column !== null && isset( $row[ $keyset_column ] ) ) {
@@ -222,18 +224,21 @@ class ISX_Database {
 			// so each INSERT line stays under max_allowed_packet. A single tuple
 			// wider than the cap still lands alone in its own statement.
 			if ( ! empty( $group ) && ( $group_bytes + $tlen + 1 ) > self::MAX_STATEMENT_BYTES ) {
-				self::write_insert( $fh, $table, $columns_sql, $group );
+				if ( ! self::write_insert( $fh, $table, $columns_sql, $group ) ) {
+					$ok = false;
+					break;
+				}
 				$group       = array();
 				$group_bytes = 0;
 			}
 			$group[]      = $tuple;
 			$group_bytes += $tlen + 1;
 		}
-		if ( ! empty( $group ) ) {
-			self::write_insert( $fh, $table, $columns_sql, $group );
+		if ( $ok && ! empty( $group ) ) {
+			$ok = self::write_insert( $fh, $table, $columns_sql, $group );
 		}
 
-		return array( 'written' => count( $rows ), 'last_pk' => $new_last_pk );
+		return array( 'written' => count( $rows ), 'last_pk' => $new_last_pk, 'ok' => $ok );
 	}
 
 	/**
@@ -462,9 +467,11 @@ class ISX_Database {
 	 */
 	private static function write_insert( $fh, $table, $columns_sql, array $tuples ) {
 		if ( empty( $tuples ) ) {
-			return;
+			return true;
 		}
-		fwrite( $fh, 'INSERT INTO `' . self::ident( $table ) . '` (' . $columns_sql . ') VALUES ' . implode( ',', $tuples ) . ";\n" );
+		$line = 'INSERT INTO `' . self::ident( $table ) . '` (' . $columns_sql . ') VALUES ' . implode( ',', $tuples ) . ";\n";
+		// Silenced: handled below by the caller; see ISX_Archive::write_ok().
+		return @fwrite( $fh, $line ) === strlen( $line );
 	}
 
 	/**

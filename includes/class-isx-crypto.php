@@ -76,33 +76,62 @@ class ISX_Crypto {
 		if ( $in === false ) {
 			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ต้นทางไม่สำเร็จ', 'insightx-backup' ) );
 		}
-		$out = fopen( $dest_path, 'wb' );
+		$out = @fopen( $dest_path, 'wb' );
 		if ( $out === false ) {
 			fclose( $in );
-			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ปลายทางไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ปลายทางไม่สำเร็จ (พื้นที่ดิสก์อาจเต็ม)', 'insightx-backup' ) );
 		}
 
 		$salt = random_bytes( 16 );
 		$key  = self::derive_key( $password, $salt );
 
-		fwrite( $out, self::FILE_MAGIC );
-		fwrite( $out, $salt );
+		// Every write is checked: a truncated ciphertext is not recoverable by
+		// any amount of trying later, and an unchecked fwrite() here would have
+		// produced one silently the moment the disk filled up.
+		$ok = self::write_ok( $out, self::FILE_MAGIC ) && self::write_ok( $out, $salt );
 
-		while ( ! feof( $in ) ) {
+		while ( $ok && ! feof( $in ) ) {
 			$chunk = fread( $in, self::CHUNK_SIZE );
 			if ( $chunk === false || $chunk === '' ) {
 				break;
 			}
 			$iv         = random_bytes( 16 );
 			$ciphertext = openssl_encrypt( $chunk, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv );
-			fwrite( $out, $iv );
-			fwrite( $out, pack( 'N', strlen( $ciphertext ) ) );
-			fwrite( $out, $ciphertext );
+			if ( $ciphertext === false ) {
+				$ok = false;
+				break;
+			}
+			$ok = self::write_ok( $out, $iv )
+				&& self::write_ok( $out, pack( 'N', strlen( $ciphertext ) ) )
+				&& self::write_ok( $out, $ciphertext );
 		}
 
 		fclose( $in );
-		fclose( $out );
+		if ( ! fclose( $out ) ) {
+			$ok = false;
+		}
+
+		if ( ! $ok ) {
+			@unlink( $dest_path );
+			return new WP_Error( 'isx_crypto_write', __( 'เขียนไฟล์ที่เข้ารหัสไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม', 'insightx-backup' ) );
+		}
 		return true;
+	}
+
+	/**
+	 * fwrite() that reports a short write for what it is. PHP returns the byte
+	 * count rather than throwing when a disk fills, so an unchecked write is
+	 * how a half-written container ends up looking like a finished one.
+	 *
+	 * @param resource $handle
+	 * @param string   $data
+	 * @return bool
+	 */
+	private static function write_ok( $handle, $data ) {
+		// Silenced for the same reason as ISX_Archive::write_ok(): the return
+		// value is handled, and a stray PHP notice ahead of an admin-ajax JSON
+		// body turns a clear error message into an unparseable response.
+		return @fwrite( $handle, $data ) === strlen( $data );
 	}
 
 	/**
@@ -156,11 +185,19 @@ class ISX_Crypto {
 				@unlink( $dest_path );
 				return new WP_Error( 'isx_crypto_password', __( 'รหัสผ่านไม่ถูกต้อง หรือไฟล์เสียหาย', 'insightx-backup' ) );
 			}
-			fwrite( $out, $plain );
+			if ( ! self::write_ok( $out, $plain ) ) {
+				fclose( $in );
+				fclose( $out );
+				@unlink( $dest_path );
+				return new WP_Error( 'isx_crypto_write', __( 'เขียนไฟล์ที่ถอดรหัสไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม', 'insightx-backup' ) );
+			}
 		}
 
 		fclose( $in );
-		fclose( $out );
+		if ( ! fclose( $out ) ) {
+			@unlink( $dest_path );
+			return new WP_Error( 'isx_crypto_write', __( 'เขียนไฟล์ที่ถอดรหัสไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม', 'insightx-backup' ) );
+		}
 
 		if ( ! ISX_Archive::is_valid( $dest_path ) ) {
 			@unlink( $dest_path );

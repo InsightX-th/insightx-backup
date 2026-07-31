@@ -74,6 +74,7 @@ class ISX_Admin {
 		add_action( 'wp_ajax_isx_backups_delete', array( __CLASS__, 'ajax_backups_delete' ) );
 		add_action( 'wp_ajax_isx_backups_restore', array( __CLASS__, 'ajax_backups_restore' ) );
 		add_action( 'wp_ajax_isx_backups_list_content', array( __CLASS__, 'ajax_backups_list_content' ) );
+		add_action( 'wp_ajax_isx_backups_verify', array( __CLASS__, 'ajax_backups_verify' ) );
 
 		add_action( 'wp_ajax_isx_storage_save', array( __CLASS__, 'ajax_storage_save' ) );
 		add_action( 'wp_ajax_isx_storage_dir_save', array( __CLASS__, 'ajax_storage_dir_save' ) );
@@ -412,7 +413,18 @@ class ISX_Admin {
 		if ( ! $job ) {
 			wp_send_json_error( array( 'message' => 'สร้างงานไม่สำเร็จ ดูสาเหตุได้ที่หน้า Log' ) );
 		}
-		file_put_contents( $job->archive(), '' );
+		// Creating the (empty) target up front is also the earliest cheap proof
+		// that the storage directory is actually writable — better to say so now
+		// than after the browser has spent an hour uploading chunks into it.
+		if ( false === @file_put_contents( $job->archive(), '' ) ) {
+			$job->cleanup();
+			ISX_Logger::log_error(
+				'import',
+				'สร้างไฟล์ปลายทางสำหรับอัปโหลดไม่สำเร็จ',
+				array( 'job' => $job->id(), 'free_space' => @disk_free_space( dirname( $job->archive() ) ) )
+			);
+			wp_send_json_error( array( 'message' => 'สร้างไฟล์สำหรับรับข้อมูลไม่ได้ — ตรวจสอบสิทธิ์เขียนและพื้นที่ว่างของเซิร์ฟเวอร์' ) );
+		}
 		wp_send_json_success( array( 'job' => $job->id(), 'secret' => $job->get( 'secret' ) ) );
 	}
 
@@ -433,20 +445,42 @@ class ISX_Admin {
 
 		$out = fopen( $job->archive(), 'ab' );
 		$in  = fopen( $_FILES['chunk']['tmp_name'], 'rb' );
-		if ( $out && $in ) {
+		// This is where the uploaded package's bytes actually land, so it's the
+		// most likely place for a full disk to bite on an import — and the
+		// consequence used to be invisible: every chunk reported "received",
+		// then extraction failed much later with "ไฟล์แพ็กเกจไม่ถูกต้อง", which
+		// points at the file rather than at the disk that truncated it.
+		$ok = ( $out !== false && $in !== false );
+		if ( $ok ) {
 			while ( ! feof( $in ) ) {
 				$buf = fread( $in, 1048576 );
 				if ( $buf === false ) {
 					break;
 				}
-				fwrite( $out, $buf );
+				if ( @fwrite( $out, $buf ) !== strlen( $buf ) ) {
+					$ok = false;
+					break;
+				}
 			}
 		}
-		if ( $in ) {
+		if ( $in !== false ) {
 			fclose( $in );
 		}
-		if ( $out ) {
-			fclose( $out );
+		if ( $out !== false && ! fclose( $out ) ) {
+			$ok = false;
+		}
+
+		if ( ! $ok ) {
+			$message = 'เขียนไฟล์ที่อัปโหลดไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม กรุณาตรวจสอบพื้นที่ว่างแล้วลองใหม่';
+			ISX_Logger::log_error(
+				'import',
+				$message,
+				array(
+					'job'        => $job->id(),
+					'free_space' => @disk_free_space( dirname( $job->archive() ) ),
+				)
+			);
+			wp_send_json_error( array( 'message' => $message ) );
 		}
 
 		wp_send_json_success( array( 'received' => true ) );
@@ -705,7 +739,7 @@ class ISX_Admin {
 
 	/**
 	 * Execute exactly one pipeline step under an exclusive per-job lock, and
-	 * annotate the result with elapsed / estimated-remaining time. If another
+	 * annotate the result with elapsed time and phase progress. If another
 	 * driver (the other of "browser poll" / "cron tick") currently holds the
 	 * lock, returns the job's last known progress instead of blocking, so the
 	 * UI keeps showing motion rather than appearing to freeze.
@@ -778,12 +812,17 @@ class ISX_Admin {
 					)
 				);
 
-				// Cancelled while this step was running. The step bailed out of its
-				// own loop early (the loops poll the same flag), so whatever it
-				// wrote is a consistent half-done state — but it must not be
-				// persisted as "carry on from here", and this is still the only
-				// point where the job's files are safely ours to sweep.
-				if ( $locked_job->is_cancel_requested() ) {
+				// Cancelled while this step was running — but only if the step is
+				// still mid-pipeline. A step like finalize() is atomic: it packs the
+				// archive, saves it into ข้อมูลสำรอง, and calls $job->finish() itself
+				// as its very last action, all within this one call, uninterrupted.
+				// If the cancel flag happened to land at that exact moment, the job
+				// is already 'done' with a real outcome (success or its own genuine
+				// failure) by the time we get here — overwriting that with "ยกเลิก"
+				// would relabel a finished export as cancelled while leaving the
+				// backup file it already wrote sitting right there in the list,
+				// which is more confusing than the flag arriving one poll too late.
+				if ( $locked_job->get( 'step' ) !== 'done' && $locked_job->is_cancel_requested() ) {
 					return self::finish_cancelled( $locked_job, $type, $step_before );
 				}
 
@@ -983,7 +1022,8 @@ class ISX_Admin {
 	private static function phase_ranges( $type, ISX_Job $job ) {
 		if ( $type === 'import' ) {
 			return array(
-				'init'     => array( 0, 3 ),
+				'init'     => array( 0, 1 ),
+				'verify'   => array( 1, 3 ),
 				'clean'    => array( 3, 6 ),
 				'extract'  => array( 6, 62 ),
 				'database' => array( 62, 95 ),
@@ -1119,8 +1159,21 @@ class ISX_Admin {
 			wp_send_json_error( array( 'message' => $result->get_error_message() ) );
 		}
 
-		@unlink( $job->archive() );
-		rename( $tmp, $job->archive() );
+		// rename() overwrites atomically on POSIX, so the still-encrypted archive
+		// isn't deleted ahead of a move that could fail and leave the job with
+		// no package at all. Windows won't overwrite, hence the retry.
+		if ( ! @rename( $tmp, $job->archive() ) ) {
+			@unlink( $job->archive() );
+			if ( ! @rename( $tmp, $job->archive() ) ) {
+				@unlink( $tmp );
+				ISX_Logger::log_error(
+					'import',
+					'ย้ายไฟล์ที่ถอดรหัสแล้วไม่สำเร็จ',
+					array( 'job' => $job->id(), 'free_space' => @disk_free_space( dirname( $job->archive() ) ) )
+				);
+				wp_send_json_error( array( 'message' => 'ถอดรหัสสำเร็จแต่บันทึกไฟล์ไม่ได้ — พื้นที่ดิสก์อาจเต็ม' ) );
+			}
+		}
 		$job->set( 'decrypted', true );
 		$job->save();
 
@@ -1358,7 +1411,19 @@ class ISX_Admin {
 		if ( ! $job ) {
 			wp_send_json_error( array( 'message' => 'สร้างงานไม่สำเร็จ ดูสาเหตุได้ที่หน้า Log' ) );
 		}
-		copy( $path, $job->archive() );
+		// A local restore doubles the archive on disk for the duration of the
+		// job, so this is a very ordinary place to run out of room — and an
+		// unchecked copy() meant the restore started against a truncated
+		// package and failed later as "ไฟล์แพ็กเกจไม่ถูกต้อง".
+		if ( ! @copy( $path, $job->archive() ) ) {
+			$job->cleanup();
+			ISX_Logger::log_error(
+				'backup',
+				'คัดลอกไฟล์ข้อมูลสำรองเพื่อกู้คืนไม่สำเร็จ',
+				array( 'name' => $name, 'free_space' => @disk_free_space( dirname( $job->archive() ) ) )
+			);
+			wp_send_json_error( array( 'message' => 'เตรียมไฟล์เพื่อกู้คืนไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม' ) );
+		}
 
 		wp_send_json_success( array( 'job' => $job->id(), 'secret' => $job->get( 'secret' ) ) );
 	}
@@ -1433,6 +1498,86 @@ class ISX_Admin {
 		}
 
 		wp_send_json_success( array( 'entries' => $out ) );
+	}
+
+	/**
+	 * Check a stored backup end to end, on demand.
+	 *
+	 * The import pipeline verifies a package before it touches the site, but
+	 * that only tells you a backup was bad at the moment you needed it — which
+	 * is the moment it is least useful to find out. This is the same check,
+	 * available while nothing is on fire.
+	 *
+	 * Driven from the browser with a byte offset rather than a job: there is no
+	 * state worth persisting between calls, and a bare offset keeps every
+	 * request inside the same time budget the pipeline steps use.
+	 */
+	public static function ajax_backups_verify() {
+		self::guard( 'export' );
+
+		$name = isset( $_POST['name'] ) ? sanitize_text_field( wp_unslash( $_POST['name'] ) ) : '';
+		$path = ISX_Backups::path( $name );
+		if ( $path === null ) {
+			wp_send_json_error( array( 'message' => 'ไม่พบไฟล์ข้อมูลสำรอง' ) );
+		}
+
+		// Both of these wrap the archive in another container, so the entry walk
+		// can't see through them. Say why rather than reporting a false failure.
+		if ( ISX_Crypto::is_encrypted_file( $path ) ) {
+			wp_send_json_error( array( 'message' => 'ไฟล์นี้เข้ารหัสด้วยรหัสผ่าน จึงตรวจสอบเนื้อหาข้างในไม่ได้' ) );
+		}
+		if ( ISX_Compress::is_gzip_file( $path ) ) {
+			wp_send_json_error( array( 'message' => 'ไฟล์นี้บีบอัดด้วย GZip จึงตรวจสอบเนื้อหาข้างในไม่ได้' ) );
+		}
+
+		if ( ! ISX_Archive::is_valid( $path ) ) {
+			wp_send_json_error( array( 'message' => 'ไม่ใช่ไฟล์แพ็กเกจของ InsightX Backup (หรือไฟล์เสียหายตั้งแต่ต้นไฟล์)' ) );
+		}
+
+		// Never below first_offset(): the first entry starts after the magic
+		// header, and starting at 0 would read those 8 bytes as an entry length.
+		$offset  = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
+		$offset  = max( ISX_Archive::first_offset(), $offset );
+		$entries = isset( $_POST['entries'] ) ? max( 0, (int) $_POST['entries'] ) : 0;
+
+		$result   = ISX_Archive::verify_batch( $path, $offset, microtime( true ) + 10 );
+		$entries += (int) $result['entries'];
+		$size     = (int) @filesize( $path );
+
+		if ( empty( $result['ok'] ) ) {
+			ISX_Logger::log_error(
+				'backup',
+				'ตรวจสอบข้อมูลสำรองไม่ผ่าน: ' . $result['error'],
+				array( 'name' => $name, 'offset' => (int) $result['offset'], 'size' => $size )
+			);
+			wp_send_json_success(
+				array(
+					'done'    => true,
+					'ok'      => false,
+					'message' => $result['error'],
+				)
+			);
+		}
+
+		if ( empty( $result['done'] ) ) {
+			wp_send_json_success(
+				array(
+					'done'    => false,
+					'ok'      => true,
+					'offset'  => (int) $result['offset'],
+					'entries' => $entries,
+					'percent' => $size > 0 ? (int) round( (int) $result['offset'] / $size * 100 ) : 0,
+				)
+			);
+		}
+
+		wp_send_json_success(
+			array(
+				'done'    => true,
+				'ok'      => true,
+				'message' => sprintf( 'ไฟล์สมบูรณ์ ตรวจแล้ว %s รายการ', number_format_i18n( $entries ) ),
+			)
+		);
 	}
 
 	/* ---------------- Storage settings AJAX ---------------- */
@@ -1557,12 +1702,30 @@ class ISX_Admin {
 		}
 		$job->save();
 
-		self::run_job_to_completion( $job );
+		$result = self::run_job_to_completion( $job );
+
+		// Retention used to run unconditionally, on a return value nobody read.
+		// Pruning "down to the newest N" right after a run that produced no new
+		// backup is acting on a promotion that never happened — so a failed run
+		// must not be allowed to age out a good backup.
+		if ( ! empty( $result['error'] ) ) {
+			ISX_Logger::log_error(
+				'export',
+				'Backup อัตโนมัติล้มเหลว: ' . ( isset( $result['message'] ) ? $result['message'] : 'ไม่ทราบสาเหตุ' ),
+				array( 'job' => $job->id() )
+			);
+			return;
+		}
 
 		$retain = isset( $schedule['retain'] ) ? max( 1, (int) $schedule['retain'] ) : 5;
 		$all    = ISX_Backups::all(); // Newest-first already.
 		foreach ( array_slice( $all, $retain ) as $old ) {
 			ISX_Backups::delete( $old['name'] );
+		}
+
+		// And the same trim on the bucket, which nothing has ever cleaned up.
+		if ( $to_storage !== '' ) {
+			ISX_Backups::prune_remote( $to_storage, $retain );
 		}
 	}
 

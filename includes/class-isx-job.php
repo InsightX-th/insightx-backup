@@ -200,7 +200,29 @@ class ISX_Job {
 	}
 
 	public function save() {
-		return false !== file_put_contents( $this->dir . '/state.json', wp_json_encode( $this->state ) );
+		$json    = wp_json_encode( $this->state );
+		$written = @file_put_contents( $this->dir . '/state.json', $json );
+		$ok      = ( $written === strlen( $json ) );
+
+		// Nobody checks this return value at the call sites (a step has usually
+		// already done its work by the time it saves, so there's nothing useful
+		// to undo), which is exactly why it has to be loud here: a state.json
+		// that didn't land means the job forgets its cursor and re-runs a step,
+		// or forgets it finished — both of which look like a mystery hang rather
+		// than the full disk they actually are.
+		if ( ! $ok ) {
+			ISX_Logger::log_error(
+				(string) $this->get( 'type', 'system' ),
+				'บันทึกสถานะงานไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม',
+				array(
+					'job'        => $this->id,
+					'step'       => (string) $this->get( 'step', '' ),
+					'free_space' => @disk_free_space( $this->dir ),
+				)
+			);
+		}
+
+		return $ok;
 	}
 
 	/**

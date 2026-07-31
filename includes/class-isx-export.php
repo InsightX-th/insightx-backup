@@ -118,6 +118,9 @@ class ISX_Export {
 			'exclude_paths'     => isset( $options['exclude_selected_files'] ) ? (array) $options['exclude_selected_files'] : array(),
 		);
 		$list_result = ISX_Files::build_list( $job->file_list(), $filters );
+		if ( empty( $list_result['ok'] ) ) {
+			return self::write_failed( $job, $job->file_list() );
+		}
 		$total_files = $list_result['total'];
 		$job->set( 'total_files', $total_files );
 		$job->set( 'file_category_bounds', $list_result['bounds'] );
@@ -154,6 +157,9 @@ class ISX_Export {
 		// Keep the dump handle open across the whole budget window instead of
 		// reopening it per batch — every batch appends to the same file.
 		$fh = fopen( $job->db_dump(), 'ab' );
+		if ( $fh === false ) {
+			return self::write_failed( $job, $job->db_dump() );
+		}
 
 		do {
 			$ti  = (int) $cursor['ti'];
@@ -182,7 +188,10 @@ class ISX_Export {
 			// by keyset (WHERE pk > last) when a column is available — avoiding
 			// the O(n²) deep-OFFSET scan that made big tables slower each batch.
 			if ( $off === 0 ) {
-				ISX_Database::dump_schema( $fh, $table );
+				if ( ! ISX_Database::dump_schema( $fh, $table ) ) {
+					fclose( $fh );
+					return self::write_failed( $job, $job->db_dump() );
+				}
 				$cursor['table_rows'] = ISX_Database::row_count( $table );
 				$cursor['keyset']     = ISX_Database::keyset_column( $table );
 				$cursor['last_pk']    = null;
@@ -191,7 +200,11 @@ class ISX_Export {
 			$keyset     = isset( $cursor['keyset'] ) ? $cursor['keyset'] : null;
 			$last_pk    = isset( $cursor['last_pk'] ) ? $cursor['last_pk'] : null;
 
-			$res     = ISX_Database::dump_rows( $fh, $table, $off, self::ROWS_PER_BATCH, $where, $search, $replace, $keyset, $last_pk );
+			$res = ISX_Database::dump_rows( $fh, $table, $off, self::ROWS_PER_BATCH, $where, $search, $replace, $keyset, $last_pk );
+			if ( empty( $res['ok'] ) ) {
+				fclose( $fh );
+				return self::write_failed( $job, $job->db_dump() );
+			}
 			$written = (int) $res['written'];
 			if ( $keyset !== null ) {
 				$cursor['last_pk'] = $res['last_pk'];
@@ -236,9 +249,17 @@ class ISX_Export {
 		// package.json stays uncompressed — it's a few hundred bytes, and
 		// keeping it plain lets a package be sanity-checked by eye/grep
 		// without needing this plugin's own inflate step.
-		ISX_Archive::add_data( $job->archive(), 'package.json', wp_json_encode( $job->get( 'manifest', array() ) ) );
+		if ( ! ISX_Archive::add_data( $job->archive(), 'package.json', wp_json_encode( $job->get( 'manifest', array() ) ) ) ) {
+			return self::write_failed( $job );
+		}
 		if ( is_file( $job->db_dump() ) ) {
-			ISX_Archive::add_file( $job->archive(), $job->db_dump(), 'database.sql', $compress );
+			// Unlike pack_batch()'s tolerance for a vanished source file, this one
+			// is a file we just wrote ourselves a moment ago — anything other than
+			// a clean write (including null, "not found") means the disk, not a
+			// race with a live site, and the export cannot continue without it.
+			if ( ISX_Archive::add_file( $job->archive(), $job->db_dump(), 'database.sql', $compress ) !== true ) {
+				return self::write_failed( $job );
+			}
 		}
 		$job->set( 'cursor', array( 'fo' => 0 ) );
 		$job->set( 'step', 'files' );
@@ -268,6 +289,15 @@ class ISX_Export {
 			$result       = ISX_Files::pack_batch( $job->archive(), $job->file_list(), (int) $cursor['fo'], self::FILES_PER_BATCH, $compress );
 			$cursor['fo'] = $result['offset'];
 			$done_files  += $result['added'];
+			if ( empty( $result['ok'] ) ) {
+				// Persist the cursor first — pack_batch() already rewound the
+				// offset to before the failed entry, so a retried export (or a
+				// look at the job's own state) doesn't believe this batch packed.
+				$job->set( 'cursor', $cursor );
+				$job->set( 'done_files', $done_files );
+				$job->save();
+				return self::write_failed( $job );
+			}
 			if ( $result['done'] ) {
 				$phase_done = true;
 				break;
@@ -319,25 +349,46 @@ class ISX_Export {
 	}
 
 	private static function finalize( ISX_Job $job ) {
-		ISX_Archive::finish( $job->archive() );
+		if ( ! ISX_Archive::finish( $job->archive() ) ) {
+			return self::write_failed( $job );
+		}
 
 		$backup_name = ISX_Backups::store( $job->archive() );
+		if ( $backup_name === null ) {
+			return self::write_failed( $job, ISX_Backups::dir() );
+		}
 		$backup_path = ISX_Backups::path( $backup_name );
 
 		$options = (array) $job->get( 'options', array() );
 
 		if ( $backup_path !== null && ! empty( $options['encrypt'] ) ) {
 			$password = ISX_Crypto::decrypt_string( (string) $job->get( 'encrypt_password_enc', '' ) );
-			if ( $password !== '' ) {
-				$tmp    = $backup_path . '.enc';
-				$result = ISX_Crypto::encrypt_file( $password, $backup_path, $tmp );
-				if ( ! is_wp_error( $result ) ) {
-					@unlink( $backup_path );
-					rename( $tmp, $backup_path );
-				} else {
+			if ( $password === '' ) {
+				return self::encrypt_failed( $job, $backup_path, 'อ่านรหัสผ่านที่บันทึกไว้ไม่ได้' );
+			}
+
+			$tmp    = $backup_path . '.enc';
+			$result = ISX_Crypto::encrypt_file( $password, $backup_path, $tmp );
+			if ( is_wp_error( $result ) ) {
+				// Falling through here used to hand back the *unencrypted*
+				// archive under the same name, with nothing in the UI to say the
+				// encryption the user explicitly asked for hadn't happened. A
+				// backup that is silently not encrypted is worse than no backup.
+				@unlink( $tmp );
+				return self::encrypt_failed( $job, $backup_path, $result->get_error_message() );
+			}
+
+			// rename() replaces the destination atomically on POSIX, so the
+			// plaintext original is never deleted ahead of a move that might
+			// fail. Windows won't overwrite, hence the unlink-then-retry.
+			if ( ! @rename( $tmp, $backup_path ) ) {
+				@unlink( $backup_path );
+				if ( ! @rename( $tmp, $backup_path ) ) {
 					@unlink( $tmp );
+					return self::encrypt_failed( $job, $backup_path, 'ย้ายไฟล์ที่เข้ารหัสแล้วไม่สำเร็จ' );
 				}
 			}
+			clearstatcache( true, $backup_path );
 		}
 
 		$size = $backup_path !== null ? filesize( $backup_path ) : 0;
@@ -539,6 +590,89 @@ class ISX_Export {
 		);
 
 		return self::upload_finished( $job, $backup_name );
+	}
+
+	/**
+	 * A write to the archive, the database dump, or the backups directory
+	 * failed — checked by every write on the export path (see ISX_Archive,
+	 * ISX_Database::dump_schema()/dump_rows(), ISX_Files::pack_batch(),
+	 * ISX_Backups::store()), all of which used to be trusted blindly. PHP
+	 * doesn't throw when fwrite()/rename()/copy() come up short on a full
+	 * disk — it just quietly writes less than asked, or nothing — so an
+	 * unchecked return here was the difference between "no backup" and a
+	 * truncated .wpress reported as ส่งออกเสร็จสิ้น.
+	 *
+	 * @return array Step result.
+	 */
+	private static function write_failed( ISX_Job $job, $path = null ) {
+		$path = $path !== null ? $path : $job->archive();
+		$free = @disk_free_space( dirname( $path ) );
+
+		// Name the file and the space left, the way All-in-One WP Migration does
+		// ("Out of disk space. Could not write content to file. File: …"): on a
+		// shared host the path is what tells the user *which* mount filled up,
+		// and without it "ดิสก์เต็ม" sends people to check the wrong volume.
+		$message = 'พื้นที่ดิสก์ไม่พอ เขียนไฟล์ไม่สำเร็จ';
+		if ( $free !== false ) {
+			$message .= ' (เหลือ ' . size_format( (float) $free ) . ')';
+		}
+		$message .= ' — ไฟล์: ' . $path;
+
+		$job->finish( $message, true );
+
+		ISX_Logger::log_error(
+			'export',
+			$message,
+			array(
+				'job'        => $job->id(),
+				'step'       => (string) $job->get( 'step', '' ),
+				'file'       => $path,
+				'free_space' => $free,
+			)
+		);
+
+		return array(
+			'progress' => 100,
+			'done'     => true,
+			'error'    => true,
+			'message'  => $message,
+		);
+	}
+
+	/**
+	 * Encryption was requested but couldn't be delivered. The half-made backup
+	 * is deleted rather than kept: it is plaintext, it sits in a directory whose
+	 * only protection on nginx is an unguessable filename, and leaving it would
+	 * mean the "ข้อมูลสำรอง" list shows a file the user would reasonably assume
+	 * is encrypted.
+	 *
+	 * @param string $backup_path Plaintext archive to remove, or null.
+	 * @param string $reason      Already human-readable.
+	 * @return array Step result.
+	 */
+	private static function encrypt_failed( ISX_Job $job, $backup_path, $reason ) {
+		if ( $backup_path !== null ) {
+			@unlink( $backup_path );
+		}
+
+		$message = 'เข้ารหัสข้อมูลสำรองไม่สำเร็จ: ' . $reason . ' — ยกเลิกไฟล์สำรองนี้แล้วเพื่อไม่ให้เหลือไฟล์ที่ไม่ได้เข้ารหัสไว้';
+		$job->finish( $message, true );
+
+		ISX_Logger::log_error(
+			'export',
+			$message,
+			array(
+				'job'        => $job->id(),
+				'free_space' => @disk_free_space( dirname( (string) $backup_path ) ),
+			)
+		);
+
+		return array(
+			'progress' => 100,
+			'done'     => true,
+			'error'    => true,
+			'message'  => $message,
+		);
 	}
 
 	/**

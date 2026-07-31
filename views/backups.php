@@ -66,6 +66,12 @@ $isx_backups = ISX_Backups::all();
 													<span><?php esc_html_e( 'ดูรายการ', 'insightx-backup' ); ?></span>
 												</a>
 											</li>
+											<li>
+												<a tabindex="-1" href="#" role="menuitem" class="isx-backup-verify">
+													<span class="dashicons dashicons-yes-alt"></span>
+													<span><?php esc_html_e( 'ตรวจสอบไฟล์', 'insightx-backup' ); ?></span>
+												</a>
+											</li>
 											<li class="isx-divider"></li>
 											<li>
 												<a tabindex="-1" href="#" role="menuitem" class="isx-backup-delete">

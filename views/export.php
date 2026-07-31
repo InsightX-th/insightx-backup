@@ -124,7 +124,7 @@ $isx_default   = 'amazon_s3';
 			<p class="isx-progress-warning"><span class="dashicons dashicons-warning"></span> <?php esc_html_e( 'ระบบกำลังส่งออกข้อมูล กรุณาอย่าปิดหน้านี้หรือย้ายไปหน้าอื่นจนกว่าจะเสร็จสิ้น', 'insightx-backup' ); ?></p>
 			<p class="isx-status"></p>
 			<div class="isx-actions">
-				<button type="button" class="button isx-btn" id="isx-export-cancel"><?php esc_html_e( 'ยกเลิก', 'insightx-backup' ); ?></button>
+				<button type="button" class="button isx-btn isx-btn-outline" id="isx-export-cancel"><?php esc_html_e( 'ยกเลิก', 'insightx-backup' ); ?></button>
 			</div>
 		</div>
 

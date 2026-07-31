@@ -586,7 +586,8 @@
 		},
 		import: {
 			upload: 'อัปโหลดไฟล์',
-			init: 'ตรวจสอบแพ็กเกจ',
+			init: 'เตรียมข้อมูล',
+			verify: 'ตรวจสอบแพ็กเกจ',
 			clean: 'ล้างไฟล์เดิม',
 			extract: 'กู้คืนไฟล์',
 			database: 'นำเข้าฐานข้อมูล',
@@ -607,7 +608,7 @@
 		if (hasUpload) {
 			keys.push('upload');
 		}
-		return keys.concat(['init', 'clean', 'extract', 'database', 'finalize']);
+		return keys.concat(['init', 'verify', 'clean', 'extract', 'database', 'finalize']);
 	}
 
 	/**

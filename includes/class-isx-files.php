@@ -137,16 +137,21 @@ class ISX_Files {
 	 *     @type array $exclude_paths     Content-relative path prefixes to skip, e.g.
 	 *                                    array('uploads/2019', 'plugins/old-plugin').
 	 * }
-	 * @return array { total:int, bounds: array<string,int> } bounds maps each
-	 *               dirs() key (plus 'other' for root-level entries) to the
+	 * @return array { total:int, bounds: array<string,int>, ok:bool } bounds maps
+	 *               each dirs() key (plus 'other' for root-level entries) to the
 	 *               cumulative file count once that category's block ends —
 	 *               lets the files-packing step report which category the
-	 *               current position falls into.
+	 *               current position falls into. `ok` is false when the list
+	 *               couldn't be written in full: a truncated list is uniquely
+	 *               nasty, because `total` is counted from the loop rather than
+	 *               read back from the file, so the export would pack fewer
+	 *               files than the site has, still reach 100%, and report
+	 *               ส่งออกเสร็จสิ้น over a backup with files silently missing.
 	 */
 	public static function build_list( $list_file, $filters = array() ) {
 		$fh = fopen( $list_file, 'wb' );
 		if ( $fh === false ) {
-			return array( 'total' => 0, 'bounds' => array() );
+			return array( 'total' => 0, 'bounds' => array(), 'ok' => false );
 		}
 
 		$exclude_dirs      = isset( $filters['exclude_dirs'] ) ? (array) $filters['exclude_dirs'] : array();
@@ -158,6 +163,7 @@ class ISX_Files {
 		$excluded = self::excluded();
 		$count    = 0;
 		$bounds   = array();
+		$ok       = true;
 
 		foreach ( self::dirs() as $dir_key => $abs_dir ) {
 			if ( in_array( $dir_key, $exclude_dirs, true ) ) {
@@ -202,7 +208,10 @@ class ISX_Files {
 					continue;
 				}
 
-				fwrite( $fh, $abs . "\t" . self::NS . $rel . "\n" );
+				if ( ! self::write_line( $fh, $abs . "\t" . self::NS . $rel . "\n" ) ) {
+					$ok = false;
+					break 2;
+				}
 				$count++;
 			}
 
@@ -213,7 +222,7 @@ class ISX_Files {
 		// custom folder some other plugin created there) — not gated by
 		// exclude_dirs/keep_only_subdirs since those options only make sense
 		// for the four named dirs above.
-		foreach ( self::other_entries() as $abs_entry ) {
+		foreach ( $ok ? self::other_entries() : array() as $abs_entry ) {
 			if ( is_dir( $abs_entry ) ) {
 				$iterator = new RecursiveIteratorIterator(
 					new RecursiveDirectoryIterator( $abs_entry, FilesystemIterator::SKIP_DOTS ),
@@ -234,7 +243,10 @@ class ISX_Files {
 					if ( ! empty( $exclude_paths ) && self::path_excluded( $rel, $exclude_paths ) ) {
 						continue;
 					}
-					fwrite( $fh, $abs . "\t" . self::NS . $rel . "\n" );
+					if ( ! self::write_line( $fh, $abs . "\t" . self::NS . $rel . "\n" ) ) {
+						$ok = false;
+						break 2;
+					}
 					$count++;
 				}
 			} elseif ( is_file( $abs_entry ) ) {
@@ -242,14 +254,35 @@ class ISX_Files {
 				if ( ! empty( $exclude_paths ) && self::path_excluded( $rel, $exclude_paths ) ) {
 					continue;
 				}
-				fwrite( $fh, $abs_entry . "\t" . self::NS . $rel . "\n" );
+				if ( ! self::write_line( $fh, $abs_entry . "\t" . self::NS . $rel . "\n" ) ) {
+					$ok = false;
+					break;
+				}
 				$count++;
 			}
 		}
 		$bounds['other'] = $count;
 
-		fclose( $fh );
-		return array( 'total' => $count, 'bounds' => $bounds );
+		if ( ! fclose( $fh ) ) {
+			$ok = false;
+		}
+		return array( 'total' => $count, 'bounds' => $bounds, 'ok' => $ok );
+	}
+
+	/**
+	 * Append one line to a work list, telling the truth about whether it landed.
+	 * See build_list()'s @return note for why a short write here can't just be
+	 * shrugged off.
+	 *
+	 * @param resource $fh
+	 * @param string   $line
+	 * @return bool
+	 */
+	private static function write_line( $fh, $line ) {
+		// Silenced: see ISX_Archive::write_ok() — the caller turns this into a
+		// real error, and a PHP notice would corrupt the JSON response it
+		// travels back in.
+		return @fwrite( $fh, $line ) === strlen( $line );
 	}
 
 	/**
@@ -265,13 +298,16 @@ class ISX_Files {
 	public static function pack_batch( $archive_path, $list_file, $byte_offset, $limit, $compress = false ) {
 		$fh = fopen( $list_file, 'rb' );
 		if ( $fh === false ) {
-			return array( 'added' => 0, 'offset' => $byte_offset, 'done' => true );
+			return array( 'added' => 0, 'offset' => $byte_offset, 'done' => true, 'ok' => true );
 		}
 		fseek( $fh, $byte_offset );
 
-		$added = 0;
-		$done  = false;
+		$added         = 0;
+		$done          = false;
+		$ok            = true;
+		$before_line_at = $byte_offset;
 		while ( $added < $limit ) {
+			$before_line_at = ftell( $fh );
 			$line = fgets( $fh );
 			if ( $line === false ) {
 				$done = true;
@@ -283,15 +319,25 @@ class ISX_Files {
 			}
 			$parts = explode( "\t", $line, 2 );
 			if ( count( $parts ) === 2 ) {
-				ISX_Archive::add_file( $archive_path, $parts[0], $parts[1], $compress );
+				$result = ISX_Archive::add_file( $archive_path, $parts[0], $parts[1], $compress );
+				if ( $result === false ) {
+					// Leave the offset at the start of this line, not past it — a
+					// disk-full write is a hard stop, not a file to skip, so the
+					// caller must not resume as if this entry were packed.
+					$ok = false;
+					break;
+				}
+				// null means the source vanished between build_list() and now —
+				// normal churn on a live site (a plugin update, a cache file
+				// rotating out) and not a reason to fail the whole export.
 				$added++;
 			}
 		}
 
-		$offset = ftell( $fh );
+		$offset = $ok ? ftell( $fh ) : $before_line_at;
 		fclose( $fh );
 
-		return array( 'added' => $added, 'offset' => $offset, 'done' => $done );
+		return array( 'added' => $added, 'offset' => $offset, 'done' => $done, 'ok' => $ok );
 	}
 
 	/**
@@ -375,22 +421,30 @@ class ISX_Files {
 	 *
 	 * @param string $list_file Absolute path to write the list to.
 	 * @param array  $deferred  Roots to leave for sweep_deferred(), from deferred_roots().
-	 * @return int Number of files listed.
+	 * @return array { total:int, ok:bool } — ok is false when the list couldn't
+	 *               be written in full. Acting on a truncated clean list would
+	 *               leave old files behind that the package is supposed to
+	 *               replace, quietly turning clean-then-restore back into the
+	 *               plain overwrite this plugin exists to avoid.
 	 */
 	public static function build_clean_list( $list_file, array $deferred ) {
 		$fh = fopen( $list_file, 'wb' );
 		if ( $fh === false ) {
-			return 0;
+			return array( 'total' => 0, 'ok' => false );
 		}
 
 		$skip  = array_merge( self::permanent_protected(), $deferred );
 		$roots = array_merge( array_values( self::dirs() ), self::other_entries() );
 		$count = 0;
+		$ok    = true;
 
 		foreach ( $roots as $root ) {
 			if ( is_file( $root ) ) {
 				if ( ! self::is_excluded( $root, $skip ) ) {
-					fwrite( $fh, $root . "\n" );
+					if ( ! self::write_line( $fh, $root . "\n" ) ) {
+						$ok = false;
+						break;
+					}
 					$count++;
 				}
 				continue;
@@ -410,13 +464,18 @@ class ISX_Files {
 				if ( self::is_excluded( $abs, $skip ) ) {
 					continue;
 				}
-				fwrite( $fh, $abs . "\n" );
+				if ( ! self::write_line( $fh, $abs . "\n" ) ) {
+					$ok = false;
+					break 2;
+				}
 				$count++;
 			}
 		}
 
-		fclose( $fh );
-		return $count;
+		if ( ! fclose( $fh ) ) {
+			$ok = false;
+		}
+		return array( 'total' => $count, 'ok' => $ok );
 	}
 
 	/**
@@ -609,23 +668,27 @@ class ISX_Files {
 
 	/**
 	 * Stream one archive entry back to disk when it belongs to the content
-	 * namespace. Returns true if it handled the entry.
+	 * namespace.
 	 *
 	 * @param array    $header
 	 * @param resource $handle
-	 * @return bool
+	 * @return bool|null True once written, false if the write failed (disk
+	 *                   full, or the archive ran dry mid-entry), null if this
+	 *                   entry isn't ours to restore. The null matters: the
+	 *                   import driver treats a literal false as "stop the whole
+	 *                   restore", so "not a wp-content entry" must not share
+	 *                   that value — same split ISX_Archive::add_file() uses.
 	 */
 	public static function restore_stream( $header, $handle ) {
 		$path = isset( $header['p'] ) ? $header['p'] : '';
 		if ( strpos( $path, self::NS ) !== 0 ) {
-			return false;
+			return null;
 		}
 		$rel  = substr( $path, strlen( self::NS ) );
 		$dest = untrailingslashit( WP_CONTENT_DIR ) . '/' . $rel;
 		wp_mkdir_p( dirname( $dest ) );
 
-		ISX_Archive::stream_entry_to_file( $handle, $header, $dest );
-		return true;
+		return ISX_Archive::stream_entry_to_file( $handle, $header, $dest );
 	}
 
 	/**
