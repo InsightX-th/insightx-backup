@@ -704,6 +704,21 @@
 
 			openContentModal();
 
+			// Same .isx-step-bar markup the export/import progress boxes use, so
+			// this gets the shimmer-while-working animation for free instead of
+			// looking frozen during the long stretch verifying a multi-GB file.
+			function renderBar(pct, label) {
+				return (
+					'<div class="isx-steps"><div class="isx-step is-active">' +
+						'<div class="isx-step-head">' +
+							'<span class="isx-step-label">' + escapeHtmlLocal(label) + '</span>' +
+							'<span class="isx-step-pct">' + pct + '%</span>' +
+						'</div>' +
+						'<div class="isx-step-bar"><div class="isx-step-bar-fill" style="width:' + pct + '%"></div></div>' +
+					'</div></div>'
+				);
+			}
+
 			function step(offset, entries) {
 				ISX.post('isx_backups_verify', { name: name, offset: offset, entries: entries })
 					.done(function (res) {
@@ -717,17 +732,14 @@
 						}
 						var d = res.data;
 						if (!d.done) {
-							$('#isx-content-body').html(
-								'<p class="isx-fetch-status">' +
-									escapeHtmlLocal('กำลังตรวจสอบ... ' + (d.percent || 0) + '%') +
-									'</p>'
-							);
+							$('#isx-content-body').html(renderBar(d.percent || 0, 'กำลังตรวจสอบ...'));
 							step(d.offset, d.entries);
 							return;
 						}
 						$('#isx-content-body').html(
-							'<p class="isx-fetch-status' + (d.ok ? '' : ' is-error') + '">' +
-								escapeHtmlLocal((d.ok ? '✓ ' : '✕ ') + (d.message || '')) +
+							renderBar(100, d.ok ? 'ตรวจสอบผ่าน' : 'ตรวจสอบไม่ผ่าน') +
+								'<p class="isx-fetch-status' + (d.ok ? '' : ' is-error') + '">' +
+									escapeHtmlLocal((d.ok ? '✓ ' : '✕ ') + (d.message || '')) +
 								'</p>'
 						);
 					})
@@ -736,7 +748,7 @@
 					});
 			}
 
-			$('#isx-content-body').html('<p class="isx-fetch-status">กำลังตรวจสอบ... 0%</p>');
+			$('#isx-content-body').html(renderBar(0, 'กำลังตรวจสอบ...'));
 			step(0, 0);
 		});
 
