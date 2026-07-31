@@ -148,10 +148,8 @@ if ( $isx_filter !== '' ) {
 			</form>
 		</div>
 	</div>
-
-	<div class="isx-card" style="margin-top:20px;">
-		<h2 class="isx-title" style="font-size:16px;"><span class="dashicons dashicons-info-outline"></span> <?php esc_html_e( 'ข้อมูลระบบ', 'insightx-backup' ); ?></h2>
-		<p class="isx-muted"><?php esc_html_e( 'แนบข้อมูลนี้ไปด้วยเวลาส่ง log ให้ทีมงานดู (ไฟล์ที่ดาวน์โหลดมีข้อมูลนี้อยู่แล้ว)', 'insightx-backup' ); ?></p>
-		<pre class="isx-terminal-body" style="white-space:pre-wrap;"><?php echo esc_html( ISX_Admin::log_system_info() ); ?></pre>
-	</div>
+	<?php // The system-info block that used to sit here is still written into the ?>
+	<?php // downloaded log file (see ISX_Admin::ajax_log_download()), which is the ?>
+	<?php // only place it was ever needed — on screen it was a wall of text nobody ?>
+	<?php // reads, between the log and the bottom of the page. ?>
 </div>

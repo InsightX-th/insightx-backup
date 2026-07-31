@@ -141,13 +141,42 @@ $isx_schedule  = wp_parse_args(
 				<div class="isx-field">
 					<label><?php esc_html_e( 'เก็บไว้สูงสุด (ไฟล์)', 'insightx-backup' ); ?></label>
 					<input type="number" id="isx-schedule-retain" min="1" step="1" value="<?php echo esc_attr( (int) $isx_schedule['retain'] ); ?>" />
-					<p class="isx-field-hint"><?php esc_html_e( 'เกินจำนวนนี้ ไฟล์เก่าสุดในเครื่องจะถูกลบอัตโนมัติหลัง backup ใหม่สำเร็จ', 'insightx-backup' ); ?></p>
+					<p class="isx-field-hint"><?php esc_html_e( 'เกินจำนวนนี้ ไฟล์เก่าสุดจะถูกลบอัตโนมัติหลัง backup ใหม่สำเร็จ ทั้งในเครื่องและบน Storage (เฉพาะไฟล์ของเว็บนี้)', 'insightx-backup' ); ?></p>
 				</div>
 			</div>
 
 			<div class="isx-actions">
 				<button type="button" class="button button-primary isx-btn" id="isx-schedule-save"><?php esc_html_e( 'บันทึก', 'insightx-backup' ); ?></button>
 				<span class="isx-save-status" id="isx-schedule-status" aria-live="polite"></span>
+			</div>
+		</div>
+
+		<div class="isx-provider-block" id="isx-cleanup-block">
+			<div class="isx-provider-head">
+				<span class="isx-provider-head-main">
+					<span class="dashicons dashicons-trash"></span>
+					<span class="isx-provider-title"><?php esc_html_e( 'ล้าง upload ที่ค้างบน Storage', 'insightx-backup' ); ?></span>
+				</span>
+			</div>
+			<p class="isx-muted">
+				<?php esc_html_e( 'การอัปโหลดไฟล์ใหญ่ที่ไม่จบ (เน็ตหลุด, เซิร์ฟเวอร์ตายกลางทาง, กดยกเลิก) จะทิ้งชิ้นส่วนค้างไว้ใน bucket โดยยังไม่กลายเป็นไฟล์จริง — มองไม่เห็นในรายการไฟล์และลบผ่านหน้าเว็บของผู้ให้บริการไม่ได้ แต่ยังคิดค่าเก็บข้อมูล ปกติปลั๊กอินเก็บกวาดให้เองอยู่แล้ว ปุ่มนี้ไว้สั่งเดี๋ยวนี้เลยโดยไม่ต้องรอรอบถัดไป', 'insightx-backup' ); ?>
+			</p>
+
+			<p class="isx-field-hint" style="margin-top:16px;"><?php esc_html_e( 'เลือก provider ที่จะตรวจ (ไม่เลือกเลย = ตรวจทุกตัวที่ตั้งค่าไว้)', 'insightx-backup' ); ?></p>
+			<div class="isx-dest-cards" id="isx-cleanup-providers">
+				<?php foreach ( $isx_providers as $isx_slug => $isx_meta ) : ?>
+					<?php $isx_configured = ISX_Destinations::is_configured( $isx_slug ); ?>
+					<button type="button" class="isx-dest-card <?php echo $isx_configured ? '' : 'is-unconfigured'; ?>" data-provider="<?php echo esc_attr( $isx_slug ); ?>" data-configured="<?php echo $isx_configured ? '1' : '0'; ?>">
+						<span class="isx-card-icon"><?php echo ISX_Destinations::icon( $isx_slug ); // phpcs:ignore WordPress.Security.EscapeOutput ?></span>
+						<span class="isx-dest-card-label"><?php echo esc_html( $isx_meta['label'] ); ?></span>
+						<span class="isx-dest-card-check" aria-hidden="true"></span>
+					</button>
+				<?php endforeach; ?>
+			</div>
+
+			<div class="isx-actions">
+				<button type="button" class="button isx-btn isx-btn-outline" id="isx-cleanup-uploads"><?php esc_html_e( 'ตรวจและล้างเดี๋ยวนี้', 'insightx-backup' ); ?></button>
+				<span class="isx-save-status" id="isx-cleanup-status" aria-live="polite"></span>
 			</div>
 		</div>
 

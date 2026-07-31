@@ -158,6 +158,31 @@ class ISX_Job {
 		return array_values( array_unique( array( ISX_STORAGE_PATH, untrailingslashit( ISX_PATH . 'storage' ) ) ) );
 	}
 
+	/**
+	 * Whether this job's directory is still on disk, regardless of whether its
+	 * state can be read.
+	 *
+	 * load() returning null answers two very different questions with the same
+	 * value: "this job is gone" and "this job's state could not be read just
+	 * now". Anything about to take a destructive action on the strength of
+	 * "the job is dead" — releasing a multipart upload, for instance — needs
+	 * the first meaning specifically, and this is how to ask for it.
+	 *
+	 * @param string $id
+	 * @return bool
+	 */
+	public static function exists( $id ) {
+		if ( ! preg_match( '/^isx_[A-Za-z0-9]+$/', (string) $id ) ) {
+			return false;
+		}
+		foreach ( self::search_paths() as $base ) {
+			if ( is_dir( untrailingslashit( $base ) . '/' . $id ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public function id() {
 		return $this->id;
 	}
@@ -199,10 +224,38 @@ class ISX_Job {
 		return $this->state;
 	}
 
+	/**
+	 * Persist the job's state.
+	 *
+	 * Written to a temp file and renamed into place, never straight over the
+	 * live one. Several drivers read this file while a step is writing it — the
+	 * browser poll, the loopback chain, WP-Cron, and the upload sweep that runs
+	 * on every admin_init — and file_put_contents() is not atomic, so any of
+	 * them could catch it half-written. json_decode() then failed, load()
+	 * returned null, and callers read that as "this job does not exist":
+	 * ajax_run() logged "ไม่พบงาน", and worse,
+	 * ISX_Export::sweep_orphaned_uploads() concluded the owning job was dead and
+	 * aborted a multipart upload that was still running — the next part came
+	 * back "HTTP 404: The specified multipart upload does not exist".
+	 *
+	 * The upload step saves after every part, so a 6GB package meant well over
+	 * a thousand of these windows in a single export. rename() closes all of it:
+	 * a reader sees either the previous state or the new one, never a fragment.
+	 *
+	 * @return bool
+	 */
 	public function save() {
-		$json    = wp_json_encode( $this->state );
-		$written = @file_put_contents( $this->dir . '/state.json', $json );
-		$ok      = ( $written === strlen( $json ) );
+		$json = wp_json_encode( $this->state );
+		$path = $this->dir . '/state.json';
+		// Per-process temp name: two drivers saving at once must not share a
+		// scratch file, or one's rename() publishes the other's half-written one.
+		$tmp  = $path . '.' . getmypid() . '.tmp';
+
+		$written = @file_put_contents( $tmp, $json );
+		$ok      = ( $written === strlen( $json ) ) && @rename( $tmp, $path );
+		if ( ! $ok ) {
+			@unlink( $tmp );
+		}
 
 		// Nobody checks this return value at the call sites (a step has usually
 		// already done its work by the time it saves, so there's nothing useful

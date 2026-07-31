@@ -747,6 +747,19 @@ class ISX_Export {
 	const FOREIGN_UPLOAD_MAX_AGE = 12 * HOUR_IN_SECONDS;
 
 	/**
+	 * How recently-registered an upload of our own has to be before the sweep
+	 * will leave it alone despite not being able to confirm its job is alive.
+	 *
+	 * Only reachable when the job can't be read at all *and* its directory is
+	 * gone, so in practice this is the last guard before an irreversible abort.
+	 * Sized to sit well past a slow step rather than past a whole upload — a
+	 * live job rewrites its state every part, so it is never this quiet.
+	 *
+	 * @var int
+	 */
+	const PENDING_MIN_AGE = 15 * MINUTE_IN_SECONDS;
+
+	/**
 	 * @return void
 	 */
 	private static function register_pending_upload( $upload_id, $provider, $job_id, $host, $uri ) {
@@ -792,31 +805,84 @@ class ISX_Export {
 	 *     folder. Those get the age cutoff, since aborting one that is actually
 	 *     mid-upload elsewhere would break that site's export.
 	 *
-	 * @param bool $include_foreign Also do the listing pass (one HTTP request
-	 *                              per configured provider).
-	 * @return int Uploads aborted.
+	 * @param bool       $include_foreign Also do the listing pass (one HTTP
+	 *                                    request per configured provider).
+	 * @param array|null $only_providers Restrict both passes to these provider
+	 *                                    slugs. Null (the default) means every
+	 *                                    configured provider, same as before
+	 *                                    this parameter existed.
+	 * @return array { aborted:int, errors: array<string,string> } errors maps
+	 *               provider slug => the listing-pass failure for it, e.g. an
+	 *               R2 API token missing multipart-list permission — silently
+	 *               skipping that provider used to mean its leftovers were
+	 *               never found by anything but a manual look at the bucket.
 	 */
-	public static function sweep_orphaned_uploads( $include_foreign = false ) {
+	public static function sweep_orphaned_uploads( $include_foreign = false, $only_providers = null ) {
 		$pending = get_option( self::PENDING_OPTION, array() );
 		$pending = is_array( $pending ) ? $pending : array();
 		$aborted = 0;
 		$known   = array();
+		$errors  = array();
 
 		foreach ( $pending as $upload_id => $entry ) {
 			$provider = isset( $entry['provider'] ) ? (string) $entry['provider'] : '';
 			$host     = isset( $entry['host'] ) ? (string) $entry['host'] : '';
 			$uri      = isset( $entry['uri'] ) ? (string) $entry['uri'] : '';
 
-			$known[ $upload_id ] = true;
-
-			if ( $host === '' || $uri === '' || ! ISX_Destinations::is_configured( $provider ) ) {
-				self::forget_pending_upload( $upload_id );
+			if ( is_array( $only_providers ) && ! in_array( $provider, $only_providers, true ) ) {
 				continue;
 			}
 
+			$known[ $upload_id ] = true;
+
+			if ( $host === '' || $uri === '' || ! ISX_Destinations::is_configured( $provider ) ) {
+				// Deliberately kept, not forgotten. Dropping the entry here used
+				// to discard the only record of an upload nobody had aborted —
+				// credentials rotated or a provider temporarily unreadable, and
+				// the upload became invisible to this pass forever, left billing
+				// against the bucket. Keeping it costs an option row; losing it
+				// costs storage indefinitely.
+				ISX_Logger::log_warn(
+					's3',
+					'พบ upload ที่ค้างแต่ยกเลิกไม่ได้ตอนนี้ (ยังไม่ได้ตั้งค่า provider หรือข้อมูลไม่ครบ) — เก็บไว้ลองใหม่รอบหน้า',
+					array( 'provider' => $provider, 'upload_id' => $upload_id )
+				);
+				continue;
+			}
+
+			$job_id = isset( $entry['job'] ) ? (string) $entry['job'] : '';
+			$job    = $job_id !== '' ? ISX_Job::load( $job_id ) : null;
+
 			// Still being driven by a job that hasn't finished — leave it alone.
-			$job = isset( $entry['job'] ) ? ISX_Job::load( (string) $entry['job'] ) : null;
 			if ( $job !== null && $job->get( 'step' ) !== 'done' ) {
+				continue;
+			}
+
+			// A job that cannot be *loaded* is not the same as a job that is
+			// gone, and treating them alike is how this sweep used to kill live
+			// uploads: a state.json caught mid-write read back as null, the
+			// upload was aborted underneath a running export, and its next part
+			// came back "404 The specified multipart upload does not exist".
+			// save() is atomic now, but this runs on every admin request against
+			// something irreversible, so it asks the narrower question too.
+			if ( $job === null && $job_id !== '' && ISX_Job::exists( $job_id ) ) {
+				ISX_Logger::log_debug(
+					's3',
+					'ข้ามการล้าง upload: อ่านสถานะงานไม่ได้ แต่โฟลเดอร์งานยังอยู่',
+					array( 'provider' => $provider, 'upload_id' => $upload_id, 'job' => $job_id )
+				);
+				continue;
+			}
+
+			// An entry with no job to check against is the one genuinely
+			// ambiguous case left — nothing to load, nothing to stat, so a live
+			// upload and a stranded one look identical. Give it a grace period
+			// rather than guessing: the cost of being wrong is asymmetric, a
+			// premature abort destroys hours of transfer while a late one bills
+			// a little storage. (A missing job *directory*, checked above, is
+			// positive proof and gets no such wait.)
+			$started = isset( $entry['started'] ) ? (int) $entry['started'] : 0;
+			if ( $job_id === '' && $started > 0 && ( time() - $started ) < self::PENDING_MIN_AGE ) {
 				continue;
 			}
 
@@ -844,7 +910,7 @@ class ISX_Export {
 		}
 
 		if ( ! $include_foreign ) {
-			return $aborted;
+			return array( 'aborted' => $aborted, 'errors' => $errors );
 		}
 
 		$max_age = (int) apply_filters( 'isx_foreign_upload_max_age', self::FOREIGN_UPLOAD_MAX_AGE );
@@ -853,9 +919,25 @@ class ISX_Export {
 			if ( ! ISX_Destinations::is_configured( $slug ) ) {
 				continue;
 			}
+			if ( is_array( $only_providers ) && ! in_array( $slug, $only_providers, true ) ) {
+				continue;
+			}
 			$client  = new ISX_S3_Client( ISX_Destinations::get( $slug ) );
 			$uploads = $client->list_multipart_uploads( ISX_Destinations::prefix( $slug ) );
 			if ( is_wp_error( $uploads ) ) {
+				// Skipping silently meant a provider whose ListMultipartUploads
+				// is broken or unpermitted would never have its leftovers swept,
+				// with nothing anywhere to say why — the bucket just kept
+				// accumulating. Say it out loud instead, and hand it back to the
+				// caller too: this is exactly how an R2 API token missing the
+				// multipart-list permission was found in the first place —
+				// buried in the log, indistinguishable from "nothing to sweep".
+				$errors[ $slug ] = $uploads->get_error_message();
+				ISX_Logger::log_warn(
+					's3',
+					'อ่านรายการ upload ที่ค้างบน Storage ไม่ได้: ' . $uploads->get_error_message(),
+					array( 'provider' => $slug )
+				);
 				continue;
 			}
 
@@ -882,7 +964,7 @@ class ISX_Export {
 			}
 		}
 
-		return $aborted;
+		return array( 'aborted' => $aborted, 'errors' => $errors );
 	}
 
 	/**

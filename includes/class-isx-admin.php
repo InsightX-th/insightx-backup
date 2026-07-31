@@ -82,6 +82,7 @@ class ISX_Admin {
 		add_action( 'wp_ajax_isx_storage_import_prepare', array( __CLASS__, 'ajax_storage_import_prepare' ) );
 
 		add_action( 'wp_ajax_isx_schedule_save', array( __CLASS__, 'ajax_schedule_save' ) );
+		add_action( 'wp_ajax_isx_cleanup_uploads', array( __CLASS__, 'ajax_cleanup_uploads' ) );
 		add_filter( 'cron_schedules', array( __CLASS__, 'cron_schedules' ) ); // phpcs:ignore WordPress.WP.CronInterval
 
 		add_action( 'wp_ajax_isx_reset_run', array( __CLASS__, 'ajax_reset_run' ) );
@@ -1599,6 +1600,67 @@ class ISX_Admin {
 	 * files over themselves, same as this plugin's own directory move for
 	 * All-in-One WP Migration did manually.
 	 */
+	/**
+	 * Run the full stranded-upload sweep on demand.
+	 *
+	 * The automatic sweep already covers this, but its listing pass is throttled
+	 * to once a day and only touches uploads past an age cutoff — reasonable
+	 * defaults, useless to someone who is looking at leftovers in their
+	 * provider's console right now and wants them gone. Until this existed the
+	 * only manual route was `wp isx cleanup-uploads`, which rules out anyone
+	 * without shell access.
+	 *
+	 * Deliberately bypasses the daily transient: an explicit click is the one
+	 * case where the cost of the listing calls is obviously wanted.
+	 */
+	public static function ajax_cleanup_uploads() {
+		self::guard( 'export' );
+
+		// Empty selection (nothing posted, or the client sent none) means every
+		// configured provider — the picker on screen defaults to none selected
+		// meaning "all", so an unchecked request must behave the same as before
+		// this filter existed.
+		$only = array();
+		if ( isset( $_POST['providers'] ) && is_array( $_POST['providers'] ) ) {
+			foreach ( wp_unslash( $_POST['providers'] ) as $slug ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+				$slug = sanitize_key( $slug );
+				if ( array_key_exists( $slug, ISX_Destinations::providers() ) ) {
+					$only[] = $slug;
+				}
+			}
+		}
+
+		$result  = ISX_Export::sweep_orphaned_uploads( true, $only ? $only : null );
+		$aborted = (int) $result['aborted'];
+		$errors  = (array) $result['errors'];
+
+		$message = $aborted > 0
+			? sprintf(
+				/* translators: %d: number of uploads released */
+				__( 'ล้าง upload ที่ค้างแล้ว %d รายการ', 'insightx-backup' ),
+				$aborted
+			)
+			: __( 'ไม่พบ upload ที่ค้างอยู่', 'insightx-backup' );
+
+		if ( ! empty( $errors ) ) {
+			$providers      = ISX_Destinations::providers();
+			$error_lines    = array();
+			foreach ( $errors as $slug => $error_message ) {
+				$label         = isset( $providers[ $slug ]['label'] ) ? $providers[ $slug ]['label'] : $slug;
+				$error_lines[] = $label . ': ' . $error_message;
+			}
+			$message .= ' — ตรวจสอบไม่ได้บาง provider (' . implode( ', ', $error_lines ) . ')';
+		}
+
+		wp_send_json_success(
+			array(
+				'aborted' => $aborted,
+				'errors'  => $errors,
+				'message' => $message,
+			)
+		);
+	}
+
 	public static function ajax_storage_dir_save() {
 		self::guard( 'export' );
 

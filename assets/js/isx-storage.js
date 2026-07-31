@@ -442,6 +442,53 @@
 		});
 	})();
 
+	/* ================= Storage settings: stranded upload cleanup ================= */
+
+	(function cleanupUploads() {
+		var $button = $('#isx-cleanup-uploads');
+		if (!$button.length) {
+			return;
+		}
+
+		// Toggleable, not exclusive like the export destination picker — the
+		// question here is "which of these to check", and none selected means
+		// "all of them", not "none of them".
+		$(document).on('click', '#isx-cleanup-providers .isx-dest-card', function (event) {
+			event.preventDefault();
+			$(this).toggleClass('is-selected');
+		});
+
+		$button.on('click', function (event) {
+			event.preventDefault();
+			var $status = $('#isx-cleanup-status');
+			var providers = $('#isx-cleanup-providers .isx-dest-card.is-selected')
+				.map(function () { return $(this).data('provider'); })
+				.get();
+
+			// One listing request per provider being checked, so this is slower
+			// than it looks — say so rather than leaving a dead-looking button.
+			$button.prop('disabled', true);
+			$status.text('กำลังตรวจสอบ...').removeClass('is-ok is-error');
+
+			ISX.post('isx_cleanup_uploads', { providers: providers })
+				.done(function (res) {
+					$button.prop('disabled', false);
+					if (res && res.success) {
+						$status.text(res.data.message).removeClass('is-error').addClass('is-ok');
+					} else {
+						$status
+							.text((res && res.data && res.data.message) || 'ล้างไม่สำเร็จ')
+							.removeClass('is-ok')
+							.addClass('is-error');
+					}
+				})
+				.fail(function () {
+					$button.prop('disabled', false);
+					$status.text('ล้างไม่สำเร็จ — ดูรายละเอียดที่หน้า Log').removeClass('is-ok').addClass('is-error');
+				});
+		});
+	})();
+
 	/* ================= Backups page ================= */
 
 	(function backupsPage() {
