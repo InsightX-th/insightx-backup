@@ -765,6 +765,14 @@
 		event.preventDefault();
 		var current = activeJob;
 		if (!current) {
+			// A dead button with no explanation is the worst possible outcome
+			// here — the user is watching a job they can't stop and has nothing
+			// to go on. Say so, and record it, since reaching this at all means
+			// the page lost track of a job that is still running server-side.
+			$('#isx-export-progress').find('.isx-status').text(
+				'ไม่พบงานที่กำลังทำงานในหน้านี้ — กรุณารีเฟรชหน้าเพื่อดูสถานะล่าสุด'
+			);
+			logToServer('error', 'กดยกเลิกแต่ไม่มี activeJob', {});
 			return;
 		}
 		if (!window.confirm('ยกเลิกการส่งออก?')) {

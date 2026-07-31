@@ -214,7 +214,7 @@ class ISX_Import {
 				$phase_done = true;
 				break;
 			}
-		} while ( microtime( true ) < $deadline );
+		} while ( microtime( true ) < $deadline && ! $job->is_cancel_requested() );
 
 		$job->set( 'cursor', $cursor );
 		$job->set( 'manifest', $manifest_ref['data'] );
@@ -281,11 +281,12 @@ class ISX_Import {
 				break;
 			}
 
-			// Stop on either the line cap or the wall-clock budget — but never
-			// mid-options (see the atomic-options note above): the file must be
-			// left at a table boundary the next poll can safely resume from.
+			// Stop on the line cap, the wall-clock budget, or a cancel request —
+			// but never mid-options (see the atomic-options note above): the file
+			// must be left at a table boundary the next poll can safely resume
+			// from, and a cancel is no reason to leave wp_options half-written.
 			$is_options = ISX_Database::line_table( $line ) === $options_table;
-			if ( ! $is_options && ( $processed >= self::DB_LINES_PER_BATCH || microtime( true ) >= $deadline ) ) {
+			if ( ! $is_options && ( $processed >= self::DB_LINES_PER_BATCH || microtime( true ) >= $deadline || $job->is_cancel_requested() ) ) {
 				fseek( $fh, $pos );
 				break;
 			}

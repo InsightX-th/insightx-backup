@@ -215,7 +215,7 @@ class ISX_Export {
 			$message        = $table_rows > 0
 				? sprintf( 'ส่งออกตาราง %s (%d/%d แถว)...', $table, min( $off + $written, $table_rows ), $table_rows )
 				: sprintf( 'ส่งออกตาราง %s...', $table );
-		} while ( microtime( true ) < $deadline );
+		} while ( microtime( true ) < $deadline && ! $job->is_cancel_requested() );
 
 		fclose( $fh );
 		$job->set( 'cursor', $cursor );
@@ -260,7 +260,10 @@ class ISX_Export {
 
 		// Keep packing file batches into the archive until the time budget is
 		// spent (or every file is packed), rather than one small batch per
-		// request — the same round-trip collapse the database step gets.
+		// request — the same round-trip collapse the database step gets. The
+		// cancel check is what makes "ยกเลิก" feel immediate on a big site: this
+		// is the phase that runs for hours, and without it the click would sit
+		// there until the whole time budget was spent.
 		do {
 			$result       = ISX_Files::pack_batch( $job->archive(), $job->file_list(), (int) $cursor['fo'], self::FILES_PER_BATCH, $compress );
 			$cursor['fo'] = $result['offset'];
@@ -269,7 +272,7 @@ class ISX_Export {
 				$phase_done = true;
 				break;
 			}
-		} while ( microtime( true ) < $deadline );
+		} while ( microtime( true ) < $deadline && ! $job->is_cancel_requested() );
 
 		$job->set( 'cursor', $cursor );
 		$job->set( 'done_files', $done_files );
@@ -500,7 +503,11 @@ class ISX_Export {
 			$job->set( 'progress', 97 + 3 * ( $offset / $total ) );
 			$job->save();
 
-			if ( microtime( true ) >= $deadline ) {
+			// A single part can take far longer than the whole step budget on a
+			// slow link, so cancelling has to be checked per part, not just per
+			// step — otherwise the click waits out the current part before
+			// anything happens. run_step() releases the multipart upload.
+			if ( microtime( true ) >= $deadline || $job->is_cancel_requested() ) {
 				break;
 			}
 		}

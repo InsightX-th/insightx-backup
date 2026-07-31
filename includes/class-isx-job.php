@@ -213,6 +213,39 @@ class ISX_Job {
 	}
 
 	/**
+	 * Ask whoever is driving this job to stop at the next safe point.
+	 *
+	 * A marker file rather than a state.json field on purpose: cancelling has to
+	 * work *while* a step is mid-run holding the lock, and that step will write
+	 * its own in-memory state back over state.json when it finishes — silently
+	 * undoing anything written there from the outside. A separate file survives
+	 * that, and needs no lock of its own to set.
+	 *
+	 * @return bool
+	 */
+	public function request_cancel() {
+		return false !== @file_put_contents( $this->dir . '/.cancel', (string) time() );
+	}
+
+	/**
+	 * Whether someone has asked this job to stop.
+	 *
+	 * The clearstatcache() is what makes this work at all, not a precaution: PHP
+	 * caches stat results — including "this file does not exist" — for the life
+	 * of the request. The whole point of the flag is to be noticed by a step
+	 * that started *before* it was written, by a different process, so without
+	 * flushing the entry every caller inside that request would keep reading the
+	 * cached "no" and the job would run to completion regardless.
+	 *
+	 * @return bool
+	 */
+	public function is_cancel_requested() {
+		$path = $this->dir . '/.cancel';
+		clearstatcache( true, $path );
+		return is_file( $path );
+	}
+
+	/**
 	 * Mark the job as finished and persist that to disk *before* trimming its
 	 * scratch files, so a duplicate poll that arrives after this call — the
 	 * browser tab and the WP-Cron driver can race the same job, see
@@ -241,7 +274,10 @@ class ISX_Job {
 			return;
 		}
 		foreach ( $items as $item ) {
-			if ( $item === '.' || $item === '..' || $item === 'state.json' || $item === '.lock' ) {
+			// .cancel stays for the same reason state.json does: a driver that was
+			// already in flight when this ran still needs to see that the job was
+			// cancelled rather than treat the leftovers as work to resume.
+			if ( $item === '.' || $item === '..' || $item === 'state.json' || $item === '.lock' || $item === '.cancel' ) {
 				continue;
 			}
 			$path = $this->dir . '/' . $item;

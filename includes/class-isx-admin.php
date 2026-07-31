@@ -132,6 +132,26 @@ class ISX_Admin {
 		add_submenu_page( 'isx_export', __( 'Log', 'insightx-backup' ), __( 'Log', 'insightx-backup' ), 'export', 'isx_log', array( __CLASS__, 'page_log' ) );
 	}
 
+	/**
+	 * Cache-busting version for an admin asset, tracking the file's own mtime on
+	 * top of ISX_VERSION.
+	 *
+	 * ISX_VERSION alone only busts the browser cache when someone remembers to
+	 * bump it, and a JS change shipped without that bump is invisible: the PHP
+	 * views update (they're read from disk every request) while the browser keeps
+	 * running yesterday's script against today's markup. That's exactly how the
+	 * "ยกเลิก" button ended up rendered by a 0.1.7 view with no 0.1.7 click
+	 * handler behind it. These are admin-only assets, so the mtime differing
+	 * between servers costs nothing.
+	 *
+	 * @param string $rel Plugin-relative asset path, e.g. 'assets/js/isx-admin.js'.
+	 * @return string
+	 */
+	private static function asset_ver( $rel ) {
+		$mtime = @filemtime( ISX_PATH . $rel );
+		return $mtime ? ISX_VERSION . '.' . $mtime : ISX_VERSION;
+	}
+
 	public static function assets( $hook ) {
 		$is_isx_page = strpos( $hook, 'isx_export' ) !== false
 			|| strpos( $hook, 'isx_import' ) !== false
@@ -153,8 +173,8 @@ class ISX_Admin {
 		// Heartbeat run while an isx admin screen is open.
 		wp_deregister_script( 'heartbeat' );
 
-		wp_enqueue_style( 'isx-admin', ISX_URL . 'assets/css/isx-admin.css', array(), ISX_VERSION );
-		wp_enqueue_script( 'isx-admin', ISX_URL . 'assets/js/isx-admin.js', array( 'jquery' ), ISX_VERSION, true );
+		wp_enqueue_style( 'isx-admin', ISX_URL . 'assets/css/isx-admin.css', array(), self::asset_ver( 'assets/css/isx-admin.css' ) );
+		wp_enqueue_script( 'isx-admin', ISX_URL . 'assets/js/isx-admin.js', array( 'jquery' ), self::asset_ver( 'assets/js/isx-admin.js' ), true );
 		wp_localize_script(
 			'isx-admin',
 			'isx',
@@ -175,7 +195,7 @@ class ISX_Admin {
 			)
 		);
 
-		wp_enqueue_script( 'isx-storage', ISX_URL . 'assets/js/isx-storage.js', array( 'jquery', 'isx-admin' ), ISX_VERSION, true );
+		wp_enqueue_script( 'isx-storage', ISX_URL . 'assets/js/isx-storage.js', array( 'jquery', 'isx-admin' ), self::asset_ver( 'assets/js/isx-storage.js' ), true );
 		wp_localize_script(
 			'isx-storage',
 			'isx_storage',
@@ -187,7 +207,7 @@ class ISX_Admin {
 		);
 
 		if ( strpos( $hook, 'isx_reset_hub' ) !== false ) {
-			wp_enqueue_script( 'isx-reset', ISX_URL . 'assets/js/isx-reset.js', array( 'jquery', 'isx-admin' ), ISX_VERSION, true );
+			wp_enqueue_script( 'isx-reset', ISX_URL . 'assets/js/isx-reset.js', array( 'jquery', 'isx-admin' ), self::asset_ver( 'assets/js/isx-reset.js' ), true );
 		}
 	}
 
@@ -487,6 +507,15 @@ class ISX_Admin {
 	 * upload: walking away leaves parts in the bucket as an "ongoing multipart
 	 * upload" that no object browser can delete, and the loopback/cron chain
 	 * would keep re-firing the job in the meantime. Marking it done stops both.
+	 *
+	 * The flag goes down first, and the job is only *finished* while holding the
+	 * lock. Writing the finished state straight to disk from here used to look
+	 * like it worked and didn't: a step running concurrently holds the lock, and
+	 * writes its own in-memory state back over state.json when it returns, so the
+	 * job simply carried on — and finish()'s scratch-file sweep was meanwhile
+	 * deleting the archive out from under that still-running step. When the lock
+	 * is busy the flag alone is enough: run_step() honours it and finishes the
+	 * job itself, from inside the lock.
 	 */
 	public static function ajax_job_cancel() {
 		$job_id = isset( $_POST['job'] ) ? sanitize_text_field( wp_unslash( $_POST['job'] ) ) : '';
@@ -516,17 +545,32 @@ class ISX_Admin {
 			);
 		}
 
-		ISX_Logger::log_warn(
-			(string) $job->get( 'type', 'export' ),
-			$message,
-			array(
-				'job'   => $job->id(),
-				'phase' => (string) $job->get( 'step', '' ),
-			)
+		$job->request_cancel();
+
+		$finished = $job->with_lock(
+			function ( ISX_Job $locked_job ) {
+				if ( $locked_job->get( 'step' ) === 'done' ) {
+					return true;
+				}
+				self::finish_cancelled(
+					$locked_job,
+					(string) $locked_job->get( 'type', 'export' ),
+					(string) $locked_job->get( 'step', '' )
+				);
+				return true;
+			}
 		);
 
-		ISX_Export::abort_pending_upload( $job );
-		$job->finish( $message, true );
+		// Lock busy: a step is mid-run and owns the job's files. It checks the
+		// flag on the way out and finishes the job there, so the poll loop still
+		// lands on a done job — just a beat later.
+		if ( $finished === false ) {
+			ISX_Logger::log_debug(
+				(string) $job->get( 'type', 'export' ),
+				'ยกเลิก: งานกำลังรันอยู่ รอ step ปัจจุบันจบ',
+				array( 'job' => $job->id() )
+			);
+		}
 
 		wp_send_json_success(
 			array(
@@ -622,6 +666,44 @@ class ISX_Admin {
 	}
 
 	/**
+	 * End a job that the user asked to cancel, and describe it the way the poll
+	 * loop expects. Only ever called from inside with_lock(): releasing a pending
+	 * multipart upload and letting finish() sweep the scratch files is only safe
+	 * once no step can still be writing to them.
+	 *
+	 * @param ISX_Job $job  Job, already locked.
+	 * @param string  $type 'export' | 'import'.
+	 * @param string  $step Step the job was on when it was stopped.
+	 * @return array
+	 */
+	private static function finish_cancelled( ISX_Job $job, $type, $step ) {
+		$message = 'ยกเลิกโดยผู้ใช้';
+
+		if ( $type !== 'import' ) {
+			ISX_Export::abort_pending_upload( $job );
+		}
+		$job->finish( $message, true );
+
+		ISX_Logger::log_warn(
+			$type !== '' ? $type : 'export',
+			'หยุดงานตามคำสั่งยกเลิก',
+			array(
+				'job'  => $job->id(),
+				'step' => $step,
+			)
+		);
+
+		return array(
+			'progress'       => 100,
+			'done'           => true,
+			'error'          => true,
+			'message'        => $message,
+			'phase'          => $step,
+			'phase_progress' => 100,
+		);
+	}
+
+	/**
 	 * Execute exactly one pipeline step under an exclusive per-job lock, and
 	 * annotate the result with elapsed / estimated-remaining time. If another
 	 * driver (the other of "browser poll" / "cron tick") currently holds the
@@ -665,6 +747,16 @@ class ISX_Admin {
 				$type        = (string) $locked_job->get( 'type' );
 				$step_before = (string) $locked_job->get( 'step', 'init' );
 
+				// Someone hit "ยกเลิก" while this job was between steps (or while a
+				// previous step held the lock, in which case ajax_job_cancel() left
+				// the flag for whoever got here first). Finishing it here — inside
+				// the lock, before any new work starts — is the only place that can
+				// release a pending upload and sweep the scratch files without
+				// racing a step that still has them open.
+				if ( $locked_job->is_cancel_requested() ) {
+					return self::finish_cancelled( $locked_job, $type, $step_before );
+				}
+
 				$started = microtime( true );
 				$result = ( $type === 'import' ) ? ISX_Import::run( $locked_job ) : ISX_Export::run( $locked_job );
 				$took   = round( microtime( true ) - $started, 2 );
@@ -685,6 +777,15 @@ class ISX_Admin {
 						'msg'        => isset( $result['message'] ) ? $result['message'] : '',
 					)
 				);
+
+				// Cancelled while this step was running. The step bailed out of its
+				// own loop early (the loops poll the same flag), so whatever it
+				// wrote is a consistent half-done state — but it must not be
+				// persisted as "carry on from here", and this is still the only
+				// point where the job's files are safely ours to sweep.
+				if ( $locked_job->is_cancel_requested() ) {
+					return self::finish_cancelled( $locked_job, $type, $step_before );
+				}
 
 				// Annotate with which pipeline phase this tick's work belongs to
 				// (the step that was current *before* run() advanced it) and how
@@ -938,6 +1039,12 @@ class ISX_Admin {
 	 * @return void
 	 */
 	private static function spawn_loopback( ISX_Job $job ) {
+		// The whole point of the loopback chain is to keep the job moving without
+		// the browser. A cancelled job must not be kept moving.
+		if ( $job->is_cancel_requested() ) {
+			return;
+		}
+
 		$throttle = 'isx_lb_' . $job->id();
 		if ( get_transient( $throttle ) ) {
 			// Worth recording: "no loopback was sent" and "one was sent but never
