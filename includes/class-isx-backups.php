@@ -215,10 +215,14 @@ class ISX_Backups {
 	 * paying storage on every backup ever taken, with the "ข้อมูลสำรอง" screen
 	 * showing a tidy N and nothing anywhere hinting at the other pile.
 	 *
-	 * Only keys this plugin writes are considered: prefix + a name matching
-	 * ISX_Backups::store()'s pattern. A bucket is often shared with other tools
-	 * (or other sites pointed at the same prefix), and retention must never be
-	 * the thing that deletes a stranger's object.
+	 * Only this site's own backups are considered: prefix + a name matching
+	 * ISX_Backups::store()'s pattern + this site's host. All three matter. A
+	 * single prefix routinely holds backups from several sites — the default
+	 * "insightx-migrate/" is per-provider, not per-site, so pointing two sites
+	 * at the same credentials is the normal case, not an edge one. Matching
+	 * only "is a .wpress directly under the prefix" would let a small site's
+	 * nightly retention quietly delete a different site's backups, which is a
+	 * far worse outcome than keeping too many.
 	 *
 	 * @param string $slug   Provider slug.
 	 * @param int    $retain How many of the newest backups to keep.
@@ -229,6 +233,11 @@ class ISX_Backups {
 		if ( ! ISX_Destinations::is_configured( $slug ) ) {
 			return 0;
 		}
+
+		// Same leading component store() builds names from, so "this site's
+		// backups" is decided the same way going out as coming back.
+		$host = wp_parse_url( home_url(), PHP_URL_HOST );
+		$mine = ( $host ? $host : 'backup' ) . '-';
 
 		$prefix  = ISX_Destinations::prefix( $slug );
 		$client  = new ISX_S3_Client( ISX_Destinations::get( $slug ) );
@@ -245,6 +254,9 @@ class ISX_Backups {
 			}
 			if ( self::sanitize_name( $name ) === '' ) {
 				continue;
+			}
+			if ( strpos( $name, $mine ) !== 0 ) {
+				continue; // Another site's backup sharing this prefix.
 			}
 			$ours[] = array(
 				'key'    => $object['key'],
