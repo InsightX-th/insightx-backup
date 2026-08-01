@@ -4,7 +4,7 @@ Tags: backup, migration, export, import, s3
 Requires at least: 3.3
 Tested up to: 7.0.2
 Requires PHP: 5.3
-Stable tag: 0.1.13
+Stable tag: 0.1.14
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -45,6 +45,14 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 **ความต้องการของระบบ:** PHP 7.4+, ส่วนขยาย cURL/zlib/openssl
 
 == Changelog ==
+
+= 0.1.14 =
+* **นำเข้า (Import) ไม่ทับ license key ของปลั๊กอินอื่นอีกต่อไป** — เดิม import จะทับ `wp_options` ปลายทางทั้งตาราง ทำให้ license/การตั้งค่าของเว็บปลายทางหายหมด ตอนนี้ก่อน import จะเก็บค่าของเว็บปลายทาง (`siteurl`, `home`, การตั้งค่าปลั๊กอินนี้เอง, ฯลฯ) ไว้ก่อน แล้วเขียนคืนหลัง import เสร็จ — ปรับได้ผ่าน filter `isx_preserved_option_names` / `isx_preserved_option_prefixes`
+* **รวมค่า Freemius license (`fs_accounts`) แทนการทับ** — ปลั๊กอินพรีเมียมที่ใช้ Freemius (เช่น ACF PRO) ที่ activate ไว้บนเครื่องปลายทางจะไม่โดนปิดใช้งานหลัง import อีกต่อไป
+* **ไม่นำเข้า transient/session cache** — `_transient_*`, `_site_transient_*`, `_wc_session_*` ที่ผูกกับ domain เดิมจะถูกข้ามตอน import ป้องกัน cache สถานะ license เก่าทำให้ขึ้น invalid ทั้งที่ key อยู่ครบ
+* **กัน option ไม่ให้โดนเปลี่ยนชื่อผิดตอน table prefix ต่างกัน** — option อย่าง `wp_rocket_*`, `wp_mail_smtp*` ที่ขึ้นต้นด้วย `wp_` เฉยๆ (ไม่ใช่ table-prefixed จริง) จะไม่โดน rename จนปลั๊กอินหาไม่เจอ
+* **เพิ่ม error handling ตอนเขียนแถวฐานข้อมูล** — ถ้า INSERT หลายแถวพร้อมกันล้มเหลว จะเขียนใหม่ทีละแถวแทน และ log ว่าแถวไหนล้ม (เดิมล้มเงียบทั้งก้อนโดย import ยังรายงานว่าสำเร็จ)
+* หน้าความคืบหน้าของ export/import แสดงทศนิยม 2 ตำแหน่งแทนปัดเป็นจำนวนเต็ม กันแถบดูเหมือนค้างตอนอยู่ช่วงที่ % เต็มเดิมนานๆ
 
 = 0.1.13 =
 * หน้า "ตรวจสอบไฟล์" (เมนูข้อมูลสำรอง) มีแถบความคืบหน้าแล้ว — เดิมมีแค่ตัวเลข % เป็นข้อความ ตอนนี้ขึ้นเป็นแถบเดียวกับหน้าส่งออก/นำเข้า มีเอฟเฟกต์วิ่งระหว่างตรวจให้เห็นว่าระบบยังทำงานอยู่แม้ไฟล์จะใหญ่และใช้เวลานาน

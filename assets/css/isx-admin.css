@@ -212,6 +212,9 @@
   font-size: 0.75rem;
   color: var(--isx-accent);
   font-weight: 700;
+  /* Two decimals tick over several times a second (see setStepPct); without
+     fixed-width digits the whole figure shifts sideways on every frame. */
+  font-variant-numeric: tabular-nums;
 }
 
 .isx-step-bar {
@@ -227,9 +230,13 @@
   width: 0;
   background: var(--isx-accent);
   border-radius: 999px;
-  transition: width 0.4s ease;
   overflow: hidden;
 }
+
+/* isx-admin.js eases this width itself, one animation frame at a time, so a
+   CSS transition on top would only add lag chasing a value that already
+   moved. The bars isx-storage.js renders as fresh markup never animated via
+   this property anyway. */
 
 /* A soft light sweep drifting across the fill, so the bar visibly "works"
    even during long stretches where phase_progress barely moves. */

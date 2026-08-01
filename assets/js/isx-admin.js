@@ -622,11 +622,18 @@
 			'<div class="isx-step is-active">' +
 			'<div class="isx-step-head">' +
 			'<span class="isx-step-label"></span>' +
-			'<span class="isx-step-pct">0%</span>' +
+			'<span class="isx-step-pct">0.00%</span>' +
 			'</div>' +
 			'<div class="isx-step-bar"><div class="isx-step-bar-fill"></div></div>' +
 			'</div>' +
 			'</div>';
+		// Any easing loop still chasing the previous job's percentage would keep
+		// writing into the row this is about to replace — and, since it holds a
+		// stale pctShown, would fight the new job's first update.
+		if ($box.data('pctRaf')) {
+			window.cancelAnimationFrame($box.data('pctRaf'));
+			$box.data('pctRaf', null);
+		}
 		$box.find('.isx-steps').remove();
 		var $warning = $box.find('.isx-progress-warning');
 		if ($warning.length) {
@@ -644,6 +651,85 @@
 		return (phase === 'pack_meta' || phase === 'files') ? 'pack' : phase;
 	}
 
+	var prefersReducedMotion = window.matchMedia
+		? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+		: false;
+
+	/**
+	 * Ease the displayed percentage of a step row towards whatever target
+	 * updateSteps last set, one animation frame at a time.
+	 *
+	 * The server only reports a new figure once a step's time budget is spent
+	 * (~10s, see ISX_Export::STEP_TIME_BUDGET) — every poll in between echoes
+	 * the same number back. Printing that raw leaves the counter frozen for
+	 * ten seconds and then jumping several percent at once, which reads as a
+	 * stall. Approaching the target asymptotically instead keeps the digits
+	 * moving continuously without ever running past the real progress, and
+	 * without ever running backwards: a lower target (which shouldn't happen,
+	 * but a lock-skipped poll echoing a stale value could produce one) is
+	 * ignored rather than rewound.
+	 */
+	function stepPctFrame($box) {
+		var $step = $box.find('.isx-step');
+		if (!$step.length) {
+			$box.data('pctRaf', null);
+			return;
+		}
+
+		var target = parseFloat($step.data('pctTarget')) || 0;
+		var shown = parseFloat($step.data('pctShown')) || 0;
+		// 12% of the remaining gap per frame — fast enough that a jump lands
+		// well inside one poll interval, slow enough to read as motion.
+		var next = shown + (target - shown) * 0.12;
+
+		// Snap once the remainder is smaller than the last displayed digit,
+		// so the counter settles on exactly 100.00% instead of creeping at
+		// 99.99% forever.
+		if (Math.abs(target - next) < 0.005) {
+			next = target;
+		}
+
+		$step.data('pctShown', next);
+		$step.find('.isx-step-bar-fill').css('width', next + '%');
+		$step.find('.isx-step-pct').text(next.toFixed(2) + '%');
+
+		if (next === target) {
+			$box.data('pctRaf', null);
+			return;
+		}
+		$box.data('pctRaf', window.requestAnimationFrame(function () {
+			stepPctFrame($box);
+		}));
+	}
+
+	/**
+	 * Point the step row at a new percentage. Pass reset:true when the phase
+	 * changed, to start the new phase's bar from empty rather than easing
+	 * down from the previous one's leftover width.
+	 */
+	function setStepPct($box, pct, reset) {
+		var $step = $box.find('.isx-step');
+		if (reset) {
+			$step.data('pctShown', 0);
+			$step.data('pctTarget', 0);
+		} else if (pct < (parseFloat($step.data('pctTarget')) || 0)) {
+			return; // Stale echo — never rewind a bar the user already saw.
+		}
+		$step.data('pctTarget', pct);
+
+		if (prefersReducedMotion || !window.requestAnimationFrame) {
+			$step.data('pctShown', pct);
+			$step.find('.isx-step-bar-fill').css('width', pct + '%');
+			$step.find('.isx-step-pct').text(pct.toFixed(2) + '%');
+			return;
+		}
+		if (!$box.data('pctRaf')) {
+			$box.data('pctRaf', window.requestAnimationFrame(function () {
+				stepPctFrame($box);
+			}));
+		}
+	}
+
 	/**
 	 * Drive the single rendered step row (see renderSteps) from an isx_run
 	 * result: swap in the current phase's label and animate its bar to
@@ -657,23 +743,37 @@
 			return;
 		}
 		var key = stepKeyFromPhase(result.phase);
-		var pct = Math.max(0, Math.min(100, Math.round(result.phase_progress || 0)));
+		// Not rounded to a whole number: the server sends two decimals
+		// (ISX_Admin::run_step) precisely so this counter can keep moving
+		// inside a phase that sits on the same integer percent for minutes.
+		var pct = Math.max(0, Math.min(100, parseFloat(result.phase_progress) || 0));
 
 		var $step = $box.find('.isx-step');
-		if ($step.data('key') !== key) {
-			// New phase — reset the bar to 0% first so it visibly re-fills
-			// from empty instead of jumping from the old phase's leftover width.
-			$step.data('key', key);
+		// Two different notions of "new" here, and conflating them stalls the
+		// bar. The label only changes when the *display* key does, but the
+		// percentage restarts from 0 on every *server* phase — and 'pack_meta'
+		// and 'files' are two server phases sharing one row, so the row's bar
+		// legitimately drops back to 0 once without its label changing. Without
+		// this distinction setStepPct's anti-rewind guard reads that drop as a
+		// stale echo and pins the bar at 100% for the whole of 'files'.
+		var isNewLabel = $step.data('key') !== key;
+		var isNewPhase = $step.data('rawPhase') !== result.phase;
+		if (isNewPhase) {
+			// Reset the bar to 0% first so it visibly re-fills from empty
+			// instead of jumping from the previous phase's leftover width.
+			$step.data('rawPhase', result.phase);
 			$step.find('.isx-step-bar-fill').css('width', '0%');
-			$step.find('.isx-step-pct').text('0%');
-			$step.find('.isx-step-label').text(labels[key] || key);
+			$step.find('.isx-step-pct').text('0.00%');
 			// Force a reflow so the width:0 above is committed before the new
 			// width is set, otherwise the browser coalesces both into a single
 			// jump and the fill-from-empty animation never shows.
 			void $step.find('.isx-step-bar-fill')[0].offsetWidth;
 		}
-		$step.find('.isx-step-bar-fill').css('width', pct + '%');
-		$step.find('.isx-step-pct').text(pct + '%');
+		if (isNewLabel) {
+			$step.data('key', key);
+			$step.find('.isx-step-label').text(labels[key] || key);
+		}
+		setStepPct($box, pct, isNewPhase);
 	}
 
 	window.ISX = {

@@ -53,6 +53,83 @@ class ISX_Database {
 	private static $prefixed_columns = array( 'meta_key', 'option_name' );
 
 	/**
+	 * Option/meta names starting with one of these are dropped on import
+	 * instead of being written back. They are all caches keyed to the site
+	 * they were built on — a license-check result, an update check, a cart
+	 * session — and restoring them onto a different domain hands the plugin
+	 * that owns them a stale answer it has no reason to doubt, which is how a
+	 * license that came across perfectly still shows up as invalid. Dropping
+	 * them forces a fresh check on first use, which is what every one of these
+	 * caches is already built to survive. All-in-One WP Migration does the same
+	 * (see its should_ignore_query()), except it matches the whole INSERT
+	 * statement, so one transient in a multi-row statement takes the unrelated
+	 * rows next to it down too; this list is matched per row instead.
+	 *
+	 * Filterable via `isx_skip_key_prefixes`.
+	 *
+	 * @var array
+	 */
+	private static $skip_key_prefixes = array(
+		'_transient_',
+		'_site_transient_',
+		'_wc_session_',
+		'_wpallimport_session_',
+	);
+
+	/**
+	 * Option/meta names that must NOT be treated as table-prefixed, even though
+	 * they start with the source site's table prefix.
+	 *
+	 * retarget_prefix() exists for rows like wp_options."wp_user_roles" and
+	 * wp_usermeta."wp_capabilities", whose names genuinely embed the table
+	 * prefix and break if it isn't rewritten. But plenty of plugins picked an
+	 * option name that merely *starts with* "wp_" — WP Rocket and WP Mail SMTP
+	 * being the common ones — and rewriting those renames the option out from
+	 * under the plugin: it looks the old name up, finds nothing, and reports
+	 * its settings (license key included) as empty. Only bites when the source
+	 * and target prefixes differ. All-in-One WP Migration keeps the same kind
+	 * of list — see its set_reserved_column_prefixes() call.
+	 *
+	 * Matched as prefixes, so one entry covers a whole family of names.
+	 * Filterable via `isx_reserved_key_prefixes`.
+	 *
+	 * @var array
+	 */
+	private static $reserved_key_prefixes = array(
+		'wp_force_deactivated_plugins',
+		'wp_page_for_privacy_policy',
+		'wp_rocket_',
+		'wp_mail_smtp',
+		'wp_statistics',
+	);
+
+	/**
+	 * Filtered copies of the two lists above, resolved once per request —
+	 * import_line() runs for every line of the dump and the row loop inside it
+	 * for every row, so the filters must not be re-applied per row.
+	 *
+	 * @var array|null
+	 */
+	private static $skip_prefixes_cache = null;
+	private static $reserved_prefixes_cache = null;
+
+	/**
+	 * How many individual failed row inserts insert_rows() has logged this
+	 * request. A genuinely broken dump would otherwise write one log line per
+	 * row and bury everything else in the log.
+	 *
+	 * @var int
+	 */
+	private static $logged_row_errors = 0;
+
+	/**
+	 * Cap on the above.
+	 *
+	 * @var int
+	 */
+	const MAX_LOGGED_ROW_ERRORS = 20;
+
+	/**
 	 * Backslash-escape map used by build_insert()/unescape_value() — the
 	 * same set $wpdb->_real_escape() (mysqli_real_escape_string) produces,
 	 * so unescape_value() is its exact inverse.
@@ -365,9 +442,12 @@ class ISX_Database {
 				if ( ! is_array( $row ) ) {
 					continue;
 				}
+				if ( self::is_skipped_row( $row ) ) {
+					continue;
+				}
 				foreach ( self::$prefixed_columns as $col ) {
 					if ( isset( $row[ $col ] ) && is_string( $row[ $col ] ) ) {
-						$row[ $col ] = self::retarget_prefix( $row[ $col ], $old_prefix, $new_prefix );
+						$row[ $col ] = self::retarget_key_prefix( $row[ $col ], $old_prefix, $new_prefix );
 					}
 				}
 				$out_rows[] = ISX_Serialize::replace( $row, $search, $replace, $skip_emails );
@@ -412,9 +492,12 @@ class ISX_Database {
 			if ( ! is_array( $row ) ) {
 				return;
 			}
+			if ( self::is_skipped_row( $row ) ) {
+				return;
+			}
 			foreach ( self::$prefixed_columns as $col ) {
 				if ( isset( $row[ $col ] ) && is_string( $row[ $col ] ) ) {
-					$row[ $col ] = self::retarget_prefix( $row[ $col ], $old_prefix, $new_prefix );
+					$row[ $col ] = self::retarget_key_prefix( $row[ $col ], $old_prefix, $new_prefix );
 				}
 			}
 			$row = ISX_Serialize::replace( $row, $search, $replace, $skip_emails );
@@ -519,14 +602,57 @@ class ISX_Database {
 	 *
 	 * @param string $table
 	 * @param array  $row
-	 * @return void
+	 * @return bool Whether the row went in.
 	 */
 	private static function insert_row( $table, array $row ) {
 		global $wpdb;
 		$sql = rtrim( self::build_insert( $table, $row ), ';' );
-		if ( $sql !== '' ) {
-			$wpdb->query( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL
+		if ( $sql === '' ) {
+			return false;
 		}
+
+		$suppress = $wpdb->suppress_errors( true );
+		$result   = $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL
+		$error    = $wpdb->last_error;
+		$wpdb->suppress_errors( $suppress );
+
+		if ( $result !== false && $error === '' ) {
+			return true;
+		}
+
+		if ( self::$logged_row_errors < self::MAX_LOGGED_ROW_ERRORS ) {
+			self::$logged_row_errors++;
+			ISX_Logger::log_error(
+				'import',
+				'เขียนแถวลงฐานข้อมูลไม่สำเร็จ — ข้อมูลแถวนี้จะหายไปจากเว็บที่กู้คืน',
+				array(
+					'table' => $table,
+					'key'   => self::row_label( $row ),
+					'error' => $error,
+				)
+			);
+		}
+
+		return false;
+	}
+
+	/**
+	 * A short, log-safe identifier for a row that failed to insert — the
+	 * option/meta name where there is one, otherwise the first column's value,
+	 * truncated. Never the whole row: values run to megabytes and can hold
+	 * credentials.
+	 *
+	 * @param array $row
+	 * @return string
+	 */
+	private static function row_label( array $row ) {
+		foreach ( array( 'option_name', 'meta_key', 'ID', 'id' ) as $col ) {
+			if ( isset( $row[ $col ] ) && is_scalar( $row[ $col ] ) ) {
+				return substr( (string) $row[ $col ], 0, 100 );
+			}
+		}
+		$first = reset( $row );
+		return is_scalar( $first ) ? substr( (string) $first, 0, 100 ) : '';
 	}
 
 	/**
@@ -606,7 +732,41 @@ class ISX_Database {
 			$tuples[] = self::value_tuple( $row );
 		}
 		$sql = 'INSERT INTO `' . self::ident( $table ) . '` (' . $columns_sql . ') VALUES ' . implode( ',', $tuples );
-		$wpdb->query( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+		// One multi-row statement is all-or-nothing: a single row MySQL refuses
+		// (over max_allowed_packet, a value too wide for its column, a charset
+		// it can't store) takes every other row in the same statement with it —
+		// up to MAX_STATEMENT_BYTES worth, which for wp_options is easily a few
+		// hundred options at once. That used to pass silently, because nothing
+		// looked at the result, and the import went on to report success over a
+		// site missing whatever went down with it. So: check, then replay the
+		// batch one row at a time, so the damage is only the row actually at
+		// fault and the log says which one.
+		$suppress = $wpdb->suppress_errors( true );
+		$result   = $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL
+		$error    = $wpdb->last_error;
+		$wpdb->suppress_errors( $suppress );
+
+		if ( $result !== false && $error === '' ) {
+			return;
+		}
+
+		$failed = 0;
+		foreach ( $rows as $row ) {
+			if ( ! self::insert_row( $table, $row ) ) {
+				$failed++;
+			}
+		}
+
+		ISX_Logger::log_warn(
+			'import',
+			sprintf( 'เขียนข้อมูลเป็นชุดไม่สำเร็จ จึงเขียนใหม่ทีละแถว (%d/%d แถวยังไม่ผ่าน)', $failed, count( $rows ) ),
+			array(
+				'table' => $table,
+				'rows'  => count( $rows ),
+				'error' => $error,
+			)
+		);
 	}
 
 	/**
@@ -710,6 +870,67 @@ class ISX_Database {
 			return $new_prefix . substr( $table, strlen( $old_prefix ) );
 		}
 		return $table;
+	}
+
+	/**
+	 * retarget_prefix() for a KEY stored in a row (option_name / meta_key)
+	 * rather than a table name — same rewrite, but names on the reserved list
+	 * are left exactly as they are. See $reserved_key_prefixes for why.
+	 *
+	 * @param string $key
+	 * @param string $old_prefix
+	 * @param string $new_prefix
+	 * @return string
+	 */
+	private static function retarget_key_prefix( $key, $old_prefix, $new_prefix ) {
+		if ( $old_prefix === '' || $old_prefix === $new_prefix || strpos( $key, $old_prefix ) !== 0 ) {
+			return $key;
+		}
+
+		if ( self::$reserved_prefixes_cache === null ) {
+			self::$reserved_prefixes_cache = (array) apply_filters( 'isx_reserved_key_prefixes', self::$reserved_key_prefixes );
+		}
+		foreach ( self::$reserved_prefixes_cache as $reserved ) {
+			if ( $reserved !== '' && strpos( $key, $reserved ) === 0 ) {
+				return $key;
+			}
+		}
+
+		return $new_prefix . substr( $key, strlen( $old_prefix ) );
+	}
+
+	/**
+	 * Whether this row is one of the site-bound caches that must not be
+	 * restored — see $skip_key_prefixes.
+	 *
+	 * Checked against option_name (wp_options) and, on a multisite package,
+	 * meta_key (wp_sitemeta holds the network-wide "_site_transient_" twins).
+	 * Deliberately not checked against post/user/term meta: those namespaces
+	 * are the plugin author's own and a key that happens to start with
+	 * "_transient_" there is real data, not a cache.
+	 *
+	 * @param array $row Column => value.
+	 * @return bool
+	 */
+	private static function is_skipped_row( array $row ) {
+		if ( ! isset( $row['option_name'] ) && ! ( isset( $row['meta_key'] ) && isset( $row['site_id'] ) ) ) {
+			return false;
+		}
+		$key = isset( $row['option_name'] ) ? $row['option_name'] : $row['meta_key'];
+		if ( ! is_string( $key ) || $key === '' || $key[0] !== '_' ) {
+			return false;
+		}
+
+		if ( self::$skip_prefixes_cache === null ) {
+			self::$skip_prefixes_cache = (array) apply_filters( 'isx_skip_key_prefixes', self::$skip_key_prefixes );
+		}
+		foreach ( self::$skip_prefixes_cache as $prefix ) {
+			if ( $prefix !== '' && strpos( $key, $prefix ) === 0 ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

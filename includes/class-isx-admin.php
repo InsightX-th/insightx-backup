@@ -835,7 +835,12 @@ class ISX_Admin {
 				$progress_val    = isset( $result['progress'] ) ? (float) $result['progress'] : $range[1];
 				$span            = max( 1, $range[1] - $range[0] );
 				$result['phase'] = $step_before;
-				$result['phase_progress'] = (int) round( max( 0, min( 100, ( $progress_val - $range[0] ) / $span * 100 ) ) );
+				// Two decimals, not a whole number: a phase like 'files' can spend
+				// minutes inside a single integer percent on a big site, and a bar
+				// reading a flat "18%" the whole time looks wedged. The extra digits
+				// are real movement, not decoration — the underlying figure is a
+				// float ratio, it was only ever the display that rounded it away.
+				$result['phase_progress'] = round( max( 0, min( 100, ( $progress_val - $range[0] ) / $span * 100 ) ), 2 );
 
 				if ( ! empty( $result['error'] ) ) {
 					ISX_Logger::log_error(
@@ -900,7 +905,7 @@ class ISX_Admin {
 				'done'           => false,
 				'message'        => (string) $job->get( 'last_message', 'กำลังดำเนินการ...' ),
 				'phase'          => (string) $job->get( 'last_phase', 'init' ),
-				'phase_progress' => (int) $job->get( 'last_phase_progress', 0 ),
+				'phase_progress' => (float) $job->get( 'last_phase_progress', 0 ),
 			);
 		}
 

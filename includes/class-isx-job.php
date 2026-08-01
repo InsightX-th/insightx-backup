@@ -211,6 +211,18 @@ class ISX_Job {
 		return $this->dir . '/clean.list';
 	}
 
+	/**
+	 * Snapshot of the options this site keeps across an import, taken before
+	 * the database is replaced and written back in ISX_Import::finalize().
+	 *
+	 * Its own file rather than a key in state.json: state.json is rewritten
+	 * (and re-read by four different drivers) on every single step, and these
+	 * values are both large and written exactly once.
+	 */
+	public function preserved_options() {
+		return $this->dir . '/preserved.json';
+	}
+
 	public function get( $key, $default = null ) {
 		return isset( $this->state[ $key ] ) ? $this->state[ $key ] : $default;
 	}

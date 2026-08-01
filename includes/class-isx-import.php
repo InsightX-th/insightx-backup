@@ -124,6 +124,11 @@ class ISX_Import {
 			)
 		);
 
+		// Take the options snapshot now, while wp_options still belongs to THIS
+		// site — finalize() writes it back, long after the database step has
+		// replaced the whole table with the package's. See snapshot_options().
+		self::snapshot_options( $job );
+
 		// Verify before clean(), never the other way round. clean() deletes the
 		// existing wp-content tree, and it cannot be undone — so every check
 		// that can reject a package has to happen while the old site is still
@@ -487,6 +492,10 @@ class ISX_Import {
 			ISX_Logger::log_debug( 'import', 'ลบไฟล์เก่าที่เหลือค้าง', array( 'job' => $job->id(), 'deleted' => $swept ) );
 		}
 
+		// Put this site's own options back over the package's, now that the
+		// whole dump has been applied — see snapshot_options().
+		self::restore_preserved_options( $job );
+
 		// Flush rewrite rules on next load; clear caches.
 		delete_option( 'rewrite_rules' );
 		wp_cache_flush();
@@ -546,6 +555,210 @@ class ISX_Import {
 			} else {
 				@unlink( $item->getPathname() ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
 			}
+		}
+	}
+
+	/**
+	 * Option names this site keeps across an import. Exact matches.
+	 *
+	 * An import replaces wp_options wholesale — DROP TABLE, then the package's
+	 * rows — so without this every one of these takes the source site's value,
+	 * which for anything describing *where this install lives* is simply the
+	 * wrong answer. siteurl/home normally survive on their own via the
+	 * search & replace; keeping them here means a replace that missed (an
+	 * unusual URL form, a protocol change) can't strand the site on a domain
+	 * that isn't its own.
+	 *
+	 * @return array
+	 */
+	private static function preserved_option_names() {
+		return (array) apply_filters(
+			'isx_preserved_option_names',
+			array( 'siteurl', 'home', 'upload_path', 'upload_url_path' )
+		);
+	}
+
+	/**
+	 * Option-name prefixes this site keeps across an import.
+	 *
+	 * `isx_` is this plugin's own settings — storage destinations and their
+	 * credentials, the schedule, the storage path. They describe the machine
+	 * doing the importing, not the site being imported, and letting the
+	 * package overwrite them mid-import points the plugin at the source site's
+	 * storage account. All-in-One WP Migration Pro protects its own settings
+	 * exactly this way (`ai1wmke_%`, snapshotted before the DB restore and
+	 * upserted back after), which is `ai1wmke_` here: a site that has that
+	 * plugin licensed keeps its license after an insightx import too.
+	 *
+	 * Deliberately short. Preserving an option means the source site's copy of
+	 * it does NOT arrive, so anything that is real content — a plugin's
+	 * settings, a license the user wants carried over — must stay off this
+	 * list. Sites with other environment-bound options can extend it via the
+	 * filter.
+	 *
+	 * @return array
+	 */
+	private static function preserved_option_prefixes() {
+		return (array) apply_filters( 'isx_preserved_option_prefixes', array( 'isx_', 'ai1wmke_' ) );
+	}
+
+	/**
+	 * Copy this site's preserved options to disk before the database is
+	 * replaced. Called from init(), while wp_options is still this site's.
+	 *
+	 * Values are read and written back as the raw stored strings (never
+	 * through get_option()/update_option(), which would unserialize and
+	 * re-serialize them), and base64-encoded in the snapshot file so a value
+	 * that isn't valid UTF-8 can't make the whole JSON encode fail.
+	 *
+	 * @param ISX_Job $job
+	 * @return void
+	 */
+	private static function snapshot_options( ISX_Job $job ) {
+		global $wpdb;
+
+		$path = $job->preserved_options();
+		if ( is_file( $path ) ) {
+			return; // init() can be re-entered (password prompt, decompression).
+		}
+
+		$where = array();
+		foreach ( self::preserved_option_names() as $name ) {
+			$where[] = $wpdb->prepare( '`option_name` = %s', $name );
+		}
+		foreach ( self::preserved_option_prefixes() as $prefix ) {
+			$where[] = $wpdb->prepare( '`option_name` LIKE %s', $wpdb->esc_like( $prefix ) . '%' );
+		}
+		// Merged rather than restored wholesale — see merge_fs_accounts().
+		$where[] = $wpdb->prepare( '`option_name` = %s', 'fs_accounts' );
+
+		$rows = $wpdb->get_results(
+			'SELECT `option_name`, `option_value` FROM `' . $wpdb->options . '` WHERE ' . implode( ' OR ', $where ), // phpcs:ignore WordPress.DB.PreparedSQL
+			ARRAY_A
+		);
+		if ( ! is_array( $rows ) ) {
+			$rows = array();
+		}
+
+		$snapshot = array();
+		foreach ( $rows as $row ) {
+			$snapshot[ $row['option_name'] ] = base64_encode( (string) $row['option_value'] ); // phpcs:ignore
+		}
+
+		@file_put_contents( $path, wp_json_encode( $snapshot ) ); // phpcs:ignore
+
+		ISX_Logger::log_debug(
+			'import',
+			sprintf( 'เก็บค่าตั้งค่าของเว็บนี้ไว้ก่อนนำเข้า (%d รายการ)', count( $snapshot ) ),
+			array( 'job' => $job->id() )
+		);
+	}
+
+	/**
+	 * Write the snapshot from snapshot_options() back over the package's
+	 * values. Called from finalize(), after the entire dump has been applied.
+	 *
+	 * @param ISX_Job $job
+	 * @return void
+	 */
+	private static function restore_preserved_options( ISX_Job $job ) {
+		$path = $job->preserved_options();
+		if ( ! is_file( $path ) ) {
+			return;
+		}
+
+		$snapshot = json_decode( (string) @file_get_contents( $path ), true ); // phpcs:ignore
+		@unlink( $path ); // phpcs:ignore
+		if ( ! is_array( $snapshot ) ) {
+			return;
+		}
+
+		$restored = 0;
+		foreach ( $snapshot as $name => $encoded ) {
+			$value = base64_decode( (string) $encoded ); // phpcs:ignore
+			if ( $value === false ) {
+				continue;
+			}
+			if ( $name === 'fs_accounts' ) {
+				self::merge_fs_accounts( $value );
+				continue;
+			}
+			self::write_option( $name, $value );
+			$restored++;
+		}
+
+		ISX_Logger::log_info(
+			'import',
+			sprintf( 'คืนค่าตั้งค่าของเว็บนี้หลังนำเข้า (%d รายการ)', $restored ),
+			array( 'job' => $job->id() )
+		);
+	}
+
+	/**
+	 * Merge this site's pre-import Freemius account store under the one the
+	 * package brought, instead of letting the package's replace it.
+	 *
+	 * fs_accounts is where every Freemius-licensed plugin keeps its activation
+	 * — one entry per plugin slug — so a straight overwrite deactivates every
+	 * premium plugin that was licensed on the target but not on the source.
+	 * array_replace_recursive() merges per slug: shared slugs take the
+	 * package's entry (the site being imported is the one whose license should
+	 * win), slugs only the target had survive. All-in-One WP Migration does the
+	 * same thing for the same reason (Ai1wm_Import_Options).
+	 *
+	 * @param string $before_raw The stored option_value from before the import.
+	 * @return void
+	 */
+	private static function merge_fs_accounts( $before_raw ) {
+		global $wpdb;
+
+		$before = maybe_unserialize( $before_raw );
+		if ( ! is_array( $before ) || empty( $before ) ) {
+			return;
+		}
+
+		$after_raw = $wpdb->get_var( $wpdb->prepare( "SELECT `option_value` FROM `{$wpdb->options}` WHERE `option_name` = %s", 'fs_accounts' ) );
+		$after     = $after_raw === null ? array() : maybe_unserialize( $after_raw );
+		if ( ! is_array( $after ) ) {
+			$after = array();
+		}
+
+		$merged = array_replace_recursive( $before, $after );
+
+		// Same sanity check All-in-One WP Migration makes: without both of
+		// these the store isn't something the Freemius SDK can read, and
+		// writing it back would break plugins that were working a moment ago.
+		if ( ! isset( $merged['users'], $merged['sites'] ) ) {
+			ISX_Logger::log_warn( 'import', 'ข้อมูล license ของ Freemius (fs_accounts) ผิดรูปแบบ จึงข้ามการรวมค่า', array() );
+			return;
+		}
+
+		self::write_option( 'fs_accounts', maybe_serialize( $merged ) );
+	}
+
+	/**
+	 * Upsert one option by its raw stored value.
+	 *
+	 * Goes straight at the table rather than through update_option(), for two
+	 * reasons: the values here are already-serialized strings that
+	 * update_option() would serialize a second time, and the object cache
+	 * still holds whatever was read before the import, so update_option()
+	 * would compare against a stale value and skip writes it should make.
+	 * autoload is left off the INSERT so the column default applies — WordPress
+	 * has changed the accepted values for it more than once.
+	 *
+	 * @param string $name
+	 * @param string $value
+	 * @return void
+	 */
+	private static function write_option( $name, $value ) {
+		global $wpdb;
+
+		$exists = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$wpdb->options}` WHERE `option_name` = %s", $name ) );
+		if ( $exists > 0 ) {
+			$wpdb->update( $wpdb->options, array( 'option_value' => $value ), array( 'option_name' => $name ) );
+		} else {
+			$wpdb->insert( $wpdb->options, array( 'option_name' => $name, 'option_value' => $value ) );
 		}
 	}
 
