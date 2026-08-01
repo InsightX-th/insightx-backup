@@ -627,13 +627,11 @@
 			'<div class="isx-step-bar"><div class="isx-step-bar-fill"></div></div>' +
 			'</div>' +
 			'</div>';
-		// Any easing loop still chasing the previous job's percentage would keep
-		// writing into the row this is about to replace — and, since it holds a
-		// stale pctShown, would fight the new job's first update.
-		if ($box.data('pctRaf')) {
-			window.cancelAnimationFrame($box.data('pctRaf'));
-			$box.data('pctRaf', null);
-		}
+		// Any tween still running for the previous job would keep writing into
+		// the row this is about to replace — and, holding a stale shown value
+		// and a stale update-gap measurement, would fight the new job's first
+		// update.
+		resetTweens($box);
 		$box.find('.isx-steps').remove();
 		var $warning = $box.find('.isx-progress-warning');
 		if ($warning.length) {
@@ -655,79 +653,256 @@
 		? window.matchMedia('(prefers-reduced-motion: reduce)').matches
 		: false;
 
-	/**
-	 * Ease the displayed percentage of a step row towards whatever target
-	 * updateSteps last set, one animation frame at a time.
+	/* ---------------- Progress tweening ---------------- */
+
+	/*
+	 * Why any of this exists.
 	 *
-	 * The server only reports a new figure once a step's time budget is spent
-	 * (~10s, see ISX_Export::STEP_TIME_BUDGET) — every poll in between echoes
-	 * the same number back. Printing that raw leaves the counter frozen for
-	 * ten seconds and then jumping several percent at once, which reads as a
-	 * stall. Approaching the target asymptotically instead keeps the digits
-	 * moving continuously without ever running past the real progress, and
-	 * without ever running backwards: a lower target (which shouldn't happen,
-	 * but a lock-skipped poll echoing a stale value could produce one) is
-	 * ignored rather than rewound.
+	 * A step runs server-side for a whole time budget before it answers
+	 * (~10s, ISX_Export::STEP_TIME_BUDGET), so the real figures — the phase
+	 * percentage and the "429900/688696 รายการ" counter in the status line —
+	 * only change about once every ten seconds. Every poll in between echoes
+	 * the previous numbers back verbatim.
+	 *
+	 * Printing that raw is what the eye reads as a stall: ten seconds frozen,
+	 * then a leap of several percent and a couple hundred thousand items at
+	 * once. The fix is to spread each leap across the gap it arrived over, so
+	 * the digits move on every single frame and land on the true figure just
+	 * as the next one turns up.
+	 *
+	 * That means the animation is paced by MEASURED arrival times, not by a
+	 * fixed rate. An earlier version eased at a constant 12% of the remaining
+	 * gap per frame, which covered the distance in about half a second and
+	 * then sat still for the other nine and a half — the same stutter, just
+	 * with a flourish at the start of it. Timing each run to the last observed
+	 * gap is the whole difference between "jumps" and "counts up".
+	 *
+	 * Interpolation is linear on purpose. An ease-out sprints then crawls,
+	 * and a counter crawling at the end is indistinguishable from one that has
+	 * stopped — precisely the impression this is here to avoid. Constant speed
+	 * is what reads as "working".
 	 */
-	function stepPctFrame($box) {
-		var $step = $box.find('.isx-step');
-		if (!$step.length) {
-			$box.data('pctRaf', null);
+
+	// Bounds on how long one tween may take. The lower bound keeps a fast
+	// sequence of updates from turning into a blur; the upper stops a long
+	// stall (a slow disk, a paused job) from committing us to a minute-long
+	// crawl toward a figure that may never be confirmed.
+	var TWEEN_MIN_MS = 400;
+	var TWEEN_MAX_MS = 15000;
+	// Used for the very first update, before there are two arrivals to measure
+	// a gap between.
+	var TWEEN_DEFAULT_MS = 800;
+	// Aim to land slightly AFTER the next update is due rather than slightly
+	// before. Arriving early leaves dead air, which is the problem; arriving
+	// late is invisible, because the next update re-aims from wherever the
+	// value currently sits — the shortfall is corrected, never accumulated.
+	var TWEEN_OVERSHOOT = 1.15;
+
+	var prefersReducedMotion = window.matchMedia
+		? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+		: false;
+
+	var animationsDisabled = prefersReducedMotion || !window.requestAnimationFrame;
+
+	/**
+	 * The tween bag for a progress container, created on first use. Each entry
+	 * is one animated number, keyed by name ('pct', 'count', ...).
+	 */
+	function tweensOf($host) {
+		var tweens = $host.data('isxTweens');
+		if (!tweens) {
+			tweens = {};
+			$host.data('isxTweens', tweens);
+		}
+		return tweens;
+	}
+
+	/**
+	 * How long the next tween on this container should run for: the gap
+	 * between the last two distinct server updates, clamped. noteUpdate()
+	 * maintains the measurement.
+	 */
+	function tweenDuration($host) {
+		var gap = parseFloat($host.data('isxUpdateGap'));
+		if (!gap) {
+			gap = TWEEN_DEFAULT_MS;
+		}
+		return Math.max(TWEEN_MIN_MS, Math.min(TWEEN_MAX_MS, gap * TWEEN_OVERSHOOT));
+	}
+
+	/**
+	 * Record that a genuinely new set of figures just arrived, and measure how
+	 * long it took to get here.
+	 *
+	 * Only distinct updates count. The poll backs off and re-sends while the
+	 * server repeats itself (see poll()), and letting those echoes reset the
+	 * clock would drag the measured gap down towards the poll interval — which
+	 * would pace the tweens to finish in a fraction of a second again.
+	 *
+	 * @return {boolean} Whether this update was distinct from the last.
+	 */
+	function noteUpdate($host, signature) {
+		if ($host.data('isxLastSig') === signature) {
+			return false;
+		}
+		var now = Date.now();
+		var last = parseFloat($host.data('isxLastUpdateAt'));
+		if (last) {
+			$host.data('isxUpdateGap', now - last);
+		}
+		$host.data('isxLastUpdateAt', now);
+		$host.data('isxLastSig', signature);
+		return true;
+	}
+
+	/**
+	 * Advance every tween on a container by one frame, write whatever changed,
+	 * and re-arm only while something is still moving.
+	 */
+	function tweenFrame($host) {
+		var tweens = $host.data('isxTweens');
+		if (!tweens) {
+			$host.data('pctRaf', null);
 			return;
 		}
 
-		var target = parseFloat($step.data('pctTarget')) || 0;
-		var shown = parseFloat($step.data('pctShown')) || 0;
-		// 12% of the remaining gap per frame — fast enough that a jump lands
-		// well inside one poll interval, slow enough to read as motion.
-		var next = shown + (target - shown) * 0.12;
+		var now = Date.now();
+		var moving = false;
 
-		// Snap once the remainder is smaller than the last displayed digit,
-		// so the counter settles on exactly 100.00% instead of creeping at
-		// 99.99% forever.
-		if (Math.abs(target - next) < 0.005) {
-			next = target;
+		for (var key in tweens) {
+			if (!Object.prototype.hasOwnProperty.call(tweens, key)) {
+				continue;
+			}
+			var t = tweens[key];
+			var progress = t.duration > 0 ? (now - t.startedAt) / t.duration : 1;
+			if (progress >= 1) {
+				progress = 1;
+			} else {
+				moving = true;
+			}
+			t.shown = t.from + (t.to - t.from) * progress;
+			writeTween($host, t);
 		}
 
-		$step.data('pctShown', next);
-		$step.find('.isx-step-bar-fill').css('width', next + '%');
-		$step.find('.isx-step-pct').text(next.toFixed(2) + '%');
-
-		if (next === target) {
-			$box.data('pctRaf', null);
+		if (!moving) {
+			$host.data('pctRaf', null);
 			return;
 		}
-		$box.data('pctRaf', window.requestAnimationFrame(function () {
-			stepPctFrame($box);
+		$host.data('pctRaf', window.requestAnimationFrame(function () {
+			tweenFrame($host);
 		}));
 	}
 
 	/**
+	 * Render one tween's current value, skipping the DOM entirely when the
+	 * text it would produce is what is already on screen. Most frames of a
+	 * slow-moving percentage produce no change at all, and a settled tween
+	 * produces none ever — this is what keeps a continuously running frame
+	 * loop cheap.
+	 */
+	function writeTween($host, t) {
+		var text = t.render(t.shown);
+		if (text === t.lastText) {
+			return;
+		}
+		t.lastText = text;
+		t.apply($host, t.shown, text);
+	}
+
+	/**
+	 * Point one tween at a new value.
+	 *
+	 * @param {jQuery}   $host   Container holding the tween state and the RAF handle.
+	 * @param {string}   key     Tween name.
+	 * @param {number}   to      Target value.
+	 * @param {object}   spec    { render(value) -> string, apply($host, value, text) }
+	 * @param {boolean}  snap    Skip the animation and jump straight there.
+	 */
+	function setTween($host, key, to, spec, snap) {
+		var tweens = tweensOf($host);
+		var t = tweens[key];
+
+		if (!t) {
+			t = tweens[key] = { shown: to, from: to, to: to, startedAt: 0, duration: 0, lastText: null };
+			snap = true;
+		}
+		t.render = spec.render;
+		t.apply = spec.apply;
+
+		if (snap || animationsDisabled) {
+			t.from = t.to = t.shown = to;
+			t.startedAt = 0;
+			t.duration = 0;
+			writeTween($host, t);
+			return;
+		}
+
+		if (to === t.to) {
+			return; // Same target — let the run already in flight finish it.
+		}
+
+		t.from = t.shown;
+		t.to = to;
+		t.startedAt = Date.now();
+		t.duration = tweenDuration($host);
+
+		if (!$host.data('pctRaf')) {
+			$host.data('pctRaf', window.requestAnimationFrame(function () {
+				tweenFrame($host);
+			}));
+		}
+	}
+
+	/**
+	 * Drop a container's tween state — used when the markup those tweens write
+	 * into is about to be replaced.
+	 */
+	function resetTweens($host) {
+		if ($host.data('pctRaf')) {
+			window.cancelAnimationFrame($host.data('pctRaf'));
+			$host.data('pctRaf', null);
+		}
+		$host.removeData('isxTweens');
+		$host.removeData('isxLastSig');
+		$host.removeData('isxLastUpdateAt');
+		$host.removeData('isxUpdateGap');
+		$host.removeData('isxStatusParts');
+	}
+
+	var pctTweenSpec = {
+		render: function (value) {
+			return value.toFixed(2) + '%';
+		},
+		apply: function ($host, value, text) {
+			$host.find('.isx-step-bar-fill').css('width', value + '%');
+			$host.find('.isx-step-pct').text(text);
+		}
+	};
+
+	/**
 	 * Point the step row at a new percentage. Pass reset:true when the phase
-	 * changed, to start the new phase's bar from empty rather than easing
+	 * changed, to start the new phase's bar from empty rather than sliding
 	 * down from the previous one's leftover width.
 	 */
 	function setStepPct($box, pct, reset) {
-		var $step = $box.find('.isx-step');
+		var tweens = tweensOf($box);
 		if (reset) {
-			$step.data('pctShown', 0);
-			$step.data('pctTarget', 0);
-		} else if (pct < (parseFloat($step.data('pctTarget')) || 0)) {
+			// Land on 0 instantly, then let the incoming figure animate up from
+			// there — the new phase's bar visibly fills from empty.
+			setTween($box, 'pct', 0, pctTweenSpec, true);
+		} else if (tweens.pct && pct < tweens.pct.to) {
 			return; // Stale echo — never rewind a bar the user already saw.
 		}
-		$step.data('pctTarget', pct);
+		setTween($box, 'pct', pct, pctTweenSpec, false);
+	}
 
-		if (prefersReducedMotion || !window.requestAnimationFrame) {
-			$step.data('pctShown', pct);
-			$step.find('.isx-step-bar-fill').css('width', pct + '%');
-			$step.find('.isx-step-pct').text(pct.toFixed(2) + '%');
-			return;
-		}
-		if (!$box.data('pctRaf')) {
-			$box.data('pctRaf', window.requestAnimationFrame(function () {
-				stepPctFrame($box);
-			}));
-		}
+	/**
+	 * Put the bar on a percentage immediately, no animation. For the end of a
+	 * run: easing up to a final 100% over a ten-second budget that has already
+	 * finished would just be the user waiting on a decoration.
+	 */
+	function snapStepPct($host, pct) {
+		setTween($host, 'pct', pct, pctTweenSpec, true);
 	}
 
 	/**
@@ -759,15 +934,13 @@
 		var isNewLabel = $step.data('key') !== key;
 		var isNewPhase = $step.data('rawPhase') !== result.phase;
 		if (isNewPhase) {
-			// Reset the bar to 0% first so it visibly re-fills from empty
-			// instead of jumping from the previous phase's leftover width.
+			// setStepPct's reset branch drops the bar to 0% so it visibly
+			// re-fills from empty rather than sliding on from the previous
+			// phase's leftover width. Nothing is written here directly: the
+			// tween owns this DOM and tracks what it last rendered, so a write
+			// behind its back would leave it thinking the screen already says
+			// something it doesn't.
 			$step.data('rawPhase', result.phase);
-			$step.find('.isx-step-bar-fill').css('width', '0%');
-			$step.find('.isx-step-pct').text('0.00%');
-			// Force a reflow so the width:0 above is committed before the new
-			// width is set, otherwise the browser coalesces both into a single
-			// jump and the fill-from-empty animation never shows.
-			void $step.find('.isx-step-bar-fill')[0].offsetWidth;
 		}
 		if (isNewLabel) {
 			$step.data('key', key);
@@ -788,6 +961,10 @@
 		updateProgress: updateProgress,
 		renderSteps: renderSteps,
 		updateSteps: updateSteps,
+		setStepPct: setStepPct,
+		snapStepPct: snapStepPct,
+		resetTweens: resetTweens,
+		noteUpdate: noteUpdate,
 		exportStepKeys: exportStepKeys,
 		importStepKeys: importStepKeys
 	};
@@ -809,13 +986,94 @@
 	}
 
 	/**
+	 * Split a status message around the counter inside it, so the number can
+	 * be animated while the words around it stay put. Returns null when there
+	 * is nothing countable to animate.
+	 *
+	 * Picking the right number takes a little care, because table names carry
+	 * digits of their own on multisite ("ส่งออกตาราง wp_2_posts (1200/50000 แถว)").
+	 * An "x/y" pair is unambiguous, so that wins; failing that the last run of
+	 * digits is the counter in every message the server produces
+	 * ("ตรวจสอบแพ็กเกจ — 12345 รายการ", "นำเข้าฐานข้อมูล (900 แถว)...").
+	 */
+	function splitCounter(message) {
+		var match = /(\d+)(\s*\/\s*\d+)/.exec(message);
+		if (!match) {
+			match = /(\d+)(?![\s\S]*\d)/.exec(message);
+		}
+		if (!match) {
+			return null;
+		}
+		return {
+			value: parseInt(match[1], 10),
+			pre: message.slice(0, match.index),
+			post: message.slice(match.index + match[1].length)
+		};
+	}
+
+	var statusTweenSpec = {
+		render: function (value) {
+			return String(Math.floor(value));
+		},
+		apply: function ($host, value, text) {
+			var parts = $host.data('isxStatusParts');
+			$host.find('.isx-status').text(parts.pre + text + parts.post);
+		}
+	};
+
+	/**
+	 * Write the status line, animating the counter in it when the rest of the
+	 * sentence is unchanged.
+	 *
+	 * The surrounding text is the guard against animating across things that
+	 * aren't the same quantity. The export message names the category it is
+	 * working through (ISX_Export::current_category_label) and the database
+	 * one names the table, and both carry the total after the slash — so the
+	 * moment the run moves from media to other files, or from one table to the
+	 * next, or the total changes, the text around the number differs and the
+	 * counter snaps instead of sweeping across two unrelated figures.
+	 */
+	function setStatusMessage($box, message) {
+		var parsed = splitCounter(message);
+		if (!parsed) {
+			// Nothing to animate — and the tween must go, or the next message
+			// that does have a counter would animate up from a stale value.
+			var tweens = $box.data('isxTweens');
+			if (tweens) {
+				delete tweens.count;
+			}
+			$box.removeData('isxStatusParts');
+			$box.find('.isx-status').text(message);
+			return;
+		}
+
+		var previous = $box.data('isxStatusParts');
+		var counted = $box.data('isxTweens');
+		counted = counted && counted.count;
+		// Sweep only when this is the same sentence counting further up:
+		// identical words on both sides of the number, and a number going up.
+		var snap = !counted ||
+			!previous ||
+			previous.pre !== parsed.pre ||
+			previous.post !== parsed.post ||
+			parsed.value < counted.to;
+
+		$box.data('isxStatusParts', { pre: parsed.pre, post: parsed.post });
+		setTween($box, 'count', parsed.value, statusTweenSpec, snap);
+	}
+
+	/**
 	 * Update a .isx-progress-box (percent, bar fill, elapsed, status message)
 	 * from an isx_run result. Shared by every export/import/restore progress
 	 * box across all four admin pages.
 	 */
 	function updateProgress($box, result) {
+		// Before anything is re-aimed: time this arrival, so the tweens below
+		// are paced to the interval these updates are actually landing at.
+		noteUpdate($box, result.phase + '|' + result.phase_progress + '|' + (result.message || ''));
+
 		updateSteps($box, result);
-		$box.find('.isx-status').text(result.message || '');
+		setStatusMessage($box, result.message || '');
 
 		if (typeof result.elapsed === 'number') {
 			$box.find('.isx-elapsed').text('ใช้เวลาไปแล้ว ' + formatDuration(result.elapsed));

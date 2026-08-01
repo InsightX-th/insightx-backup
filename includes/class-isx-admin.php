@@ -1582,7 +1582,10 @@ class ISX_Admin {
 					'ok'      => true,
 					'offset'  => (int) $result['offset'],
 					'entries' => $entries,
-					'percent' => $size > 0 ? (int) round( (int) $result['offset'] / $size * 100 ) : 0,
+					// Two decimals, matching run_step()'s phase_progress: verifying
+					// a multi-GB package sits inside one integer percent for a
+					// long time, and the client eases between these figures.
+					'percent' => $size > 0 ? round( (int) $result['offset'] / $size * 100, 2 ) : 0,
 				)
 			);
 		}

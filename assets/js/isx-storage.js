@@ -707,23 +707,36 @@
 			// Same .isx-step-bar markup the export/import progress boxes use, so
 			// this gets the shimmer-while-working animation for free instead of
 			// looking frozen during the long stretch verifying a multi-GB file.
-			function renderBar(pct, label) {
+			function renderBar(label) {
 				return (
 					'<div class="isx-steps"><div class="isx-step is-active">' +
 						'<div class="isx-step-head">' +
 							'<span class="isx-step-label">' + escapeHtmlLocal(label) + '</span>' +
-							'<span class="isx-step-pct">' + pct + '%</span>' +
+							'<span class="isx-step-pct">0.00%</span>' +
 						'</div>' +
-						'<div class="isx-step-bar"><div class="isx-step-bar-fill" style="width:' + pct + '%"></div></div>' +
+						'<div class="isx-step-bar"><div class="isx-step-bar-fill" style="width:0%"></div></div>' +
 					'</div></div>'
 				);
+			}
+
+			var $body = $('#isx-content-body');
+
+			// Each verify request runs a full server-side time budget (~10s) before
+			// answering, so the bar is driven by ISX's tweening exactly like the
+			// export/import ones: rebuilding this markup per response would both
+			// discard the easing state and restart the CSS shimmer mid-sweep, which
+			// is what made the bar look like it was jumping and stuttering.
+			function updateBar(pct) {
+				ISX.noteUpdate($body, 'verify|' + pct);
+				ISX.setStepPct($body, Math.max(0, Math.min(100, parseFloat(pct) || 0)), false);
 			}
 
 			function step(offset, entries) {
 				ISX.post('isx_backups_verify', { name: name, offset: offset, entries: entries })
 					.done(function (res) {
 						if (!res || !res.success) {
-							$('#isx-content-body').html(
+							ISX.resetTweens($body);
+							$body.html(
 								'<p class="isx-fetch-status is-error">' +
 									escapeHtmlLocal((res && res.data && res.data.message) || 'ตรวจสอบไม่สำเร็จ') +
 									'</p>'
@@ -732,23 +745,26 @@
 						}
 						var d = res.data;
 						if (!d.done) {
-							$('#isx-content-body').html(renderBar(d.percent || 0, 'กำลังตรวจสอบ...'));
+							updateBar(d.percent || 0);
 							step(d.offset, d.entries);
 							return;
 						}
-						$('#isx-content-body').html(
-							renderBar(100, d.ok ? 'ตรวจสอบผ่าน' : 'ตรวจสอบไม่ผ่าน') +
-								'<p class="isx-fetch-status' + (d.ok ? '' : ' is-error') + '">' +
-									escapeHtmlLocal((d.ok ? '✓ ' : '✕ ') + (d.message || '')) +
-								'</p>'
+						$body.find('.isx-step-label').text(d.ok ? 'ตรวจสอบผ่าน' : 'ตรวจสอบไม่ผ่าน');
+						ISX.snapStepPct($body, 100);
+						$body.append(
+							'<p class="isx-fetch-status' + (d.ok ? '' : ' is-error') + '">' +
+								escapeHtmlLocal((d.ok ? '✓ ' : '✕ ') + (d.message || '')) +
+							'</p>'
 						);
 					})
 					.fail(function () {
-						$('#isx-content-body').html('<p class="isx-fetch-status is-error">เชื่อมต่อเซิร์ฟเวอร์ไม่ได้</p>');
+						ISX.resetTweens($body);
+						$body.html('<p class="isx-fetch-status is-error">เชื่อมต่อเซิร์ฟเวอร์ไม่ได้</p>');
 					});
 			}
 
-			$('#isx-content-body').html(renderBar(0, 'กำลังตรวจสอบ...'));
+			ISX.resetTweens($body);
+			$body.html(renderBar('กำลังตรวจสอบ...'));
 			step(0, 0);
 		});
 
