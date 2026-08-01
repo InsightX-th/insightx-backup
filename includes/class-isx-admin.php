@@ -15,6 +15,38 @@ class ISX_Admin {
 	const NONCE = 'isx_admin';
 
 	/**
+	 * How many archive entries ajax_backups_list_content() walks per request.
+	 * The walk only reads each entry's header and seeks past its content, so
+	 * this is cheap — but a package with hundreds of thousands of entries still
+	 * needs splitting across requests to stay inside max_execution_time.
+	 *
+	 * @var int
+	 */
+	const CONTENT_ENTRIES_PER_BATCH = 20000;
+
+	/**
+	 * Cap on how many individual files one request may name.
+	 *
+	 * The listing summarises directories, so this only bites inside a single
+	 * folder holding more files than anyone can read — an uploads month with
+	 * 40,000 images, say. Past this the UI says how many were left out rather
+	 * than trying to render them.
+	 *
+	 * @var int
+	 */
+	const CONTENT_FILES_PER_BATCH = 500;
+
+	/**
+	 * How long a decompressed scratch copy of a gzipped package may sit in the
+	 * backups directory before it is swept (seconds). Browsing a gzipped
+	 * package needs a seekable copy, and re-inflating a multi-GB file for every
+	 * request in a scan would be far worse than keeping one around briefly.
+	 *
+	 * @var int
+	 */
+	const CONTENT_PEEK_TTL = 3600;
+
+	/**
 	 * Seconds of zero overall-progress movement after which run_step() declares
 	 * a job wedged and fails it (see the watchdog in run_step). The time-budgeted
 	 * work steps advance the bar roughly every STEP_TIME_BUDGET seconds, so this
@@ -1445,7 +1477,31 @@ class ISX_Admin {
 	}
 
 	/**
-	 * List the files packed inside a local backup, without extracting them.
+	 * List what a local backup holds, one directory level at a time, without
+	 * extracting anything.
+	 *
+	 * This used to answer with every entry in the package in one response: it
+	 * collected them all into an array, copied that array, then JSON-encoded
+	 * the copy. On a site whose media library runs to six figures that is
+	 * several hundred megabytes of PHP arrays for a request whose job is to
+	 * show a folder listing — it hit memory_limit and died, and because a
+	 * fatal answers with a 500 rather than a JSON error, the browser had
+	 * nothing to show but a bare "could not load" with no reason attached.
+	 * The browser end was no better off: it rebuilt the whole tree in JS and
+	 * rendered every folder expanded, so even a response that arrived intact
+	 * would have locked the tab up building a DOM with a node per file.
+	 *
+	 * So the contract is now "give me the children of one directory". The walk
+	 * reads each entry's header and seeks past its content — it never reads
+	 * file data — and folds anything below the requested directory into a
+	 * per-folder count and byte total. Memory is proportional to how many
+	 * children that one directory has, not to the size of the package, and the
+	 * UI expands a level at a time on demand.
+	 *
+	 * Answers in batches: a package with hundreds of thousands of entries takes
+	 * more than one request to walk, so each response carries a resume offset
+	 * and the caller keeps asking until `done`. The figures in each response
+	 * are that batch's contribution alone — the caller adds them up.
 	 */
 	public static function ajax_backups_list_content() {
 		self::guard( 'export' );
@@ -1460,60 +1516,195 @@ class ISX_Admin {
 			wp_send_json_error( array( 'message' => 'ไฟล์นี้เข้ารหัสด้วยรหัสผ่าน จึงแสดงรายการไม่ได้ — กู้คืนได้โดยตรง' ) );
 		}
 
-		$read_path = $path;
-		$tmp       = null;
-		if ( ISX_Compress::is_gzip_file( $path ) ) {
-			$tmp    = $path . '.peek';
-			$result = ISX_Compress::gunzip_file( $path, $tmp );
-			if ( is_wp_error( $result ) ) {
-				@unlink( $tmp );
-				wp_send_json_error( array( 'message' => $result->get_error_message() ) );
-			}
-			$read_path = $tmp;
+		// Directory being listed, '' for the root of the package. Normalised to
+		// a trailing slash so a simple prefix test can't match a sibling whose
+		// name merely starts the same way ("uploads" vs "uploads-old").
+		$prefix = isset( $_POST['prefix'] ) ? sanitize_text_field( wp_unslash( $_POST['prefix'] ) ) : '';
+		$prefix = ltrim( str_replace( '\\', '/', $prefix ), '/' );
+		if ( $prefix !== '' ) {
+			$prefix = rtrim( $prefix, '/' ) . '/';
 		}
 
-		$entries = array();
-		$ok      = ISX_Archive::each(
+		$offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
+		$offset = max( ISX_Archive::first_offset(), $offset );
+
+		$read_path = self::content_read_path( $path, $offset );
+		if ( is_wp_error( $read_path ) ) {
+			wp_send_json_error( array( 'message' => $read_path->get_error_message() ) );
+		}
+
+		$dirs       = array();
+		$files      = array();
+		$files_seen = 0;
+		$bytes_seen = 0;
+		$prefix_len = strlen( $prefix );
+
+		$result = ISX_Archive::read_batch(
 			$read_path,
-			function ( $header ) use ( &$entries ) {
-				$path_in_archive = isset( $header['p'] ) ? $header['p'] : '';
+			$offset,
+			self::CONTENT_ENTRIES_PER_BATCH,
+			function ( $header ) use ( &$dirs, &$files, &$files_seen, &$bytes_seen, $prefix, $prefix_len ) {
+				$entry_path = isset( $header['p'] ) ? (string) $header['p'] : '';
+				if ( $prefix_len > 0 && strpos( $entry_path, $prefix ) !== 0 ) {
+					return true; // Not under the directory being listed.
+				}
+
+				$rest = $prefix_len > 0 ? substr( $entry_path, $prefix_len ) : $entry_path;
+				if ( $rest === '' ) {
+					return true;
+				}
+
 				// "u" (original size) is only present on compressed entries —
-				// show the real content size, not the smaller on-disk one.
-				$size = isset( $header['u'] ) ? $header['u'] : ( isset( $header['s'] ) ? $header['s'] : 0 );
-				$entries[] = array(
-					'path' => $path_in_archive,
-					'size' => (int) $size,
-				);
+				// report the real content size, not the smaller on-disk one.
+				$size = isset( $header['u'] ) ? (int) $header['u'] : ( isset( $header['s'] ) ? (int) $header['s'] : 0 );
+
+				$slash = strpos( $rest, '/' );
+				if ( $slash === false ) {
+					// A file sitting directly in this directory.
+					$files_seen++;
+					$bytes_seen += $size;
+					if ( count( $files ) < self::CONTENT_FILES_PER_BATCH ) {
+						$files[] = array( 'name' => $rest, 'size' => $size );
+					}
+					return true;
+				}
+
+				// Anything deeper folds into the child directory it lives under,
+				// which is the whole reason this scales: one bucket per child,
+				// however many files are beneath it.
+				$dir = substr( $rest, 0, $slash );
+				if ( ! isset( $dirs[ $dir ] ) ) {
+					$dirs[ $dir ] = array( 'files' => 0, 'bytes' => 0 );
+				}
+				$dirs[ $dir ]['files']++;
+				$dirs[ $dir ]['bytes'] += $size;
+
+				return true;
 			}
 		);
 
-		if ( $tmp !== null ) {
-			@unlink( $tmp );
-		}
-
-		if ( ! $ok ) {
+		if ( empty( $result['ok'] ) ) {
 			wp_send_json_error( array( 'message' => 'ไฟล์แพ็กเกจไม่ถูกต้อง' ) );
 		}
 
 		usort(
-			$entries,
+			$files,
 			function ( $a, $b ) {
-				return strcmp( $a['path'], $b['path'] );
+				return strcmp( $a['name'], $b['name'] );
 			}
 		);
 
-		// Raw byte counts, not pre-formatted strings — the JS builds a
-		// folder/file tree from these entries and needs to sum bytes per
-		// folder (a "28.01 MB" string can't be added to "3.17 KB").
-		$out = array();
-		foreach ( $entries as $entry ) {
-			$out[] = array(
-				'path' => $entry['path'],
-				'size' => $entry['size'],
-			);
+		$size = (int) @filesize( $read_path );
+
+		self::warn_if_memory_tight( $name, $prefix );
+
+		wp_send_json_success(
+			array(
+				// Everything below is this batch's contribution only; the caller
+				// merges successive batches.
+				'dirs'       => $dirs,
+				'files'      => $files,
+				'files_seen' => $files_seen,
+				'bytes_seen' => $bytes_seen,
+				'offset'     => (int) $result['offset'],
+				'done'       => ! empty( $result['done'] ),
+				// Same shape ajax_backups_verify() reports, so the progress bar
+				// on the client is driven identically.
+				'percent'    => $size > 0 ? round( (int) $result['offset'] / $size * 100, 2 ) : 100,
+			)
+		);
+	}
+
+	/**
+	 * The seekable file to walk when listing a package's contents.
+	 *
+	 * A gzipped package can't be seeked through, so it has to be inflated to a
+	 * scratch copy first. Listing now takes several requests, and inflating a
+	 * multi-GB file on each of them would be far more expensive than the
+	 * problem being solved — so the scratch copy is kept and reused for as long
+	 * as it is newer than the package it came from, and swept once it goes
+	 * stale. Uncompressed packages are read where they lie.
+	 *
+	 * @param string $path   Backup file.
+	 * @param int    $offset Resume point; the sweep only runs at the start of a scan.
+	 * @return string|WP_Error Path to read.
+	 */
+	private static function content_read_path( $path, $offset ) {
+		if ( ! ISX_Compress::is_gzip_file( $path ) ) {
+			return $path;
 		}
 
-		wp_send_json_success( array( 'entries' => $out ) );
+		if ( $offset <= ISX_Archive::first_offset() ) {
+			self::sweep_content_peeks( $path );
+		}
+
+		$peek = $path . '.peek';
+		if ( is_file( $peek ) && @filemtime( $peek ) >= @filemtime( $path ) ) {
+			return $peek;
+		}
+
+		$result = ISX_Compress::gunzip_file( $path, $peek );
+		if ( is_wp_error( $result ) ) {
+			@unlink( $peek ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			return $result;
+		}
+
+		return $peek;
+	}
+
+	/**
+	 * Delete scratch copies left behind by earlier browsing sessions, except
+	 * the one belonging to the package being looked at right now.
+	 *
+	 * @param string $keep Backup file whose scratch copy must survive.
+	 * @return void
+	 */
+	private static function sweep_content_peeks( $keep ) {
+		$cutoff = time() - self::CONTENT_PEEK_TTL;
+		foreach ( (array) glob( ISX_Backups::dir() . '/*.peek' ) as $peek ) {
+			if ( $peek === $keep . '.peek' ) {
+				continue;
+			}
+			if ( @filemtime( $peek ) < $cutoff ) {
+				@unlink( $peek ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			}
+		}
+	}
+
+	/**
+	 * Leave a trace when a request finishes close to memory_limit.
+	 *
+	 * Running out of memory is a fatal: no exception to catch, no JSON to send,
+	 * just a 500 that the browser reports as a bare failure. That is exactly
+	 * how the old listing behaved, and it left nothing behind in any log to
+	 * explain it. A warning at the point of near-miss means the next one is
+	 * diagnosable from the plugin's own log instead of guesswork.
+	 *
+	 * @param string $name   Backup being listed.
+	 * @param string $prefix Directory being listed.
+	 * @return void
+	 */
+	private static function warn_if_memory_tight( $name, $prefix ) {
+		$limit = wp_convert_hr_to_bytes( (string) ini_get( 'memory_limit' ) );
+		if ( $limit <= 0 ) {
+			return; // Unlimited, or unreadable — nothing to compare against.
+		}
+
+		$peak = memory_get_peak_usage( true );
+		if ( $peak < $limit * 0.8 ) {
+			return;
+		}
+
+		ISX_Logger::log_warn(
+			'backup',
+			'แสดงรายการในแพ็กเกจใช้หน่วยความจำเกือบเต็มขีดจำกัด',
+			array(
+				'name'   => $name,
+				'prefix' => $prefix,
+				'peak'   => $peak,
+				'limit'  => $limit,
+			)
+		);
 	}
 
 	/**

@@ -607,6 +607,24 @@
 			return $('<div>').text(text == null ? '' : String(text)).html();
 		}
 
+		/**
+		 * escapeHtmlLocal() for a value going inside a double-quoted attribute.
+		 *
+		 * .text().html() escapes &, < and > but leaves quotes alone, which is
+		 * harmless in element content and is not harmless in an attribute: a
+		 * file name may legitimately contain a double quote, and that would end
+		 * the attribute early. Ampersands are already escaped by the time the
+		 * replace below runs, so the entity it inserts cannot be double-escaped.
+		 */
+		function escapeAttrLocal(text) {
+			return escapeHtmlLocal(text).replace(/"/g, '&quot;');
+		}
+
+		// Matches ISX_Admin::CONTENT_FILES_PER_BATCH. A single folder holding
+		// more files than this gets a "showing N of M" note instead — nobody
+		// reads a list that long, and rendering one is what used to lock the tab.
+		var CONTENT_FILES_SHOWN = 500;
+
 		// Server sends raw byte counts now (not pre-formatted "28.01 MB"
 		// strings) specifically so folder totals below can be summed.
 		function formatBytes(bytes) {
@@ -624,66 +642,127 @@
 			return value.toFixed(2) + ' ' + units[i];
 		}
 
-		// Flat "full/path/to/file.ext" + size entries from the server → a
-		// folder/file tree so the modal reads like a file explorer instead of
-		// a wall of repeated path prefixes. Each dir node accumulates the sum
-		// of every file size beneath it, so the tree can show a folder total
-		// instead of leaving folders blank.
-		function buildContentTree(entries) {
-			var root = { type: 'dir', size: 0, children: {} };
-			entries.forEach(function (entry) {
-				var parts = entry.path.split('/').filter(function (p) {
-					return p !== '';
-				});
-				var node = root;
-				root.size += entry.size;
-				parts.forEach(function (part, i) {
-					var isFile = i === parts.length - 1;
-					if (!node.children[part]) {
-						node.children[part] = isFile
-							? { type: 'file', size: entry.size }
-							: { type: 'dir', size: 0, children: {} };
-					}
-					node = node.children[part];
-					if (!isFile) {
-						node.size += entry.size;
-					}
-				});
-			});
-			return root;
-		}
-
-		function renderContentTree(node) {
-			var names = Object.keys(node.children).sort(function (a, b) {
-				var da = node.children[a].type === 'dir';
-				var db = node.children[b].type === 'dir';
-				if (da !== db) {
-					return da ? -1 : 1;
-				}
+		// One level of the package, as the server summarised it: folders with a
+		// file count and byte total, plus whatever files sit at this level.
+		// Folders start collapsed and fetch their own children the first time they
+		// are opened — a package can hold hundreds of thousands of files, and the
+		// old listing asked for all of them at once and rendered every folder
+		// expanded, which was too much for both ends at that size.
+		function renderContentLevel(level, prefix) {
+			var names = Object.keys(level.dirs).sort(function (a, b) {
 				return a.localeCompare(b);
 			});
 
 			var html = '';
 			names.forEach(function (name) {
-				var child = node.children[name];
-				if (child.type === 'dir') {
-					html +=
-						'<li class="isx-tree-dir"><details open><summary><span class="dashicons dashicons-category"></span>' +
-						escapeHtmlLocal(name) +
-						'<span class="isx-content-size">' + formatBytes(child.size) + '</span>' +
-						'</summary><ul class="isx-tree-list">' +
-						renderContentTree(child) +
-						'</ul></details></li>';
-				} else {
-					html +=
-						'<li class="isx-tree-file"><span class="dashicons dashicons-media-default"></span><span class="isx-content-path">' +
-						escapeHtmlLocal(name) +
-						'</span><span class="isx-content-size">' +
-						formatBytes(child.size) +
-						'</span></li>';
-				}
+				var dir = level.dirs[name];
+				html +=
+					'<li class="isx-tree-dir"><details data-prefix="' +
+					escapeAttrLocal(prefix + name + '/') +
+					'"><summary><span class="dashicons dashicons-category"></span>' +
+					escapeHtmlLocal(name) +
+					'<span class="isx-content-meta">' + dir.files.toLocaleString() + ' ไฟล์</span>' +
+					'<span class="isx-content-size">' + formatBytes(dir.bytes) + '</span>' +
+					'</summary><ul class="isx-tree-list"></ul></details></li>';
 			});
+
+			level.files.forEach(function (file) {
+				html +=
+					'<li class="isx-tree-file"><span class="dashicons dashicons-media-default"></span><span class="isx-content-path">' +
+					escapeHtmlLocal(file.name) +
+					'</span><span class="isx-content-size">' +
+					formatBytes(file.size) +
+					'</span></li>';
+			});
+
+			if (level.files.length < level.filesSeen) {
+				html +=
+					'<li class="isx-tree-more">' +
+					escapeHtmlLocal(
+						'แสดง ' + level.files.length.toLocaleString() +
+						' จาก ' + level.filesSeen.toLocaleString() + ' ไฟล์ในโฟลเดอร์นี้'
+					) +
+					'</li>';
+			}
+
+			if (html === '') {
+				html = '<li class="isx-tree-more">ไม่มีไฟล์ในโฟลเดอร์นี้</li>';
+			}
 			return html;
+		}
+
+		/**
+		 * Walk one directory of a package, batch by batch.
+		 *
+		 * Each response covers a slice of the archive and reports only that
+		 * slice's findings, so they are merged here until the server says it has
+		 * reached the end. onProgress runs per batch so a long scan can show
+		 * movement rather than an empty modal.
+		 */
+		function scanContentLevel(name, prefix, onProgress, onDone, onError) {
+			var level = { dirs: {}, files: [], filesSeen: 0, bytesSeen: 0 };
+
+			function batch(offset) {
+				ISX.post('isx_backups_list_content', { name: name, prefix: prefix, offset: offset })
+					.done(function (res) {
+						if (!res || !res.success) {
+							onError((res && res.data && res.data.message) || 'โหลดรายการไม่สำเร็จ');
+							return;
+						}
+						var d = res.data;
+
+						Object.keys(d.dirs || {}).forEach(function (dirName) {
+							var incoming = d.dirs[dirName];
+							if (!level.dirs[dirName]) {
+								level.dirs[dirName] = { files: 0, bytes: 0 };
+							}
+							level.dirs[dirName].files += Number(incoming.files) || 0;
+							level.dirs[dirName].bytes += Number(incoming.bytes) || 0;
+						});
+
+						(d.files || []).forEach(function (file) {
+							if (level.files.length < CONTENT_FILES_SHOWN) {
+								level.files.push(file);
+							}
+						});
+						level.filesSeen += Number(d.files_seen) || 0;
+						level.bytesSeen += Number(d.bytes_seen) || 0;
+
+						onProgress(d.percent || 0);
+
+						if (d.done) {
+							level.files.sort(function (a, b) {
+								return a.name.localeCompare(b.name);
+							});
+							onDone(level);
+							return;
+						}
+
+						// A batch that neither finished nor moved forward would
+						// have this ask for the same slice again, for as long as
+						// the modal stays open. Stop instead of hammering.
+						var next = Number(d.offset) || 0;
+						if (next <= offset) {
+							onError('อ่านรายการในแพ็กเกจไม่คืบหน้า — ไฟล์แพ็กเกจอาจเสียหาย');
+							return;
+						}
+						batch(next);
+					})
+					.fail(function (jqXHR) {
+						// Name the status. The old bare "could not load" is what made
+						// the memory-exhaustion failure this replaces so hard to place:
+						// a fatal answers with a 500 and no JSON, and the message gave
+						// no hint that the server had died rather than refused.
+						var status = jqXHR && jqXHR.status ? jqXHR.status : 0;
+						onError(
+							status
+								? 'โหลดรายการไม่สำเร็จ (HTTP ' + status + ') — เซิร์ฟเวอร์อาจหน่วยความจำหรือเวลาไม่พอ'
+								: 'โหลดรายการไม่สำเร็จ — เชื่อมต่อเซิร์ฟเวอร์ไม่ได้'
+						);
+					});
+			}
+
+			batch(0);
 		}
 
 		function openContentModal() {
@@ -772,31 +851,105 @@
 			event.preventDefault();
 			closeAllDots();
 			var name = $(this).closest('tr').data('name');
+			var $body = $('#isx-content-body');
 
 			openContentModal();
-			$('#isx-content-body').html('<p class="isx-fetch-status">กำลังโหลด...</p>');
 
-			ISX.post('isx_backups_list_content', { name: name })
-				.done(function (res) {
-					if (!res || !res.success) {
-						$('#isx-content-body').html('<p class="isx-fetch-status is-error">' + escapeHtmlLocal((res && res.data && res.data.message) || 'โหลดรายการไม่สำเร็จ') + '</p>');
+			// Scanning a large package takes several requests, so show the same
+			// progress bar the export/import screens use rather than a static
+			// "loading" that gives no sign of life for however long it runs.
+			ISX.resetTweens($body);
+			$body.html(
+				'<div class="isx-steps"><div class="isx-step is-active">' +
+					'<div class="isx-step-head">' +
+						'<span class="isx-step-label">กำลังอ่านรายการในแพ็กเกจ...</span>' +
+						'<span class="isx-step-pct">0.00%</span>' +
+					'</div>' +
+					'<div class="isx-step-bar"><div class="isx-step-bar-fill" style="width:0%"></div></div>' +
+				'</div></div>'
+			);
+
+			scanContentLevel(
+				name,
+				'',
+				function (percent) {
+					ISX.noteUpdate($body, 'content|' + percent);
+					ISX.setStepPct($body, Math.max(0, Math.min(100, parseFloat(percent) || 0)), false);
+				},
+				function (level) {
+					ISX.resetTweens($body);
+					if (Object.keys(level.dirs).length === 0 && level.files.length === 0) {
+						$body.html('<p class="isx-fetch-status">ไม่พบไฟล์ในแพ็กเกจนี้</p>');
 						return;
 					}
-					var entries = res.data.entries || [];
-					if (entries.length === 0) {
-						$('#isx-content-body').html('<p class="isx-fetch-status">ไม่พบไฟล์ในแพ็กเกจนี้</p>');
-						return;
-					}
-					var tree = buildContentTree(entries);
-					var html =
-						'<p class="isx-content-total">' + escapeHtmlLocal('รวมทั้งหมด: ' + formatBytes(tree.size)) + '</p>' +
-						'<ul class="isx-tree-list isx-tree-root">' + renderContentTree(tree) + '</ul>';
-					$('#isx-content-body').html(html);
-				})
-				.fail(function () {
-					$('#isx-content-body').html('<p class="isx-fetch-status is-error">โหลดรายการไม่สำเร็จ</p>');
-				});
+					$body
+						.data('backup', name)
+						.html(
+							'<p class="isx-content-total">' +
+								escapeHtmlLocal('รวมทั้งหมด: ' + formatBytes(level.bytesSeen + levelDirBytes(level))) +
+							'</p>' +
+							'<ul class="isx-tree-list isx-tree-root">' + renderContentLevel(level, '') + '</ul>'
+						);
+				},
+				function (message) {
+					ISX.resetTweens($body);
+					$body.html('<p class="isx-fetch-status is-error">' + escapeHtmlLocal(message) + '</p>');
+				}
+			);
 		});
+
+		function levelDirBytes(level) {
+			var total = 0;
+			Object.keys(level.dirs).forEach(function (name) {
+				total += level.dirs[name].bytes;
+			});
+			return total;
+		}
+
+		// Folders arrive collapsed and empty; the first time one is opened it
+		// fetches its own children. Everything below a folder was summarised into
+		// its count and size on the server, so nothing beneath it has been sent
+		// yet — which is what keeps a package with hundreds of thousands of files
+		// openable at all.
+		// Bound natively in the capture phase, not with jQuery delegation: the
+		// `toggle` event of <details> does not bubble, so a delegated handler on
+		// document would never see it. Capture runs on the way down to the
+		// target, which reaches non-bubbling events just fine.
+		document.addEventListener('toggle', function (event) {
+			var el = event.target;
+			if (!el || el.tagName !== 'DETAILS' || !el.hasAttribute('data-prefix')) {
+				return;
+			}
+			if (!$(el).closest('#isx-content-body').length) {
+				return;
+			}
+
+			var $details = $(el);
+			if (!el.open || $details.data('loaded')) {
+				return;
+			}
+			$details.data('loaded', true);
+
+			var prefix = $details.data('prefix');
+			var name = $('#isx-content-body').data('backup');
+			var $list = $details.children('ul');
+			$list.html('<li class="isx-tree-more">กำลังอ่าน...</li>');
+
+			scanContentLevel(
+				name,
+				prefix,
+				function () {},
+				function (level) {
+					$list.html(renderContentLevel(level, prefix));
+				},
+				function (message) {
+					// Let it be retried: a folder that failed to load should not
+					// stay stuck on its error the next time it is opened.
+					$details.data('loaded', false);
+					$list.html('<li class="isx-tree-more is-error">' + escapeHtmlLocal(message) + '</li>');
+				}
+			);
+		}, true);
 
 		$(document).on('click', '#isx-content-close', function (event) {
 			event.preventDefault();

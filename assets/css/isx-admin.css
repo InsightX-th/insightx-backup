@@ -1233,6 +1233,32 @@ table.isx-backups-table tbody td.isx-b-actions {
   white-space: nowrap;
 }
 
+/* How many files a folder holds, summarised server-side — the contents below
+   it are not fetched until the folder is opened, so this count is the only
+   thing standing in for them. margin-left:auto pushes it and the size that
+   follows to the right edge, away from the folder name, which is an anonymous
+   flex item (a bare text node) and so can't be given flex properties itself. */
+.isx-content-meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--isx-muted);
+  font-weight: 400;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Notes that stand in for rows rather than being one: "showing 500 of 40,000",
+   "reading…", an empty folder, or a failed expand. */
+.isx-tree-more {
+  padding: 6px 4px 6px 24px;
+  font-size: 12px;
+  color: var(--isx-muted);
+}
+
+.isx-tree-more.is-error {
+  color: var(--isx-danger);
+}
+
 .isx-tree-list {
   list-style: none;
   margin: 0;
