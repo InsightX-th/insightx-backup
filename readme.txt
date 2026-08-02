@@ -4,7 +4,7 @@ Tags: backup, migration, export, import, s3
 Requires at least: 3.3
 Tested up to: 7.0.2
 Requires PHP: 5.3
-Stable tag: 0.1.17
+Stable tag: 0.1.18
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -45,6 +45,12 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 **ความต้องการของระบบ:** PHP 7.4+, ส่วนขยาย cURL/zlib/openssl
 
 == Changelog ==
+
+= 0.1.18 =
+* **แก้ปัญหาเข้าหน้าผู้ดูแลไม่ได้หลังนำเข้า (`ERR_SSL_PROTOCOL_ERROR`)** — แพ็กเกจจากเว็บ production ที่ใช้ HTTPS จะพาปลั๊กอินบังคับ SSL (เช่น Really Simple SSL) พร้อมค่าตั้ง "เว็บนี้อยู่บน HTTPS" ติดมาด้วย พอนำเข้าลงเครื่องที่ไม่มี HTTPS มันจะ redirect หน้า wp-admin ไป `https://` ทันที ซึ่งไม่มีใครรับ — เข้าไม่ได้เลยแม้แต่หน้า login แก้ได้ทางเดียวคือลบปลั๊กอินผ่าน SFTP ตอนนี้ระบบจะปิดปลั๊กอินกลุ่มนี้ให้อัตโนมัติเมื่อเว็บปลายทางเป็น `http://` (Really Simple SSL, WordPress HTTPS, WP Force SSL, Force HTTPS) พร้อมปิด "บังคับ SSL ตอนชำระเงิน" ของ WooCommerce
+* **ปิดปลั๊กอินที่ซ่อน/เปลี่ยน URL หน้า login เสมอ** — wps-hide-login, Hide My WP, Rename wp-login, Lockdown WP Admin, Shield Security, Invisible reCaptcha เก็บ URL ลับของ**เว็บต้นทาง** ไว้ พอนำเข้าแล้วหน้า login ของเว็บใหม่จะกลายเป็น 404
+* ปลั๊กอินแค่ถูก**ปิด** ไม่ได้ถูกลบ เปิดกลับเองได้ที่เมนู Plugins และระบบจะบอกชื่อที่ปิดไปทั้งบนหน้าจอตอนนำเข้าเสร็จและในหน้า Log — ต่อรายการเองได้ผ่าน filter `isx_deactivate_plugins` / `isx_deactivate_ssl_plugins`
+* ตัดสินว่าเว็บเป็น HTTPS หรือไม่จากค่า `siteurl` ของเว็บปลายทาง ไม่ใช่จาก request ที่กำลังรัน เพราะงานนำเข้าขับด้วย WP-Cron ได้ ซึ่งยิงผ่าน http แม้เว็บจริงจะเป็น https — ถ้าดูจาก request จะไปปิดปลั๊กอินที่เว็บ production ต้องใช้จริง
 
 = 0.1.17 =
 * **แก้ URL ที่ยังชี้โดเมนเดิมหลังนำเข้า** — เดิมระบบค้นหา URL เก่าแบบตรงตัวรูปเดียว ซึ่งจับได้แค่เศษเสี้ยวเดียวของที่มันอยู่จริงในฐานข้อมูล เพราะแต่ละปลั๊กอินเก็บ URL คนละรูปแบบ ตอนนี้แจกแจงครบทุกรูปแบบแล้วชี้กลับมาที่โดเมนที่เว็บปลายทางตั้งไว้จริง

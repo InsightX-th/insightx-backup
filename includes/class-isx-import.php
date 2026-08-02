@@ -521,18 +521,172 @@ class ISX_Import {
 			update_option( 'active_plugins', $active );
 		}
 
+		$deactivated = self::deactivate_lockout_plugins( $job );
+
+		$message = 'นำเข้าเสร็จสิ้น — โปรดล็อกอินใหม่';
+		if ( ! empty( $deactivated ) ) {
+			$message .= sprintf(
+				' (ปิดปลั๊กอินที่จะทำให้เข้าหน้าผู้ดูแลไม่ได้ไว้ %d ตัว: %s — เปิดกลับเองได้ที่เมนู Plugins)',
+				count( $deactivated ),
+				implode( ', ', $deactivated )
+			);
+		}
+
 		// The package has been fully extracted onto the site; the job's scratch
 		// files (copied archive, extracted DB dump) can go. finish() keeps a
 		// "done" marker on disk so a duplicate poll racing this one (browser
 		// tab vs. WP-Cron, see with_lock()) reports success instead of
 		// "ไม่พบงาน" for a directory that no longer exists.
-		$job->finish( 'นำเข้าเสร็จสิ้น — โปรดล็อกอินใหม่' );
+		$job->finish( $message );
 
 		return array(
 			'progress' => 100,
 			'done'     => true,
-			'message'  => 'นำเข้าเสร็จสิ้น — โปรดล็อกอินใหม่',
+			'message'  => $message,
 		);
+	}
+
+	/**
+	 * Switch off plugins that would leave nobody able to reach wp-admin on the
+	 * site that has just been imported.
+	 *
+	 * A package carries the source site's plugins *and* their settings, and a
+	 * couple of families of plugin are configured against the address the
+	 * source site lived at. Restore them onto a different address and they lock
+	 * the door behind you:
+	 *
+	 *  - **SSL enforcers.** Really Simple SSL and friends store "this site is
+	 *    on HTTPS" and redirect wp-admin to https:// on sight. Import a live
+	 *    site into a local environment that only speaks HTTP and every admin
+	 *    request dies on ERR_SSL_PROTOCOL_ERROR before WordPress renders a
+	 *    thing — no login screen, no error page, no way back in short of
+	 *    deleting the plugin over SFTP.
+	 *  - **Login hiders.** wps-hide-login and its relatives move wp-login.php
+	 *    to a secret path. The secret belongs to the old site; on the new one
+	 *    the login URL is simply a 404.
+	 *
+	 * Deactivating means removing the entry from active_plugins — nothing is
+	 * deleted and the admin can switch any of it back on once the site is
+	 * reachable. All-in-One WP Migration does the same thing at the same point
+	 * in its import for the same reasons (Ai1wm_Import_Done).
+	 *
+	 * @param ISX_Job $job
+	 * @return array Human-readable names of what was switched off.
+	 */
+	private static function deactivate_lockout_plugins( ISX_Job $job ) {
+		$active = (array) get_option( 'active_plugins', array() );
+		if ( empty( $active ) ) {
+			return array();
+		}
+
+		// Plugins that hide or rename the login URL: always a problem, whatever
+		// address the site has ended up on.
+		$targets = (array) apply_filters(
+			'isx_deactivate_plugins',
+			array(
+				'wps-hide-login/wps-hide-login.php',
+				'hide-my-wp/index.php',
+				'hide-my-wordpress/index.php',
+				'rename-wp-login/rename-wp-login.php',
+				'lockdown-wp-admin/lockdown-wp-admin.php',
+				'wp-simple-firewall/icwp-wpsf.php',
+				'invisible-recaptcha/invisible-recaptcha.php',
+			)
+		);
+
+		// SSL enforcers only matter when the site has landed on plain HTTP.
+		//
+		// Judged from the target site's own siteurl, captured in init(), not
+		// from is_ssl(). is_ssl() describes the request that happens to be
+		// running this step, and an import can be driven by WP-Cron or a
+		// loopback call over HTTP on a site that really is HTTPS — which would
+		// have this switch off a genuinely needed plugin on a live site.
+		$target  = (array) $job->get( 'target', array() );
+		$siteurl = isset( $target['siteurl'] ) ? (string) $target['siteurl'] : '';
+		if ( $siteurl !== '' && stripos( $siteurl, 'https://' ) !== 0 ) {
+			$targets = array_merge(
+				$targets,
+				(array) apply_filters(
+					'isx_deactivate_ssl_plugins',
+					array(
+						'really-simple-ssl/rlrsssl-really-simple-ssl.php',
+						'wordpress-https/wordpress-https.php',
+						'wp-force-ssl/wp-force-ssl.php',
+						'force-https-littlebizzy/force-https.php',
+					)
+				)
+			);
+
+			// WooCommerce forces checkout over HTTPS from an option rather than
+			// a plugin — same lockout, different switch.
+			if ( get_option( 'woocommerce_force_ssl_checkout' ) === 'yes' ) {
+				update_option( 'woocommerce_force_ssl_checkout', 'no' );
+			}
+		}
+
+		$removed = array();
+		foreach ( $targets as $target_basename ) {
+			foreach ( self::matching_plugin_entries( $active, $target_basename ) as $entry ) {
+				$key = array_search( $entry, $active, true );
+				if ( $key !== false ) {
+					unset( $active[ $key ] );
+					$removed[] = $entry;
+				}
+			}
+		}
+
+		if ( empty( $removed ) ) {
+			return array();
+		}
+
+		update_option( 'active_plugins', array_values( $active ) );
+
+		ISX_Logger::log_warn(
+			'import',
+			'ปิดปลั๊กอินที่จะทำให้เข้าหน้าผู้ดูแลไม่ได้หลังนำเข้า',
+			array(
+				'job'     => $job->id(),
+				'siteurl' => $siteurl,
+				'plugins' => implode( ', ', $removed ),
+			)
+		);
+
+		// Folder name is what an admin recognises in the Plugins list.
+		return array_map( 'dirname', $removed );
+	}
+
+	/**
+	 * Entries in active_plugins that are the plugin named by $basename.
+	 *
+	 * An exact match is the normal case, but the same plugin ships under
+	 * decorated folder names often enough to matter — "really-simple-ssl-pro",
+	 * a "-2" suffix left by a re-install, a vendor rename. Matching the file
+	 * name exactly while allowing the folder to merely contain the expected one
+	 * catches those without reaching for unrelated plugins, which is how
+	 * ai1wm_discover_plugin_basename() approaches it too.
+	 *
+	 * @param array  $active   Current active_plugins.
+	 * @param string $basename e.g. "really-simple-ssl/rlrsssl-really-simple-ssl.php"
+	 * @return array
+	 */
+	private static function matching_plugin_entries( array $active, $basename ) {
+		$want_dir  = dirname( $basename );
+		$want_file = basename( $basename );
+
+		$found = array();
+		foreach ( $active as $entry ) {
+			if ( ! is_string( $entry ) ) {
+				continue;
+			}
+			if ( $entry === $basename ) {
+				$found[] = $entry;
+				continue;
+			}
+			if ( basename( $entry ) === $want_file && strpos( dirname( $entry ), $want_dir ) !== false ) {
+				$found[] = $entry;
+			}
+		}
+		return $found;
 	}
 
 	/**
