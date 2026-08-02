@@ -831,7 +831,7 @@
 						$body.find('.isx-step-label').text(d.ok ? 'ตรวจสอบผ่าน' : 'ตรวจสอบไม่ผ่าน');
 						ISX.snapStepPct($body, 100);
 						$body.append(
-							'<p class="isx-fetch-status' + (d.ok ? '' : ' is-error') + '">' +
+							'<p class="isx-fetch-status' + (d.ok ? ' is-ok' : ' is-error') + '">' +
 								escapeHtmlLocal((d.ok ? '✓ ' : '✕ ') + (d.message || '')) +
 							'</p>'
 						);

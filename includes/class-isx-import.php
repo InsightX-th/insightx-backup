@@ -120,6 +120,7 @@ class ISX_Import {
 				'abspath'      => untrailingslashit( ABSPATH ),
 				'content_dir'  => untrailingslashit( WP_CONTENT_DIR ),
 				'content_url'  => untrailingslashit( content_url() ),
+				'uploads_url'  => untrailingslashit( self::uploads_base_url() ),
 				'table_prefix' => $wpdb->prefix,
 			)
 		);
@@ -396,6 +397,13 @@ class ISX_Import {
 		list( $search, $replace, $old_prefix, $new_prefix ) = self::replacements( $job );
 		$manifest    = (array) $job->get( 'manifest', array() );
 		$skip_emails = ! empty( $manifest['no_replace_email_domain'] );
+
+		// Decided here, not in ISX_Serialize, and deliberately at this point in
+		// the run: the extract step has already put the package's files on disk,
+		// so what this finds is the set of builders the site being imported
+		// uses — not whatever happened to be installed on the destination
+		// beforehand.
+		ISX_Serialize::set_base64_builders( self::active_base64_builders() );
 
 		$cursor = (array) $job->get( 'cursor', array( 'db_offset' => 0 ) );
 		$fh     = fopen( $job->db_dump(), 'rb' );
@@ -773,10 +781,19 @@ class ISX_Import {
 		$dst = (array) $job->get( 'target', array() );
 
 		$pairs = array();
-		// Order matters: most-specific (longest, nested) first.
-		self::add_pair( $pairs, isset( $src['content_url'] ) ? $src['content_url'] : '', isset( $dst['content_url'] ) ? $dst['content_url'] : '' );
-		self::add_pair( $pairs, isset( $src['siteurl'] ) ? $src['siteurl'] : '', isset( $dst['siteurl'] ) ? $dst['siteurl'] : '' );
-		self::add_pair( $pairs, isset( $src['home'] ) ? $src['home'] : '', isset( $dst['home'] ) ? $dst['home'] : '' );
+		// Most-specific (longest, nested) first. uploads_url is usually below
+		// content_url, which sits under siteurl, which usually sits under (or
+		// equals) home. Ordering is belt-and-braces since ISX_Serialize uses
+		// strtr() — which picks the longest match at each position regardless —
+		// but it keeps the intent legible.
+		//
+		// uploads_url is absent from packages made before it was recorded; those
+		// simply fall back to content_url, which covers the standard layout.
+		self::add_url_pairs( $pairs, isset( $src['uploads_url'] ) ? $src['uploads_url'] : '', isset( $dst['uploads_url'] ) ? $dst['uploads_url'] : '' );
+		self::add_url_pairs( $pairs, isset( $src['content_url'] ) ? $src['content_url'] : '', isset( $dst['content_url'] ) ? $dst['content_url'] : '' );
+		self::add_url_pairs( $pairs, isset( $src['siteurl'] ) ? $src['siteurl'] : '', isset( $dst['siteurl'] ) ? $dst['siteurl'] : '' );
+		self::add_url_pairs( $pairs, isset( $src['home'] ) ? $src['home'] : '', isset( $dst['home'] ) ? $dst['home'] : '' );
+		// Filesystem paths: no scheme, no URL encoding — one literal pair each.
 		self::add_pair( $pairs, isset( $src['content_dir'] ) ? $src['content_dir'] : '', isset( $dst['content_dir'] ) ? $dst['content_dir'] : '' );
 		self::add_pair( $pairs, isset( $src['abspath'] ) ? $src['abspath'] : '', isset( $dst['abspath'] ) ? $dst['abspath'] : '' );
 
@@ -798,8 +815,217 @@ class ISX_Import {
 	private static function add_pair( &$pairs, $from, $to ) {
 		$from = (string) $from;
 		$to   = (string) $to;
-		if ( $from !== '' && $from !== $to ) {
-			$pairs[] = array( $from, $to );
+		if ( $from === '' || $from === $to ) {
+			return;
 		}
+		// The same string can be produced by more than one variant — urlencode()
+		// and rawurlencode() differ only on spaces, which a site URL rarely has.
+		// Searching for it twice is wasted work on every row of the dump.
+		foreach ( $pairs as $pair ) {
+			if ( $pair[0] === $from ) {
+				return;
+			}
+		}
+		$pairs[] = array( $from, $to );
+	}
+
+	/**
+	 * Every form one URL is realistically stored in, all pointing at the target
+	 * site's single canonical URL.
+	 *
+	 * A literal search for "https://old.example.com" finds a fraction of the
+	 * places that URL actually lives in a WordPress database, because plugins
+	 * do not agree on how to write it down:
+	 *
+	 *  - Elementor keeps whole pages as JSON inside postmeta, where every slash
+	 *    is escaped: "https:\/\/old.example.com\/wp-content\/...". A plain
+	 *    search matches none of it — on a site built with Elementor that is the
+	 *    bulk of the content.
+	 *  - Redirects, oEmbed caches and anything that puts a URL in a query string
+	 *    store it percent-encoded.
+	 *  - Themes and older content often use protocol-relative "//domain/…".
+	 *  - A site that moved to HTTPS after it was built (Really Simple SSL and
+	 *    friends only rewrite the output, never the stored data) still has
+	 *    "http://" links sitting in its tables years later.
+	 *  - www and non-www forms coexist on plenty of sites.
+	 *
+	 * So the source URL is expanded across all three axes and each variant is
+	 * pointed at the destination's own URL — which is read live from the site
+	 * being imported into (see init()), never taken from the package. That is
+	 * what makes "just point everything at the domain this WordPress actually
+	 * uses" true rather than aspirational. All-in-One WP Migration builds the
+	 * same matrix for the same reasons.
+	 *
+	 * @param array  $pairs Accumulator, by reference.
+	 * @param string $from  Source URL (from the package manifest).
+	 * @param string $to    Target URL (this site, right now).
+	 * @return void
+	 */
+	private static function add_url_pairs( &$pairs, $from, $to ) {
+		$from = untrailingslashit( (string) $from );
+		$to   = untrailingslashit( (string) $to );
+		if ( $from === '' || $to === '' ) {
+			return;
+		}
+
+		// Only the source varies. The destination is whatever this site is set
+		// to, so every variant collapses onto that one answer.
+		$sources = array( $from );
+		$www     = self::invert_www( $from );
+		if ( $www !== $from ) {
+			$sources[] = $www;
+		}
+		// Longest first, so a shorter form can never consume part of a longer
+		// one before the longer one gets its turn.
+		usort(
+			$sources,
+			function ( $a, $b ) {
+				return strlen( $b ) - strlen( $a );
+			}
+		);
+
+		$to_scheme = self::scheme_of( $to );
+
+		foreach ( $sources as $source ) {
+			// Protocol-relative goes LAST: "//old.example.com" is a substring of
+			// "https://old.example.com", so replacing it first would eat the tail
+			// of every absolute URL and leave a bare "https:" behind.
+			$schemes = array( 'http', 'https', '' );
+
+			foreach ( $schemes as $scheme ) {
+				$old = self::with_scheme( $source, $scheme );
+				// A protocol-relative source stays protocol-relative on the way
+				// out; anything explicit adopts the destination's scheme.
+				$new = self::with_scheme( $to, $scheme === '' ? '' : $to_scheme );
+
+				self::add_pair( $pairs, $old, $new );
+				// JSON with escaped slashes (Elementor and every other builder
+				// that stores wp_json_encode() output).
+				self::add_pair( $pairs, addcslashes( $old, '/' ), addcslashes( $new, '/' ) );
+				self::add_pair( $pairs, rawurlencode( $old ), rawurlencode( $new ) );
+				self::add_pair( $pairs, urlencode( $old ), urlencode( $new ) );
+			}
+
+			// Schemeless, as it appears in hand-written markup:
+			// <a href="old.example.com/page">. Anchored on the attribute's
+			// opening quote, because a bare host name on its own is ordinary
+			// prose — rewriting every mention of it in post content would be
+			// well beyond what a URL migration is being asked to do.
+			$bare_old = self::strip_scheme( $source );
+			$bare_new = self::strip_scheme( $to );
+			foreach ( array( '="', "='" ) as $anchor ) {
+				self::add_pair( $pairs, $anchor . $bare_old, $anchor . $bare_new );
+			}
+		}
+	}
+
+	/**
+	 * Which base64-bearing page builders the restored files actually contain.
+	 *
+	 * Decoding and re-encoding a payload is the one part of the replacement
+	 * that can damage a value which merely resembled base64, so it only runs
+	 * for builders that are demonstrably present. The last group in particular
+	 * treats any wholly-base64 value as fair game, and must never be switched
+	 * on speculatively.
+	 *
+	 * Detection is by file, matching how All-in-One WP Migration gates the same
+	 * work (see its set_visual_composer() / set_oxygen_builder() calls).
+	 *
+	 * @return array Subset of: vc, oxygen, whole_value.
+	 */
+	private static function active_base64_builders() {
+		$plugins = defined( 'WP_PLUGIN_DIR' ) ? WP_PLUGIN_DIR : WP_CONTENT_DIR . '/plugins';
+		$themes  = WP_CONTENT_DIR . '/themes';
+
+		$builders = array();
+
+		if ( is_file( $plugins . '/js_composer/js_composer.php' ) ) {
+			$builders[] = 'vc';
+		}
+		if ( is_file( $plugins . '/oxygen/functions.php' ) ) {
+			$builders[] = 'oxygen';
+		}
+		if (
+			is_file( $plugins . '/optimizePressPlugin/optimizepress.php' ) ||
+			is_file( $plugins . '/fusion-builder/fusion-builder.php' ) ||
+			is_file( $themes . '/betheme/style.css' )
+		) {
+			$builders[] = 'whole_value';
+		}
+
+		if ( ! empty( $builders ) ) {
+			ISX_Logger::log_info(
+				'import',
+				'พบ page builder ที่เก็บเนื้อหาเป็น base64 — จะแทนที่ URL ข้างในให้ด้วย',
+				array( 'builders' => implode( ',', $builders ) )
+			);
+		}
+
+		return $builders;
+	}
+
+	/**
+	 * Base URL of this site's media library. See ISX_Export::uploads_base_url()
+	 * for why it isn't wp_upload_dir().
+	 *
+	 * @return string
+	 */
+	private static function uploads_base_url() {
+		$dir = function_exists( 'wp_get_upload_dir' ) ? wp_get_upload_dir() : wp_upload_dir();
+		return isset( $dir['baseurl'] ) ? (string) $dir['baseurl'] : '';
+	}
+
+	/**
+	 * A URL with its scheme (or leading "//") removed.
+	 *
+	 * @param string $url
+	 * @return string
+	 */
+	private static function strip_scheme( $url ) {
+		$rest = preg_replace( '#^[a-z][a-z0-9+.-]*://#i', '', $url );
+		return preg_replace( '#^//#', '', $rest );
+	}
+
+	/**
+	 * The scheme of a URL, defaulting to https when it has none.
+	 *
+	 * @param string $url
+	 * @return string
+	 */
+	private static function scheme_of( $url ) {
+		if ( preg_match( '#^([a-z][a-z0-9+.-]*)://#i', $url, $m ) ) {
+			return strtolower( $m[1] );
+		}
+		return 'https';
+	}
+
+	/**
+	 * Rewrite a URL onto a given scheme; '' produces the protocol-relative form.
+	 *
+	 * @param string $url
+	 * @param string $scheme
+	 * @return string
+	 */
+	private static function with_scheme( $url, $scheme ) {
+		$rest = preg_replace( '#^[a-z][a-z0-9+.-]*://#i', '', $url );
+		$rest = preg_replace( '#^//#', '', $rest );
+		return $scheme === '' ? '//' . $rest : $scheme . '://' . $rest;
+	}
+
+	/**
+	 * The same URL with "www." added if it is absent, removed if it is present.
+	 * Returns the input unchanged when it has no host to work on.
+	 *
+	 * @param string $url
+	 * @return string
+	 */
+	private static function invert_www( $url ) {
+		if ( preg_match( '#^([a-z][a-z0-9+.-]*://|//)www\.#i', $url ) ) {
+			return preg_replace( '#^([a-z][a-z0-9+.-]*://|//)www\.#i', '$1', $url, 1 );
+		}
+		if ( preg_match( '#^([a-z][a-z0-9+.-]*://|//)#i', $url ) ) {
+			return preg_replace( '#^([a-z][a-z0-9+.-]*://|//)#i', '$1www.', $url, 1 );
+		}
+		return $url;
 	}
 }

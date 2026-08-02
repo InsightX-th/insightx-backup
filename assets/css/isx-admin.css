@@ -630,6 +630,10 @@ table.isx-backups tr:hover td {
   padding: 8px 0;
 }
 
+.isx-fetch-status.is-ok {
+  color: var(--isx-ok);
+}
+
 .isx-fetch-status.is-error {
   color: var(--isx-danger);
 }

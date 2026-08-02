@@ -78,6 +78,13 @@ class ISX_Export {
 			'abspath'                 => untrailingslashit( ABSPATH ),
 			'content_dir'             => untrailingslashit( WP_CONTENT_DIR ),
 			'content_url'             => untrailingslashit( content_url() ),
+			// Recorded separately from content_url because a site can point
+			// upload_path/upload_url_path anywhere it likes — outside
+			// wp-content included, in which case content_url covers none of the
+			// media library's URLs. wp_get_upload_dir() rather than
+			// wp_upload_dir(): the latter creates the directory as a side
+			// effect, which an export has no business doing.
+			'uploads_url'             => untrailingslashit( self::uploads_base_url() ),
 			'table_prefix'            => $wpdb->prefix,
 			'wp_version'              => get_bloginfo( 'version' ),
 			'no_replace_email_domain' => ! empty( $options['no_replace_email_domain'] ),
@@ -331,6 +338,21 @@ class ISX_Export {
 	 * @param int     $done_files
 	 * @return string
 	 */
+	/**
+	 * Base URL of the media library.
+	 *
+	 * wp_get_upload_dir() landed in WordPress 4.5; this plugin still declares
+	 * support well below that, so fall back to wp_upload_dir() where it is
+	 * missing. The fallback creates the uploads directory if it isn't there,
+	 * which is why it isn't the first choice.
+	 *
+	 * @return string
+	 */
+	private static function uploads_base_url() {
+		$dir = function_exists( 'wp_get_upload_dir' ) ? wp_get_upload_dir() : wp_upload_dir();
+		return isset( $dir['baseurl'] ) ? (string) $dir['baseurl'] : '';
+	}
+
 	private static function current_category_label( ISX_Job $job, $done_files ) {
 		$labels = array(
 			'plugins'    => 'ปลั๊กอิน',
