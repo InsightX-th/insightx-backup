@@ -97,7 +97,10 @@ class ISX_Logger {
 		// each time would add I/O to exactly the operations whose timings are
 		// being measured. Trimming to the cap is deferred to whenever the file
 		// grows past a rough size ceiling instead of running on every write.
-		file_put_contents( $file, wp_json_encode( $entry ) . "\n", FILE_APPEND ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		// LOCK_EX: browser poll, loopback chain and cron can all write to the
+		// same file concurrently, and an unlocked append interleaves/corrupts
+		// lines; the lock serializes them instead.
+		file_put_contents( $file, wp_json_encode( $entry ) . "\n", FILE_APPEND | LOCK_EX ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 
 		$max = self::is_verbose() ? self::MAX_ENTRIES_VERBOSE : self::MAX_ENTRIES;
 		if ( (int) @filesize( $file ) > $max * self::BYTES_PER_ENTRY ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
@@ -117,7 +120,9 @@ class ISX_Logger {
 			return;
 		}
 		$lines = array_slice( $lines, -$max );
-		file_put_contents( self::file(), implode( "\n", $lines ) . "\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		// LOCK_EX so the truncate-and-rewrite never races a concurrent
+		// LOCK_EX append from another request (see write()).
+		file_put_contents( self::file(), implode( "\n", $lines ) . "\n", LOCK_EX ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 	}
 
 	public static function is_verbose() {
@@ -363,9 +368,13 @@ class ISX_Logger {
 		if ( ! is_dir( $dir ) ) {
 			wp_mkdir_p( $dir );
 		}
+		// Both Apache dialects (2.2 and 2.4) via isx_htaccess_deny_all() — the
+		// old "Deny from all" one-liner is 2.2-only and a hard 500 on 2.4
+		// servers without mod_access_compat. Existing files still carrying the
+		// old one-liner are upgraded in place, mirroring isx_activate().
 		$htaccess = $dir . '/.htaccess';
-		if ( ! is_file( $htaccess ) ) {
-			file_put_contents( $htaccess, "Deny from all\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		if ( ! is_file( $htaccess ) || trim( (string) @file_get_contents( $htaccess ) ) === 'Deny from all' ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			file_put_contents( $htaccess, isx_htaccess_deny_all() ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 		}
 		$index = $dir . '/index.php';
 		if ( ! is_file( $index ) ) {

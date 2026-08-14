@@ -4,7 +4,7 @@ Tags: backup, migration, export, import, s3
 Requires at least: 3.3
 Tested up to: 7.0.2
 Requires PHP: 5.3
-Stable tag: 0.1.18
+Stable tag: 0.1.19
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -45,6 +45,17 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 **ความต้องการของระบบ:** PHP 7.4+, ส่วนขยาย cURL/zlib/openssl
 
 == Changelog ==
+
+= 0.1.19 =
+* **ความปลอดภัย: กัน SQL injection ใน export** — เงื่อนไขกรองแถวใน `ISX_Database::dump_rows()` เดิมรับ raw SQL string ตอนนี้เปลี่ยนเป็นข้อมูลแบบมีโครงสร้างและผูกค่าผ่าน `$wpdb->prepare()` ทุกค่า
+* **ความปลอดภัย: ปิด Object Injection จากการนำเข้าแพ็กเกจ** — `unserialize()` บนข้อมูลจากไฟล์แพ็กเกจ (legacy format และค่า serialized ในตาราง) ใช้ `allowed_classes => false` แล้ว ข้อมูลที่แกะแล้วจึงเป็นได้แค่ array/scalar ไม่มีการสร้าง object ใดๆ
+* **ความปลอดภัย: ตรวจสอบ TLS ของ loopback request** — เดิม `sslverify => false` ตลอด ตอนนี้ตรวจใบรับรองเป็นค่าเริ่มต้น และจะยิงซ้ำแบบไม่ตรวจเฉพาะเมื่อการตรวจสอบล้มเหลวจากสาเหตุใบรับรองเท่านั้น (พร้อม log เตือน) — ตั้งค่าเริ่มต้นได้ผ่าน filter `isx_loopback_sslverify`
+* **ความปลอดภัย: รหัสผ่านใหม่หลังรีเซ็ตฐานข้อมูลไม่ถูกส่งใน response อีกต่อไป** — เปลี่ยนเป็นโทเค็นใช้ครั้งเดียว อายุ 30 นาที เก็บแบบเข้ารหัส (site key) แล้วเรียกเผยได้ครั้งเดียวผ่าน endpoint แยก — ไม่มีรหัสผ่าน plain text ใน response ที่ผ่าน proxy log/บันทึกของเบราว์เซอร์
+* **ความปลอดภัย: เข้ารหัสไฟล์สำรองเป็นแบบ authenticated (AES-256-CBC + HMAC-SHA256)** — format ใหม่ (`ISXENC02`) ตรวจสอบความถูกต้องของ ciphertext ก่อนรับข้อมูล ไฟล์ที่เข้ารหัสด้วยเวอร์ชันเก่า (`ISXENC01`) ยังถอดรหัสได้ตามเดิม
+* **ความปลอดภัย: จำกัดความยาว Job ID** — regex ตรวจ `isx_` ID จำกัดความยาว 16–32 ตัวอักษร (เดิมรับความยาวเท่าไหร่ก็ได้)
+* **ความปลอดภัย: ตรวจสอบเส้นทางโฟลเดอร์เก็บข้อมูล** — ปฏิเสธ path ที่มี `..`, ไม่ใช่ absolute path หรือเป็นรากของระบบไฟล์
+* **ความปลอดภัย: ไฟล์ `.htaccess` ในโฟลเดอร์เก็บข้อมูล/Log รองรับทั้ง Apache 2.2 และ 2.4** — แทนที่บรรทัด `Deny from all` แบบ 2.2 เท่านั้นด้วย `isx_htaccess_deny_all()`
+* **ความปลอดภัย: เขียน Log แบบมี file lock (`LOCK_EX`)** — กันบรรทัด log ปนกัน/เสียหายเมื่อ browser poll, loopback และ cron เขียนพร้อมกัน
 
 = 0.1.18 =
 * **แก้ปัญหาเข้าหน้าผู้ดูแลไม่ได้หลังนำเข้า (`ERR_SSL_PROTOCOL_ERROR`)** — แพ็กเกจจากเว็บ production ที่ใช้ HTTPS จะพาปลั๊กอินบังคับ SSL (เช่น Really Simple SSL) พร้อมค่าตั้ง "เว็บนี้อยู่บน HTTPS" ติดมาด้วย พอนำเข้าลงเครื่องที่ไม่มี HTTPS มันจะ redirect หน้า wp-admin ไป `https://` ทันที ซึ่งไม่มีใครรับ — เข้าไม่ได้เลยแม้แต่หน้า login แก้ได้ทางเดียวคือลบปลั๊กอินผ่าน SFTP ตอนนี้ระบบจะปิดปลั๊กอินกลุ่มนี้ให้อัตโนมัติเมื่อเว็บปลายทางเป็น `http://` (Really Simple SSL, WordPress HTTPS, WP Force SSL, Force HTTPS) พร้อมปิด "บังคับ SSL ตอนชำระเงิน" ของ WooCommerce

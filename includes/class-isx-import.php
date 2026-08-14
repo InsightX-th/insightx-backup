@@ -279,7 +279,18 @@ class ISX_Import {
 
 		$manifest_ref = array( 'data' => $job->get( 'manifest', array() ) );
 
-		$callback = function ( $header, $handle ) use ( $db_dump, &$manifest_ref ) {
+		// URL rewrite for restored FILE contents (CSS/JS/HTML…) — the database
+		// half alone is why generated CSS (Elementor, page builders) kept
+		// serving the old domain after an import. The map needs the source
+		// manifest + this site's target URLs; on a fresh run the manifest is
+		// read from package.json in the first batch below (which refreshes the
+		// map), so this call is what covers resumed runs where the manifest is
+		// already persisted. Filterable to disable: isx_replace_file_urls.
+		if ( apply_filters( 'isx_replace_file_urls', true ) ) {
+			ISX_Files::set_url_replace_map( self::file_url_map( $job ) );
+		}
+
+		$callback = function ( $header, $handle ) use ( $db_dump, &$manifest_ref, $job ) {
 			$path = isset( $header['p'] ) ? $header['p'] : '';
 
 			// "package.json"/"database.sql" are current; "manifest.json"/
@@ -287,7 +298,19 @@ class ISX_Import {
 			// format change used — keep reading both so old backups still
 			// import fine.
 			if ( $path === 'package.json' || $path === 'manifest.json' ) {
-				$manifest_ref['data'] = json_decode( ISX_Archive::read_entry_string( $handle, $header ), true );
+				$raw = ISX_Archive::read_entry_string( $handle, $header );
+				if ( $raw === false ) {
+					// Failed its CRC (or unreadable) — a corrupt manifest means the
+					// whole package can't be trusted and the URL rewrite would be
+					// silently skipped. Hard-stop like any other failed entry.
+					return false;
+				}
+				$manifest_ref['data'] = json_decode( $raw, true );
+				if ( is_array( $manifest_ref['data'] ) && apply_filters( 'isx_replace_file_urls', true ) ) {
+					ISX_Files::set_url_replace_map(
+						self::file_url_map_from( $manifest_ref['data'], (array) $job->get( 'target', array() ) )
+					);
+				}
 				return;
 			}
 			if ( $path === 'database.sql' || $path === 'database.isxdb' ) {
@@ -508,6 +531,11 @@ class ISX_Import {
 		delete_option( 'rewrite_rules' );
 		wp_cache_flush();
 		self::purge_content_cache();
+		// Builder-generated CSS that shipped with the old site's URLs baked in
+		// (and that the file rewrite above may not have fully covered — e.g.
+		// minified output) — deleting it makes the builder regenerate against
+		// the new domain instead.
+		self::purge_builder_assets();
 
 		// Safety net on top of database()'s atomic-options handling: if this
 		// plugin's own entry still didn't survive the active_plugins rewrite
@@ -721,6 +749,56 @@ class ISX_Import {
 	}
 
 	/**
+	 * Remove builder-generated CSS dirs the package restored with the old
+	 * site's URLs baked in. Unlike purge_content_cache() (which covers
+	 * cache/), these live under uploads/ — Elementor, Oxygen and BeTheme all
+	 * write per-post stylesheets there. Safe to delete unconditionally: each
+	 * builder regenerates its CSS against the new domain on the next page
+	 * load, and regenerating is far more reliable than rewriting minified
+	 * output byte-for-byte. Filterable via `isx_purge_asset_dirs`.
+	 *
+	 * @return void
+	 */
+	private static function purge_builder_assets() {
+		$base = untrailingslashit( WP_CONTENT_DIR ) . '/uploads';
+		$dirs = (array) apply_filters(
+			'isx_purge_asset_dirs',
+			array(
+				'elementor/css', // Elementor post + global CSS.
+				'oxygen/css',    // Oxygen per-post CSS.
+				'be-theme',      // BeTheme generated CSS.
+			)
+		);
+		foreach ( $dirs as $rel ) {
+			$dir = $base . '/' . ltrim( str_replace( '\\', '/', (string) $rel ), '/' );
+			if ( is_dir( $dir ) ) {
+				self::delete_tree( $dir );
+			}
+		}
+	}
+
+	/**
+	 * Recursively delete a directory tree (files, then dirs, child-first).
+	 *
+	 * @param string $dir
+	 * @return void
+	 */
+	private static function delete_tree( $dir ) {
+		$iterator = new RecursiveIteratorIterator(
+			new RecursiveDirectoryIterator( $dir, FilesystemIterator::SKIP_DOTS ),
+			RecursiveIteratorIterator::CHILD_FIRST
+		);
+		foreach ( $iterator as $item ) {
+			if ( $item->isDir() && ! $item->isLink() ) {
+				@rmdir( $item->getPathname() ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			} else {
+				@unlink( $item->getPathname() ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			}
+		}
+		@rmdir( $dir ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+	}
+
+	/**
 	 * Option names this site keeps across an import. Exact matches.
 	 *
 	 * An import replaces wp_options wholesale — DROP TABLE, then the package's
@@ -922,6 +1000,40 @@ class ISX_Import {
 		} else {
 			$wpdb->insert( $wpdb->options, array( 'option_name' => $name, 'option_value' => $value ) );
 		}
+	}
+
+	/**
+	 * old => new URL map for the restored-file rewrite — the same URL matrix
+	 * the database gets (add_url_pairs covers every stored form), without
+	 * the filesystem-path pairs, which mean nothing inside a file's content.
+	 *
+	 * @param ISX_Job $job
+	 * @return array<string,string>
+	 */
+	public static function file_url_map( ISX_Job $job ) {
+		return self::file_url_map_from(
+			(array) $job->get( 'manifest', array() ),
+			(array) $job->get( 'target', array() )
+		);
+	}
+
+	/**
+	 * @param array $src Source manifest (siteurl/home/content_url/uploads_url).
+	 * @param array $dst Target site values (same keys).
+	 * @return array<string,string>
+	 */
+	public static function file_url_map_from( array $src, array $dst ) {
+		$pairs = array();
+		self::add_url_pairs( $pairs, isset( $src['uploads_url'] ) ? $src['uploads_url'] : '', isset( $dst['uploads_url'] ) ? $dst['uploads_url'] : '' );
+		self::add_url_pairs( $pairs, isset( $src['content_url'] ) ? $src['content_url'] : '', isset( $dst['content_url'] ) ? $dst['content_url'] : '' );
+		self::add_url_pairs( $pairs, isset( $src['siteurl'] ) ? $src['siteurl'] : '', isset( $dst['siteurl'] ) ? $dst['siteurl'] : '' );
+		self::add_url_pairs( $pairs, isset( $src['home'] ) ? $src['home'] : '', isset( $dst['home'] ) ? $dst['home'] : '' );
+
+		$map = array();
+		foreach ( $pairs as $pair ) {
+			$map[ $pair[0] ] = $pair[1];
+		}
+		return $map;
 	}
 
 	/**

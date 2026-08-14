@@ -118,6 +118,7 @@ class ISX_Admin {
 		add_filter( 'cron_schedules', array( __CLASS__, 'cron_schedules' ) ); // phpcs:ignore WordPress.WP.CronInterval
 
 		add_action( 'wp_ajax_isx_reset_run', array( __CLASS__, 'ajax_reset_run' ) );
+		add_action( 'wp_ajax_isx_reset_password_reveal', array( __CLASS__, 'ajax_reset_password_reveal' ) );
 	}
 
 	/**
@@ -1145,25 +1146,46 @@ class ISX_Admin {
 		$url = admin_url( 'admin-ajax.php' );
 		ISX_Logger::log_debug( 'system', 'ยิง loopback', array( 'job' => $job->id(), 'url' => $url ) );
 
-		$sent = wp_remote_post(
-			$url,
-			array(
-				'timeout'   => 0.01,
-				'blocking'  => false,
-				'sslverify' => false,
-				'cookies'   => array(),
-				'body'      => array(
-					'action' => 'isx_run',
-					'job'    => $job->id(),
-					'secret' => (string) $job->get( 'secret' ),
-					'isx_lb' => '1',
-				),
-			)
+		// Verify the loopback's TLS certificate by default. The request goes
+		// site-to-self, so on most hosts it verifies fine; only when
+		// verification itself fails for a legitimate reason (self-signed/local
+		// certs, hostname mismatch behind a proxy) do we retry unverified — and
+		// say so in the log instead of silently downgrading every request.
+		// Filterable for hosts that must skip verification on the first attempt.
+		$sslverify = (bool) apply_filters( 'isx_loopback_sslverify', true );
+
+		$args = array(
+			'timeout'   => 0.01,
+			'blocking'  => false,
+			'sslverify' => $sslverify,
+			'cookies'   => array(),
+			'body'      => array(
+				'action' => 'isx_run',
+				'job'    => $job->id(),
+				'secret' => (string) $job->get( 'secret' ),
+				'isx_lb' => '1',
+			),
 		);
+
+		$sent = wp_remote_post( $url, $args );
 
 		// Non-blocking means no response to inspect, but failures that happen
 		// before the request is even on the wire (DNS, connect refused, TLS)
-		// still come back as a WP_Error — and used to be discarded silently.
+		// still come back as a WP_Error. A TLS verification failure is the one
+		// case where retrying without sslverify is a deliberate, logged choice.
+		if ( is_wp_error( $sent ) && $sslverify && self::is_loopback_ssl_failure( $sent ) ) {
+			ISX_Logger::log_warn(
+				'system',
+				'loopback ถูกปฏิเสธเพราะตรวจสอบใบรับรอง TLS ไม่ผ่าน — ส่งใหม่โดยไม่ตรวจสอบใบรับรอง (SSL verify off)',
+				array(
+					'job'   => $job->id(),
+					'error' => $sent->get_error_message(),
+				)
+			);
+			$args['sslverify'] = false;
+			$sent = wp_remote_post( $url, $args );
+		}
+
 		if ( is_wp_error( $sent ) ) {
 			ISX_Logger::log_error(
 				'system',
@@ -1175,6 +1197,33 @@ class ISX_Admin {
 				)
 			);
 		}
+	}
+
+	/**
+	 * Whether a loopback WP_Error is specifically a TLS certificate
+	 * verification failure — the only case where spawn_loopback() retries
+	 * without sslverify. Anything else stays a hard error.
+	 *
+	 * @param WP_Error $error
+	 * @return bool
+	 */
+	private static function is_loopback_ssl_failure( $error ) {
+		if ( ! is_wp_error( $error ) ) {
+			return false;
+		}
+		$message = strtolower( (string) $error->get_error_message() );
+
+		// cURL errno values that mean certificate verification failed:
+		// 60/66/77/83 (verify), 51/58/59 (peer cert / issuer problems).
+		if ( preg_match( '/curl error (?:60|66|77|83|51|58|59):/', $message ) ) {
+			return true;
+		}
+		foreach ( array( 'ssl certificate', 'certificate problem', 'certificate verify', 'self-signed', 'unable to get local issuer', 'peer certificate' ) as $needle ) {
+			if ( strpos( $message, $needle ) !== false ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -1876,6 +1925,23 @@ class ISX_Admin {
 			);
 		}
 
+		// The path becomes the home of every backup this site makes, so it must
+		// be a plain absolute path: no ".." traversal segments (which could
+		// resolve the backup directory outside where the admin believes it is),
+		// and never the filesystem root (which would scatter backups and this
+		// plugin's protection files across system directories).
+		$normalized = str_replace( '\\', '/', $path );
+		if ( in_array( '..', explode( '/', $normalized ), true ) ) {
+			wp_send_json_error( array( 'message' => 'เส้นทางไม่ถูกต้อง — ห้ามใช้ .. ในเส้นทาง' ) );
+		}
+		$is_absolute = isset( $normalized[0] ) && ( $normalized[0] === '/' || (bool) preg_match( '/^[A-Za-z]:\//', $normalized ) );
+		if ( ! $is_absolute ) {
+			wp_send_json_error( array( 'message' => 'เส้นทางต้องเป็น absolute path เช่น /var/www/backups' ) );
+		}
+		if ( $normalized === '/' || (bool) preg_match( '/^[A-Za-z]:\/$/', $normalized ) ) {
+			wp_send_json_error( array( 'message' => 'ไม่สามารถใช้รากของระบบไฟล์เป็นโฟลเดอร์เก็บข้อมูลได้' ) );
+		}
+
 		$parent = dirname( $path );
 		if ( ! is_dir( $parent ) || ! is_writable( $parent ) ) {
 			wp_send_json_error( array( 'message' => 'ไม่พบโฟลเดอร์ต้นทาง หรือเขียนไม่ได้: ' . $parent ) );
@@ -1888,10 +1954,11 @@ class ISX_Admin {
 			wp_send_json_error( array( 'message' => 'โฟลเดอร์นี้เขียนไม่ได้' ) );
 		}
 
-		// Same protection files the activation hook creates for the default dir.
+		// Same protection files the activation hook creates for the default dir
+		// (isx_htaccess_deny_all() covers both Apache 2.2 and 2.4).
 		$htaccess = $path . '/.htaccess';
-		if ( ! file_exists( $htaccess ) ) {
-			file_put_contents( $htaccess, "Deny from all\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		if ( ! file_exists( $htaccess ) || trim( (string) @file_get_contents( $htaccess ) ) === 'Deny from all' ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			file_put_contents( $htaccess, isx_htaccess_deny_all() ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 		}
 		$index = $path . '/index.php';
 		if ( ! file_exists( $index ) ) {
@@ -2177,6 +2244,53 @@ class ISX_Admin {
 			wp_send_json_error( $result );
 		}
 		wp_send_json_success( $result );
+	}
+
+	/**
+	 * One-time reveal of the password a database/full reset just generated.
+	 *
+	 * Deliberately does NOT go through guard(): the reset rotates the admin's
+	 * session token mid-request, which invalidates the nonce the page was
+	 * rendered with — the same reason job polling authenticates on an on-disk
+	 * secret instead of the WP session. The authenticator here is the
+	 * single-use token the reset response handed back (32 random chars, stored
+	 * encrypted-at-rest in a short-lived transient, deleted on read), and the
+	 * capability check still keeps a logged-in non-admin from consuming
+	 * someone else's token.
+	 */
+	public static function ajax_reset_password_reveal() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( array( 'message' => 'ไม่มีสิทธิ์' ) );
+		}
+
+		$token = isset( $_POST['token'] ) ? sanitize_text_field( wp_unslash( $_POST['token'] ) ) : '';
+		if ( ! preg_match( '/^[A-Za-z0-9]{32}$/', $token ) ) {
+			wp_send_json_error( array( 'message' => 'โทเค็นไม่ถูกต้อง' ) );
+		}
+
+		// Read-then-delete: exactly one reveal per reset. A second call gets
+		// the same answer as a forged one — "หมดอายุหรือถูกใช้ไปแล้ว".
+		$stored = get_transient( 'isx_reset_pw_' . $token );
+		delete_transient( 'isx_reset_pw_' . $token );
+
+		if ( $stored === false ) {
+			wp_send_json_error(
+				array(
+					'message' => 'โทเค็นหมดอายุหรือถูกใช้ไปแล้ว — รีเซ็ตรหัสผ่านได้ทางหน้าจอเข้าสู่ระบบ (ลืมรหัสผ่าน) หรือ WP-CLI',
+				)
+			);
+		}
+
+		$password = ISX_Crypto::decrypt_string( (string) $stored );
+		if ( $password === '' ) {
+			wp_send_json_error(
+				array(
+					'message' => 'อ่านรหัสผ่านไม่สำเร็จ — รีเซ็ตผ่านหน้าจอเข้าสู่ระบบ (ลืมรหัสผ่าน) หรือ WP-CLI',
+				)
+			);
+		}
+
+		wp_send_json_success( array( 'admin_password' => $password ) );
 	}
 
 	/**

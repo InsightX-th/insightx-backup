@@ -32,8 +32,13 @@ class ISX_Serialize {
 	 */
 	public static function replace( $data, $search, $replace, $skip_emails = false ) {
 		// A serialized string: unserialize, replace inside, re-serialize.
+		// allowed_classes => false: the value originates from a backup package
+		// the importing admin chose, so no class may be instantiated from it
+		// (Object Injection via __wakeup/__destruct). A serialized object
+		// becomes __PHP_Incomplete_Class instead, which the recursion below
+		// leaves untouched and re-serializes back byte-identically.
 		if ( is_string( $data ) && $data !== '' && is_serialized( $data ) ) {
-			$unserialized = @unserialize( $data ); // phpcs:ignore
+			$unserialized = @unserialize( $data, array( 'allowed_classes' => false ) ); // phpcs:ignore
 			if ( $unserialized !== false || $data === 'b:0;' ) {
 				return serialize( self::replace( $unserialized, $search, $replace, $skip_emails ) );
 			}

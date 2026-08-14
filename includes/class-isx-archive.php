@@ -8,13 +8,20 @@
  *   [8 bytes]  magic "ISXPK\0\0\1"
  *   repeated entries, each:
  *     [4 bytes]  header length  (uint32, little-endian)
- *     [N bytes]  header JSON     {"p":"path","s":size,"m":mtime,"z":0|1,"u":origSize}
+ *     [N bytes]  header JSON     {"p":"path","s":size,"m":mtime,"z":0|1,"u":origSize,"c":"crc32"}
  *     [size bytes] content — raw, or raw-DEFLATE (RFC1951) compressed when "z":1.
  *       "s" is always the stored (on-disk) byte count, used to seek to the next
  *       entry regardless of compression; "u" (only present when "z":1) is the
  *       original decompressed size, for progress/size display.
  *   end marker:
  *     [4 bytes]  0x00000000  (a zero-length header terminates the archive)
+ *
+ * "c" (written by current-format exports) is the lowercase-hex CRC32 of the
+ * ORIGINAL (uncompressed) content. Readers verify a restored file against it,
+ * so a same-length corruption — a bad sector, a proxy mangling bytes — that
+ * every size-based check would pass is caught instead of silently restored.
+ * Entries written before this field existed carry no "c" and are restored
+ * without the check.
  *
  * The format is append-friendly: a job can add a few entries per AJAX request
  * (open in append mode, no terminator) and write the terminator only at the end.
@@ -28,6 +35,17 @@ class ISX_Archive {
 
 	const MAGIC     = "ISXPK\0\0\1";
 	const CHUNK     = 1048576; // 1 MB streaming buffer.
+
+	/**
+	 * verify_batch() fully reads and CRC-checks entries up to this many stored
+	 * bytes; larger ones are only seeked past, because reading them costs as
+	 * much as the restore itself. The bulk of theme/plugin/config files sits
+	 * far below this, and a same-length corruption in any of them is caught
+	 * while the old site is still standing — the seek-only check it replaces
+	 * let those through to surface only after clean() had wiped wp-content.
+	 * Filterable per site: isx_verify_crc_max_bytes.
+	 */
+	const VERIFY_CRC_MAX_BYTES = 4194304; // 4 MB.
 
 	/**
 	 * fwrite() returning fewer bytes than requested (or false) is how a full
@@ -67,6 +85,22 @@ class ISX_Archive {
 	/**
 	 * Append a file from disk (streamed).
 	 *
+	 * The source is first snapshotted to a scratch file (raw or deflated,
+	 * hashing the original bytes as they stream through), then the scratch is
+	 * appended to the archive. Snapshotting is what makes the entry's header
+	 * — written before its content, in this append-only format — honest:
+	 *
+	 *  - The CRC in the header describes *exactly* the bytes the entry stores.
+	 *    A separate hash pass (the previous design) raced a file being
+	 *    rewritten on a live site — the copy stored version A, the hash had
+	 *    recorded version B, and restore then hard-stopped a legitimately
+	 *    packed entry as "corrupt" after the old site was already wiped.
+	 *  - The stored size is exact, and a source that changes size mid-read
+	 *    (growing: only its original-size prefix is kept; shrinking: the entry
+	 *    is failed) can't misalign every subsequent entry.
+	 *  - The source is read once, not twice (the old hash pass was a second
+	 *    full read of every file).
+	 *
 	 * @param string $path         Archive path.
 	 * @param string $source_abs   Absolute path to the source file.
 	 * @param string $archive_name Relative name to store it under.
@@ -88,76 +122,77 @@ class ISX_Archive {
 		}
 		$mtime = @filemtime( $source_abs );
 
-		if ( $compress ) {
-			// Compress to a scratch file first so the real stored size is known
-			// up front (headers precede content in this append-only format, so
-			// there's no going back to patch it in afterwards) — still fully
-			// streamed via a filter, never buffers the whole file in memory,
-			// so this is safe for large uploads too.
-			$tmp = $path . '.entrytmp';
-			$tmp_out = fopen( $tmp, 'wb' );
-			if ( $tmp_out === false ) {
-				return false;
-			}
-			stream_filter_append( $tmp_out, 'zlib.deflate', STREAM_FILTER_WRITE );
-			$in = fopen( $source_abs, 'rb' );
-			if ( $in === false ) {
-				fclose( $tmp_out );
-				@unlink( $tmp );
-				return false;
-			}
-			$ok = true;
-			while ( ! feof( $in ) ) {
-				$buffer = fread( $in, self::CHUNK );
-				if ( $buffer === false ) {
-					$ok = false;
-					break;
-				}
-				if ( ! self::write_ok( $tmp_out, $buffer ) ) {
-					$ok = false;
-					break;
-				}
-			}
-			fclose( $in );
-
-			// The deflate filter buffers, so this fclose() is where a full disk
-			// actually reports itself on this path — fwrite() above only ever saw
-			// the bytes going *into* the filter, never the (smaller, and possibly
-			// unwritable) bytes coming out of it.
-			if ( ! fclose( $tmp_out ) ) {
-				$ok = false;
-			}
-
-			if ( ! $ok ) {
-				@unlink( $tmp );
-				return false;
-			}
-
-			$stored_size = filesize( $tmp );
-			if ( $stored_size === false ) {
-				@unlink( $tmp );
-				return false;
-			}
-
-			$out = fopen( $path, 'ab' );
-			if ( $out === false ) {
-				@unlink( $tmp );
-				return false;
-			}
-			$ok  = self::write_header( $out, $archive_name, $stored_size, $mtime, true, $original_size );
-			$ok  = $ok && self::copy_exactly( $tmp, $out, $stored_size );
-			$ok  = fclose( $out ) && $ok;
-			@unlink( $tmp );
-			return $ok;
-		}
-
-		$out = fopen( $path, 'ab' );
-		if ( $out === false ) {
+		// Snapshot pass: stream the source into a scratch file, hashing the
+		// ORIGINAL bytes as they go (the CRC the reader verifies is over the
+		// uncompressed content). hash_init/hash_update stream, so this never
+		// buffers the file in memory; filterable to disable per site.
+		$tmp     = $path . '.entrytmp';
+		$tmp_out = fopen( $tmp, 'wb' );
+		if ( $tmp_out === false ) {
 			return false;
 		}
-		$ok = self::write_header( $out, $archive_name, $original_size, $mtime );
-		$ok = $ok && self::copy_exactly( $source_abs, $out, $original_size );
-		$ok = fclose( $out ) && $ok;
+		$crc_ctx = apply_filters( 'isx_entry_checksum', true ) ? hash_init( 'crc32b' ) : false;
+		if ( $compress ) {
+			stream_filter_append( $tmp_out, 'zlib.deflate', STREAM_FILTER_WRITE );
+		}
+
+		$in = fopen( $source_abs, 'rb' );
+		if ( $in === false ) {
+			fclose( $tmp_out );
+			@unlink( $tmp );
+			return false;
+		}
+		$ok        = true;
+		$remaining = (int) $original_size;
+		while ( $remaining > 0 ) {
+			$buffer = fread( $in, (int) min( self::CHUNK, $remaining ) );
+			if ( $buffer === false || $buffer === '' ) {
+				$ok = false; // Source shrank mid-read — the snapshot would be short.
+				break;
+			}
+			if ( $crc_ctx ) {
+				hash_update( $crc_ctx, $buffer );
+			}
+			if ( ! self::write_ok( $tmp_out, $buffer ) ) {
+				$ok = false;
+				break;
+			}
+			$remaining -= strlen( $buffer );
+		}
+		fclose( $in );
+
+		// The deflate filter buffers, so this fclose() is where a full disk
+		// actually reports itself on this path — fwrite() above only ever saw
+		// the bytes going *into* the filter, never the (smaller, and possibly
+		// unwritable) bytes coming out of it.
+		if ( ! fclose( $tmp_out ) ) {
+			$ok = false;
+		}
+
+		if ( ! $ok ) {
+			@unlink( $tmp );
+			return false;
+		}
+
+		$stored_size = filesize( $tmp );
+		if ( $stored_size === false ) {
+			@unlink( $tmp );
+			return false;
+		}
+		$crc = $crc_ctx ? hash_final( $crc_ctx ) : '';
+
+		// Commit pass: the snapshot is immutable now, so the header (real CRC,
+		// exact stored size) followed by a byte-exact copy of it into the
+		// archive is guaranteed self-consistent.
+		$out = fopen( $path, 'ab' );
+		if ( $out === false ) {
+			@unlink( $tmp );
+			return false;
+		}
+		$ok  = self::write_header( $out, $archive_name, $stored_size, $mtime, $compress, $compress ? $original_size : null, $crc );
+		$ok  = $ok && self::copy_exactly( $tmp, $out, $stored_size );
+		$ok  = fclose( $out ) && $ok;
+		@unlink( $tmp );
 		return $ok;
 	}
 
@@ -221,12 +256,13 @@ class ISX_Archive {
 		if ( $out === false ) {
 			return false;
 		}
+		$crc = apply_filters( 'isx_entry_checksum', true ) ? hash( 'crc32b', $content ) : '';
 		if ( $compress ) {
 			$deflated = gzdeflate( $content );
-			$ok = self::write_header( $out, $archive_name, strlen( $deflated ), time(), true, strlen( $content ) )
+			$ok = self::write_header( $out, $archive_name, strlen( $deflated ), time(), true, strlen( $content ), $crc )
 				&& self::write_ok( $out, $deflated );
 		} else {
-			$ok = self::write_header( $out, $archive_name, strlen( $content ), time() )
+			$ok = self::write_header( $out, $archive_name, strlen( $content ), time(), false, null, $crc )
 				&& self::write_ok( $out, $content );
 		}
 		return fclose( $out ) && $ok;
@@ -275,7 +311,31 @@ class ISX_Archive {
 		// For a compressed entry the inflate filter buffers, so fwrite() above
 		// reported on bytes entering the filter, not bytes reaching the disk —
 		// fclose() is the only place a full disk shows up on that path.
-		return fclose( $out ) && $ok;
+		$closed = fclose( $out );
+
+		// Verify the restored bytes against the CRC32 the export recorded in
+		// the header. This is what makes a restored file provably the same as
+		// what was packed: a same-length corruption (bad sector, proxy
+		// mangling bytes, a truncated inflate) passes every size-based check
+		// but fails this, and the entry is failed loudly instead of landing
+		// silently. hash_file() reads the just-written file back from the
+		// page cache, so the cost is a second (cached) read.
+		if ( $closed && $ok && ! empty( $header['c'] ) ) {
+			$crc = @hash_file( 'crc32b', $dest_path );
+			if ( $crc === false || $crc !== $header['c'] ) {
+				@unlink( $dest_path );
+				$closed = false; // Callers hard-stop on a false return.
+			}
+		}
+
+		// Restore the original modification time so the clone matches the
+		// source in more than bytes — some plugins and cache layers key off
+		// file mtimes. Old packages without an 'm' field are left at "now".
+		if ( $closed && $ok && ! empty( $header['m'] ) ) {
+			@touch( $dest_path, (int) $header['m'] ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		}
+
+		return $closed && $ok;
 	}
 
 	/**
@@ -294,6 +354,12 @@ class ISX_Archive {
 		}
 		if ( ! empty( $header['z'] ) ) {
 			$data = @gzinflate( $data ); // phpcs:ignore
+			if ( $data === false ) {
+				return false; // Corrupt deflate stream — don't trust the bytes.
+			}
+		}
+		if ( ! empty( $header['c'] ) && hash( 'crc32b', $data ) !== $header['c'] ) {
+			return false; // Same-length corruption the size checks would miss.
 		}
 		return $data;
 	}
@@ -531,9 +597,12 @@ class ISX_Archive {
 				return $fail( $offset, $entries, 'ไฟล์แพ็กเกจเสียหาย (อ่านรายการไฟล์ข้างในไม่ได้)' );
 			}
 
-			// Seek past the content rather than read it — verification is about
-			// the bytes being *there*, and reading 6GB to prove that would take
-			// as long as the restore itself.
+			// Small entries are fully read and CRC-checked rather than seeked
+			// past: a same-length corruption passes a size check, and verify()
+			// is the last gate before clean() wipes the old site — every check
+			// that can reject a package has to happen while it's still
+			// standing. Large entries (media) stay seek-only; extract()
+			// CRC-checks those as they're restored.
 			$content_end = ftell( $handle ) + (int) $header['s'];
 			if ( $size !== false && $content_end > $size ) {
 				fclose( $handle );
@@ -543,7 +612,31 @@ class ISX_Archive {
 					sprintf( 'ไฟล์แพ็กเกจไม่สมบูรณ์ (ข้อมูลของ "%s" ขาดหายไป)', isset( $header['p'] ) ? $header['p'] : '?' )
 				);
 			}
-			fseek( $handle, $content_end, SEEK_SET );
+			if ( (int) $header['s'] <= (int) apply_filters( 'isx_verify_crc_max_bytes', self::VERIFY_CRC_MAX_BYTES ) && ! empty( $header['c'] ) ) {
+				$stored = fread( $handle, (int) $header['s'] );
+				if ( $stored === false || strlen( $stored ) !== (int) $header['s'] ) {
+					fclose( $handle );
+					return $fail( $offset, $entries, sprintf( 'ไฟล์แพ็กเกจไม่สมบูรณ์ (อ่านข้อมูลของ "%s" ไม่ครบ)', isset( $header['p'] ) ? $header['p'] : '?' ) );
+				}
+				$original = $stored;
+				if ( ! empty( $header['z'] ) ) {
+					$original = @gzinflate( $stored ); // phpcs:ignore
+					if ( $original === false ) {
+						fclose( $handle );
+						return $fail( $offset, $entries, sprintf( 'ไฟล์แพ็กเกจเสียหาย (ข้อมูลของ "%s" บีบอัดไม่ถูกต้อง)', isset( $header['p'] ) ? $header['p'] : '?' ) );
+					}
+				}
+				if ( hash( 'crc32b', $original ) !== $header['c'] ) {
+					fclose( $handle );
+					return $fail( $offset, $entries, sprintf( 'ไฟล์แพ็กเกจเสียหาย (ข้อมูลของ "%s" ไม่ตรงกับค่าตรวจสอบ)', isset( $header['p'] ) ? $header['p'] : '?' ) );
+				}
+				$content_end = ftell( $handle ); // Already consumed.
+			} else {
+				// Seek past the content rather than read it — verification is about
+				// the bytes being *there*, and reading 6GB to prove that would take
+				// as long as the restore itself.
+				fseek( $handle, $content_end, SEEK_SET );
+			}
 
 			$offset = $content_end;
 			$entries++;
@@ -566,7 +659,7 @@ class ISX_Archive {
 	 * @param int|null $original_size  Only meaningful when $compressed is true.
 	 * @return bool
 	 */
-	private static function write_header( $out, $name, $size, $mtime, $compressed = false, $original_size = null ) {
+	private static function write_header( $out, $name, $size, $mtime, $compressed = false, $original_size = null, $crc = '' ) {
 		$data = array(
 			'p' => self::sanitize_relative( $name ),
 			's' => (int) $size,
@@ -575,6 +668,9 @@ class ISX_Archive {
 		if ( $compressed ) {
 			$data['z'] = 1;
 			$data['u'] = (int) $original_size;
+		}
+		if ( $crc !== '' ) {
+			$data['c'] = $crc;
 		}
 		$header = wp_json_encode( $data );
 		return self::write_ok( $out, pack( 'V', strlen( $header ) ) ) && self::write_ok( $out, $header );

@@ -19,7 +19,11 @@ class ISX_Crypto {
 
 	const STRING_PREFIX = 'ISXENC1:';
 	const FILE_MAGIC     = 'ISXENC01';
-	const CHUNK_SIZE      = 1048576;
+	// Authenticated container (AES-256-CBC + HMAC-SHA256). New encryptions use
+	// this; decrypt_file() still reads FILE_MAGIC files so older backups keep
+	// working.
+	const FILE_MAGIC_V2 = 'ISXENC02';
+	const CHUNK_SIZE     = 1048576;
 
 	private static function site_key() {
 		return hash( 'sha256', wp_salt( 'auth' ), true );
@@ -61,10 +65,18 @@ class ISX_Crypto {
 	}
 
 	/**
-	 * Password-protect a file, streamed. Container layout:
-	 *   [8 bytes]  magic "ISXENC01"
+	 * Password-protect a file, streamed. Container layout (v2, authenticated):
+	 *   [8 bytes]  magic "ISXENC02"
 	 *   [16 bytes] PBKDF2 salt
 	 *   repeated:  [16 bytes IV][4 bytes ciphertext length][ciphertext]
+	 *   [32 bytes] HMAC-SHA256 over salt + every (IV, length, ciphertext) group
+	 *
+	 * The trailing HMAC makes the container authenticated encryption: an
+	 * attacker who can modify the file can no longer produce a ciphertext that
+	 * decrypts to a valid-looking archive (the old padding check alone caught
+	 * only some tampering). The MAC key is derived from the same password,
+	 * split out of one PBKDF2 output, so no key material is reused between
+	 * AES and HMAC.
 	 *
 	 * @param string $password
 	 * @param string $src_path
@@ -82,13 +94,19 @@ class ISX_Crypto {
 			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ปลายทางไม่สำเร็จ (พื้นที่ดิสก์อาจเต็ม)', 'insightx-backup' ) );
 		}
 
-		$salt = random_bytes( 16 );
-		$key  = self::derive_key( $password, $salt );
+		$salt         = random_bytes( 16 );
+		$key_material = self::derive_keys( $password, $salt );
+		$enc_key      = substr( $key_material, 0, 32 );
+		$mac_key      = substr( $key_material, 32, 32 );
 
 		// Every write is checked: a truncated ciphertext is not recoverable by
 		// any amount of trying later, and an unchecked fwrite() here would have
 		// produced one silently the moment the disk filled up.
-		$ok = self::write_ok( $out, self::FILE_MAGIC ) && self::write_ok( $out, $salt );
+		$ok  = self::write_ok( $out, self::FILE_MAGIC_V2 ) && self::write_ok( $out, $salt );
+		$mac = hash_init( 'sha256', HASH_HMAC, $mac_key );
+		if ( $ok ) {
+			hash_update( $mac, $salt );
+		}
 
 		while ( $ok && ! feof( $in ) ) {
 			$chunk = fread( $in, self::CHUNK_SIZE );
@@ -96,14 +114,18 @@ class ISX_Crypto {
 				break;
 			}
 			$iv         = random_bytes( 16 );
-			$ciphertext = openssl_encrypt( $chunk, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv );
+			$ciphertext = openssl_encrypt( $chunk, 'aes-256-cbc', $enc_key, OPENSSL_RAW_DATA, $iv );
 			if ( $ciphertext === false ) {
 				$ok = false;
 				break;
 			}
-			$ok = self::write_ok( $out, $iv )
-				&& self::write_ok( $out, pack( 'N', strlen( $ciphertext ) ) )
-				&& self::write_ok( $out, $ciphertext );
+			$group = $iv . pack( 'N', strlen( $ciphertext ) ) . $ciphertext;
+			hash_update( $mac, $group );
+			$ok = self::write_ok( $out, $group );
+		}
+
+		if ( $ok ) {
+			$ok = self::write_ok( $out, hash_final( $mac, true ) );
 		}
 
 		fclose( $in );
@@ -136,7 +158,9 @@ class ISX_Crypto {
 
 	/**
 	 * Reverse of encrypt_file(). Returns WP_Error on a wrong password / corrupt
-	 * container (detected via padding validation failing mid-stream).
+	 * container. Detects the container version by magic and dispatches: v1
+	 * (legacy, padding check only) keeps working untouched, v2 additionally
+	 * verifies the trailing HMAC before the plaintext is trusted.
 	 *
 	 * @param string $password
 	 * @param string $src_path
@@ -148,12 +172,29 @@ class ISX_Crypto {
 		if ( $in === false ) {
 			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ต้นทางไม่สำเร็จ', 'insightx-backup' ) );
 		}
+		$magic = fread( $in, strlen( self::FILE_MAGIC_V2 ) );
+		fclose( $in );
 
-		$magic = fread( $in, strlen( self::FILE_MAGIC ) );
+		if ( $magic === self::FILE_MAGIC_V2 ) {
+			return self::decrypt_file_v2( $password, $src_path, $dest_path );
+		}
 		if ( $magic !== self::FILE_MAGIC ) {
-			fclose( $in );
 			return new WP_Error( 'isx_crypto_magic', __( 'ไฟล์นี้ไม่ได้เข้ารหัสด้วย InsightX Backup', 'insightx-backup' ) );
 		}
+		return self::decrypt_file_v1( $password, $src_path, $dest_path );
+	}
+
+	/**
+	 * Legacy (pre-HMAC) container reader — kept so backups made by older
+	 * versions of this plugin still decrypt.
+	 */
+	private static function decrypt_file_v1( $password, $src_path, $dest_path ) {
+		$in = fopen( $src_path, 'rb' );
+		if ( $in === false ) {
+			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ต้นทางไม่สำเร็จ', 'insightx-backup' ) );
+		}
+
+		fread( $in, strlen( self::FILE_MAGIC ) ); // Magic already matched.
 		$salt = fread( $in, 16 );
 		if ( strlen( $salt ) < 16 ) {
 			fclose( $in );
@@ -208,6 +249,95 @@ class ISX_Crypto {
 	}
 
 	/**
+	 * Authenticated (v2) container reader. The HMAC over the whole ciphertext
+	 * is verified before the decrypted archive is accepted — a wrong password
+	 * or any tampering fails here with the same generic message, so no
+	 * padding-based oracle is exposed.
+	 */
+	private static function decrypt_file_v2( $password, $src_path, $dest_path ) {
+		$size = (int) @filesize( $src_path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		$in   = fopen( $src_path, 'rb' );
+		if ( $in === false ) {
+			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ต้นทางไม่สำเร็จ', 'insightx-backup' ) );
+		}
+
+		fread( $in, strlen( self::FILE_MAGIC_V2 ) ); // Magic already matched.
+		$salt = fread( $in, 16 );
+		if ( strlen( $salt ) < 16 ) {
+			fclose( $in );
+			return new WP_Error( 'isx_crypto_corrupt', __( 'ไฟล์เสียหาย', 'insightx-backup' ) );
+		}
+		$key_material = self::derive_keys( $password, $salt );
+		$enc_key      = substr( $key_material, 0, 32 );
+		$mac_key      = substr( $key_material, 32, 32 );
+
+		$out = fopen( $dest_path, 'wb' );
+		if ( $out === false ) {
+			fclose( $in );
+			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ปลายทางไม่สำเร็จ', 'insightx-backup' ) );
+		}
+
+		$mac = hash_init( 'sha256', HASH_HMAC, $mac_key );
+		hash_update( $mac, $salt );
+
+		$pos = strlen( self::FILE_MAGIC_V2 ) + 16;
+		$ok  = true;
+		while ( $size - $pos > 32 ) { // The last 32 bytes are the HMAC.
+			$iv = fread( $in, 16 );
+			if ( $iv === false || strlen( $iv ) < 16 ) {
+				$ok = false;
+				break;
+			}
+			$len_raw = fread( $in, 4 );
+			if ( $len_raw === false || strlen( $len_raw ) < 4 ) {
+				$ok = false;
+				break;
+			}
+			$len        = unpack( 'N', $len_raw )[1];
+			$ciphertext = $len > 0 ? fread( $in, $len ) : '';
+			if ( strlen( $ciphertext ) !== $len ) {
+				$ok = false;
+				break;
+			}
+			$pos += 16 + 4 + $len;
+			hash_update( $mac, $iv . $len_raw . $ciphertext );
+
+			$plain = openssl_decrypt( $ciphertext, 'aes-256-cbc', $enc_key, OPENSSL_RAW_DATA, $iv );
+			if ( $plain === false ) {
+				$ok = false;
+				break;
+			}
+			if ( ! self::write_ok( $out, $plain ) ) {
+				$ok = false;
+				break;
+			}
+		}
+
+		if ( $ok ) {
+			$expected = hash_final( $mac, true );
+			$got      = fread( $in, 32 );
+			$ok       = strlen( $got ) === 32 && hash_equals( $expected, $got );
+		}
+
+		fclose( $in );
+		if ( ! fclose( $out ) ) {
+			$ok = false;
+		}
+
+		if ( ! $ok ) {
+			@unlink( $dest_path );
+			return new WP_Error( 'isx_crypto_password', __( 'รหัสผ่านไม่ถูกต้อง หรือไฟล์เสียหาย', 'insightx-backup' ) );
+		}
+
+		if ( ! ISX_Archive::is_valid( $dest_path ) ) {
+			@unlink( $dest_path );
+			return new WP_Error( 'isx_crypto_password', __( 'รหัสผ่านไม่ถูกต้อง หรือไฟล์เสียหาย', 'insightx-backup' ) );
+		}
+
+		return true;
+	}
+
+	/**
 	 * @param string $path
 	 * @return bool
 	 */
@@ -219,12 +349,23 @@ class ISX_Crypto {
 		if ( $handle === false ) {
 			return false;
 		}
-		$magic = fread( $handle, strlen( self::FILE_MAGIC ) );
+		$magic = fread( $handle, strlen( self::FILE_MAGIC_V2 ) );
 		fclose( $handle );
-		return $magic === self::FILE_MAGIC;
+		return $magic === self::FILE_MAGIC || $magic === self::FILE_MAGIC_V2;
 	}
 
 	private static function derive_key( $password, $salt ) {
 		return hash_pbkdf2( 'sha256', $password, $salt, 100000, 32, true );
+	}
+
+	/**
+	 * v2 key material: 64 bytes from one PBKDF2 pass — first 32 the AES key,
+	 * last 32 the HMAC key — so both keys come from the same expensive
+	 * derivation but no key material is shared between the two algorithms.
+	 *
+	 * @return string 64 raw bytes.
+	 */
+	private static function derive_keys( $password, $salt ) {
+		return hash_pbkdf2( 'sha256', $password, $salt, 100000, 64, true );
 	}
 }

@@ -76,13 +76,37 @@
 		$card.find('.isx-reset-progress').show();
 
 		var stats = data.stats || {};
-		if (stats.admin_password) {
-			window.alert(
-				'รีเซ็ตฐานข้อมูลสำเร็จ\n\n' +
-				'บัญชีผู้ดูแล: ' + stats.admin_login + '\n' +
-				'รหัสผ่านใหม่: ' + stats.admin_password + '\n\n' +
-				'กรุณาบันทึกรหัสผ่านนี้ไว้ — ระบบจะแสดงเพียงครั้งเดียว หน้านี้กำลังจะโหลดใหม่'
-			);
+
+		// The reset response carries a single-use token, not the password
+		// itself — fetch the password once through the reveal endpoint, then
+		// show it. (For the "full" reset the database stats are nested under
+		// stats.database.)
+		var token = stats.admin_password_token ||
+			(stats.database && stats.database.admin_password_token);
+		if (token) {
+			ISX.post('isx_reset_password_reveal', { token: token })
+				.done(function (res) {
+					if (res && res.success && res.data && res.data.admin_password) {
+						window.alert(
+							'รีเซ็ตฐานข้อมูลสำเร็จ\n\n' +
+							'บัญชีผู้ดูแล: ' + (stats.admin_login || (stats.database && stats.database.admin_login)) + '\n' +
+							'รหัสผ่านใหม่: ' + res.data.admin_password + '\n\n' +
+							'กรุณาบันทึกรหัสผ่านนี้ไว้ — ระบบจะแสดงเพียงครั้งเดียว หน้านี้กำลังจะโหลดใหม่'
+						);
+					} else {
+						window.alert(
+							'รีเซ็ตฐานข้อมูลสำเร็จ แต่ดึงรหัสผ่านใหม่ไม่ได้ (' +
+							((res && res.data && res.data.message) || 'โทเค็นหมดอายุ') +
+							') — รีเซ็ตรหัสผ่านได้ทางหน้าจอเข้าสู่ระบบ (ลืมรหัสผ่าน) หรือ WP-CLI'
+						);
+					}
+					window.location.reload();
+				})
+				.fail(function () {
+					window.alert('รีเซ็ตฐานข้อมูลสำเร็จ แต่ดึงรหัสผ่านใหม่ไม่ได้ — รีเซ็ตรหัสผ่านได้ทางหน้าจอเข้าสู่ระบบ (ลืมรหัสผ่าน) หรือ WP-CLI');
+					window.location.reload();
+				});
+			return;
 		}
 
 		// The site's plugins/theme/media/database just changed under this

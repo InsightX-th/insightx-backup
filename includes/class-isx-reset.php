@@ -220,12 +220,23 @@ class ISX_Reset {
 		wp_set_current_user( $user_id );
 		wp_set_auth_cookie( $user_id, true );
 
+		// The new password is NOT returned in this response — the response
+		// travels through more logging surface (proxy logs, retained devtools
+		// history) and would sit there in plain text. Instead a single-use
+		// token is returned; the browser exchanges it once for the password at
+		// ISX_Admin::ajax_reset_password_reveal(), which deletes the transient
+		// on read. Stored encrypted-at-rest with the site key (wp_salt, from
+		// wp-config — not the DB) and expires after 30 minutes even if the
+		// page is closed and the reveal never happens.
+		$token = wp_generate_password( 32, false, false );
+		set_transient( 'isx_reset_pw_' . $token, ISX_Crypto::encrypt_string( $new_password ), 30 * MINUTE_IN_SECONDS );
+
 		return array(
 			'ok'      => true,
 			'message' => 'รีเซ็ตฐานข้อมูลสำเร็จ',
 			'stats'   => array(
-				'admin_login'    => $preserve_login,
-				'admin_password' => $new_password,
+				'admin_login'          => $preserve_login,
+				'admin_password_token' => $token,
 			),
 		);
 	}

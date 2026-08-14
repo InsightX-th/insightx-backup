@@ -168,6 +168,21 @@ class ISX_Export {
 			return self::write_failed( $job, $job->db_dump() );
 		}
 
+		// A freshly created dump gets a charset declaration as its first line,
+		// so the import replays rows under the same charset they were written
+		// with (utf8mb4) regardless of the target connection's default —
+		// without it, non-ASCII text (Thai etc.) can garble when the two
+		// databases differ. Only written when the file is empty: a resumed job
+		// already has its header from the first call.
+		$charset_line = "/*!40101 SET NAMES utf8mb4 */;\n";
+		clearstatcache( true, $job->db_dump() );
+		if ( (int) @filesize( $job->db_dump() ) === 0 ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			if ( @fwrite( $fh, $charset_line ) !== strlen( $charset_line ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+				fclose( $fh );
+				return self::write_failed( $job, $job->db_dump() );
+			}
+		}
+
 		do {
 			$ti  = (int) $cursor['ti'];
 			$off = (int) $cursor['off'];
@@ -183,11 +198,13 @@ class ISX_Export {
 
 			$table = $tables[ $ti ];
 
-			$where = '';
+			// Structured exclusion, never raw SQL: dump_rows() binds every value
+			// through $wpdb->prepare() (see its $exclude parameter).
+			$exclude = array();
 			if ( $table === $wpdb->comments && ! empty( $options['exclude_spam_comments'] ) ) {
-				$where = "comment_approved != 'spam'";
+				$exclude['comment_approved'] = array( 'spam' );
 			} elseif ( $table === $wpdb->posts && ! empty( $options['exclude_post_revisions'] ) ) {
-				$where = "post_type != 'revision'";
+				$exclude['post_type'] = array( 'revision' );
 			}
 
 			// Captured once per table (at off === 0): the total row count (for
@@ -207,7 +224,7 @@ class ISX_Export {
 			$keyset     = isset( $cursor['keyset'] ) ? $cursor['keyset'] : null;
 			$last_pk    = isset( $cursor['last_pk'] ) ? $cursor['last_pk'] : null;
 
-			$res = ISX_Database::dump_rows( $fh, $table, $off, self::ROWS_PER_BATCH, $where, $search, $replace, $keyset, $last_pk );
+			$res = ISX_Database::dump_rows( $fh, $table, $off, self::ROWS_PER_BATCH, $exclude, $search, $replace, $keyset, $last_pk );
 			if ( empty( $res['ok'] ) ) {
 				fclose( $fh );
 				return self::write_failed( $job, $job->db_dump() );

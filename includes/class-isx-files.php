@@ -667,8 +667,49 @@ class ISX_Files {
 	}
 
 	/**
+	 * Source→target URL map applied to restored TEXT files (CSS/JS/HTML…),
+	 * set by ISX_Import before the extract step. The database half of an
+	 * import already rewrites URLs; on-disk assets — builder-generated CSS,
+	 * theme font references, minifier output that isn't in cache/ — are
+	 * plain files the DB rewrite can't reach, and without this they keep
+	 * serving the old site's URLs (broken styles/fonts) after an import.
+	 *
+	 * @var array<string,string>
+	 */
+	private static $url_replace_map = array();
+
+	/**
+	 * @param array<string,string> $map old => new URL strings.
+	 * @return void
+	 */
+	public static function set_url_replace_map( array $map ) {
+		self::$url_replace_map = $map;
+	}
+
+	/** Text-file size cap (bytes) for the post-restore URL pass. Anything
+	 *  larger is restored untouched: a URL split across a chunk boundary
+	 *  would be missed or half-replaced, and the biggest text files are
+	 *  almost never worth the risk. Filterable per site. */
+	const TEXT_REPLACE_MAX_BYTES = 8388608; // 8 MB
+
+	/**
+	 * Whether a content-relative path is a text asset worth rewriting.
+	 *
+	 * @param string $rel Content-relative path.
+	 * @return bool
+	 */
+	private static function is_text_asset( $rel ) {
+		$ext = strtolower( (string) pathinfo( $rel, PATHINFO_EXTENSION ) );
+		return in_array(
+			$ext,
+			array( 'css', 'js', 'mjs', 'json', 'html', 'htm', 'xml', 'txt', 'svg', 'scss', 'sass', 'less', 'webmanifest', 'map' ),
+			true
+		);
+	}
+
+	/**
 	 * Stream one archive entry back to disk when it belongs to the content
-	 * namespace.
+	 * namespace, then rewrite old-domain URLs inside text assets.
 	 *
 	 * @param array    $header
 	 * @param resource $handle
@@ -688,7 +729,25 @@ class ISX_Files {
 		$dest = untrailingslashit( WP_CONTENT_DIR ) . '/' . $rel;
 		wp_mkdir_p( dirname( $dest ) );
 
-		return ISX_Archive::stream_entry_to_file( $handle, $header, $dest );
+		$ok = ISX_Archive::stream_entry_to_file( $handle, $header, $dest );
+		if ( $ok && ! empty( self::$url_replace_map ) && self::is_text_asset( $rel ) ) {
+			$size = @filesize( $dest ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			if ( $size !== false && $size <= (int) apply_filters( 'isx_replace_file_urls_max_bytes', self::TEXT_REPLACE_MAX_BYTES ) ) {
+				$content = @file_get_contents( $dest ); // phpcs:ignore WordPress.WP.AlternativeFunctions, WordPress.PHP.NoSilencedErrors
+				if ( $content === false ) {
+					return false; // Just wrote it; unreadable now is a real failure.
+				}
+				// Skip anything with a NUL byte — almost certainly binary, and
+				// running strtr over binary is where corruption sneaks in.
+				if ( strpos( $content, "\0" ) === false ) {
+					$replaced = strtr( $content, self::$url_replace_map );
+					if ( $replaced !== $content && @file_put_contents( $dest, $replaced ) === false ) { // phpcs:ignore WordPress.WP.AlternativeFunctions, WordPress.PHP.NoSilencedErrors
+						return false; // Same class as a failed restore write.
+					}
+				}
+			}
+		}
+		return $ok;
 	}
 
 	/**

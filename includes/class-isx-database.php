@@ -238,24 +238,46 @@ class ISX_Database {
 	 * ORDER BY pk LIMIT n) — avoiding the O(n²) deep-OFFSET scan on big tables —
 	 * otherwise by LIMIT offset, n.
 	 *
+	 * Rows to skip are expressed as structured data ($exclude: column => list of
+	 * values) and every value goes through $wpdb->prepare() — the previous
+	 * $extra_where parameter took a raw SQL string. It was only ever fed static
+	 * constants by its callers, but a raw-SQL hole invites the next caller to
+	 * interpolate user input into it, and prepared values cost nothing here.
+	 *
 	 * @param resource     $fh
 	 * @param string       $table
 	 * @param int          $offset        Row offset (offset mode only).
 	 * @param int          $limit
-	 * @param string       $extra_where   Raw SQL condition (already trusted/static), no leading AND/WHERE.
+	 * @param array        $exclude       Column => list of values whose rows are skipped,
+	 *                                    e.g. array( 'comment_approved' => array( 'spam' ) ).
 	 * @param string|array $search        Find & replace pairs applied to every row before writing (export-time).
 	 * @param string|array $replace
 	 * @param string|null  $keyset_column PK column to seek-paginate on, or null for offset paging.
 	 * @param int|null     $last_pk       Highest PK written so far (keyset mode); null for the first batch.
 	 * @return array { written:int, last_pk:int|null, ok:bool }
 	 */
-	public static function dump_rows( $fh, $table, $offset, $limit, $extra_where = '', $search = array(), $replace = array(), $keyset_column = null, $last_pk = null ) {
+	public static function dump_rows( $fh, $table, $offset, $limit, $exclude = array(), $search = array(), $replace = array(), $keyset_column = null, $last_pk = null ) {
 		global $wpdb;
 
 		$sql   = 'SELECT * FROM `' . self::ident( $table ) . '`';
 		$conds = array();
-		if ( $extra_where !== '' ) {
-			$conds[] = $extra_where;
+		foreach ( (array) $exclude as $column => $values ) {
+			$column = (string) $column;
+			if ( $column === '' ) {
+				continue;
+			}
+			$values = array_values( (array) $values );
+			if ( empty( $values ) ) {
+				continue;
+			}
+			// All values bound through prepare() — never interpolated. A single
+			// value uses "<>" (semantically identical to the old "!=", and to
+			// NOT IN: a NULL column is excluded by either form in MySQL).
+			if ( count( $values ) === 1 ) {
+				$conds[] = '`' . self::ident( $column ) . '` <> ' . $wpdb->prepare( '%s', $values[0] );
+			} else {
+				$conds[] = '`' . self::ident( $column ) . '` NOT IN (' . $wpdb->prepare( implode( ',', array_fill( 0, count( $values ), '%s' ) ), $values ) . ')';
+			}
 		}
 		if ( $keyset_column !== null && $last_pk !== null ) {
 			$conds[] = '`' . self::ident( $keyset_column ) . '` > ' . $wpdb->prepare( '%d', $last_pk );
@@ -410,6 +432,14 @@ class ISX_Database {
 			return;
 		}
 
+		// The charset declaration our own export writes as the dump's first
+		// line — apply it to the import connection so rows replay under the
+		// same charset they were dumped with (protects non-ASCII text).
+		if ( strpos( $line, '/*!40101 SET NAMES ' ) === 0 || strpos( $line, 'SET NAMES ' ) === 0 ) {
+			$wpdb->query( $line ); // phpcs:ignore WordPress.DB.PreparedSQL
+			return;
+		}
+
 		// Old packages (before this SQL-text format) used a custom
 		// tab-delimited "T\t<table>\t<payload>" / "R\t<table>\t<payload>" line
 		// format — keep reading those too.
@@ -488,7 +518,12 @@ class ISX_Database {
 		}
 
 		if ( $type === 'R' ) {
-			$row = @unserialize( base64_decode( $payload ) ); // phpcs:ignore
+			// allowed_classes => false: the payload comes from a backup package
+			// the importing admin chose, and unserialize() on attacker-crafted
+			// data would otherwise instantiate any class present in the WP
+			// context (Object Injection via __wakeup/__destruct). Rows are only
+			// ever plain column => value arrays, so no objects are needed.
+			$row = @unserialize( base64_decode( $payload ), array( 'allowed_classes' => false ) ); // phpcs:ignore
 			if ( ! is_array( $row ) ) {
 				return;
 			}

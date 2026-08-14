@@ -117,7 +117,10 @@ class ISX_Job {
 	 * @return ISX_Job|null
 	 */
 	public static function load( $id ) {
-		if ( ! preg_match( '/^isx_[A-Za-z0-9]+$/', (string) $id ) ) {
+		// Length-capped as well as charset-validated: create() always generates
+		// exactly 20 body chars, and the cap keeps the id from being a vector
+		// for unbounded paths/state reads even if a caller ever passes junk.
+		if ( ! preg_match( '/^isx_[A-Za-z0-9]{16,32}$/', (string) $id ) ) {
 			return null;
 		}
 
@@ -172,7 +175,7 @@ class ISX_Job {
 	 * @return bool
 	 */
 	public static function exists( $id ) {
-		if ( ! preg_match( '/^isx_[A-Za-z0-9]+$/', (string) $id ) ) {
+		if ( ! preg_match( '/^isx_[A-Za-z0-9]{16,32}$/', (string) $id ) ) {
 			return false;
 		}
 		foreach ( self::search_paths() as $base ) {
