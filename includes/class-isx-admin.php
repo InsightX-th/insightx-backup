@@ -734,6 +734,63 @@ class ISX_Admin {
 	}
 
 	/**
+	 * Turn a fatal error into a JSON answer instead of a dead response.
+	 *
+	 * A fatal (or an OOM, or a hit execution limit) ends the request mid-stream:
+	 * admin-ajax replies 500 with an HTML body, jQuery's parser fails, and every
+	 * one of these screens can only report "the server can't be reached" — which
+	 * points the reader at their network when the real cause is a named error on
+	 * a named line. This has cost real debugging time twice now (see the 0.1.16
+	 * and 0.1.20 entries in readme.txt), so the endpoints that walk a multi-GB
+	 * package say what actually happened.
+	 *
+	 * Only registers once per request, and stays quiet when the response already
+	 * went out (the normal path: wp_send_json_* sends headers, then exits).
+	 *
+	 * @param string $context Short label naming the operation, shown to the user.
+	 * @return void
+	 */
+	private static function report_fatals_as_json( $context ) {
+		static $registered = false;
+		if ( $registered ) {
+			return;
+		}
+		$registered = true;
+
+		register_shutdown_function(
+			function () use ( $context ) {
+				$error = error_get_last();
+				if ( ! $error || ! in_array( $error['type'], array( E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR ), true ) ) {
+					return;
+				}
+				// Something already reached the browser — either the successful
+				// response, or PHP's own error output with display_errors on.
+				// Appending JSON to that would only corrupt it further.
+				if ( headers_sent() ) {
+					return;
+				}
+
+				$where = basename( (string) $error['file'] ) . ':' . (int) $error['line'];
+				ISX_Logger::log_error(
+					'backup',
+					$context . 'ล้มเหลวกลางคัน: ' . $error['message'],
+					array( 'file' => $error['file'], 'line' => (int) $error['line'] )
+				);
+				wp_send_json_error(
+					array(
+						'message' => sprintf(
+							'%sล้มเหลวกลางคัน: %s (%s) — ดูรายละเอียดได้ที่หน้า Log',
+							$context,
+							$error['message'],
+							$where
+						),
+					)
+				);
+			}
+		);
+	}
+
+	/**
 	 * End a job that the user asked to cancel, and describe it the way the poll
 	 * loop expects. Only ever called from inside with_lock(): releasing a pending
 	 * multipart upload and letting finish() sweep the scratch files is only safe
@@ -1554,6 +1611,8 @@ class ISX_Admin {
 	 */
 	public static function ajax_backups_list_content() {
 		self::guard( 'export' );
+		self::report_fatals_as_json( 'การอ่านรายการในข้อมูลสำรอง' );
+		self::raise_memory_limit();
 
 		$name = isset( $_POST['name'] ) ? sanitize_text_field( wp_unslash( $_POST['name'] ) ) : '';
 		$path = ISX_Backups::path( $name );
@@ -1770,6 +1829,8 @@ class ISX_Admin {
 	 */
 	public static function ajax_backups_verify() {
 		self::guard( 'export' );
+		self::report_fatals_as_json( 'การตรวจสอบข้อมูลสำรอง' );
+		self::raise_memory_limit();
 
 		$name = isset( $_POST['name'] ) ? sanitize_text_field( wp_unslash( $_POST['name'] ) ) : '';
 		$path = ISX_Backups::path( $name );

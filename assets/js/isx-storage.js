@@ -836,9 +836,22 @@
 							'</p>'
 						);
 					})
-					.fail(function () {
+					.fail(function (jqXHR) {
+						// Same reasoning as the listing walk above: a fatal on the
+						// server answers 500 with no JSON, and calling that "can't
+						// reach the server" sent every reader looking at their
+						// network instead of the PHP error log.
+						var status = jqXHR && jqXHR.status ? jqXHR.status : 0;
 						ISX.resetTweens($body);
-						$body.html('<p class="isx-fetch-status is-error">เชื่อมต่อเซิร์ฟเวอร์ไม่ได้</p>');
+						$body.html(
+							'<p class="isx-fetch-status is-error">' +
+								escapeHtmlLocal(
+									status
+										? 'ตรวจสอบไม่สำเร็จ (HTTP ' + status + ') — เซิร์ฟเวอร์ตอบผิดพลาด ดูสาเหตุได้ที่หน้า Log'
+										: 'ตรวจสอบไม่สำเร็จ — เชื่อมต่อเซิร์ฟเวอร์ไม่ได้'
+								) +
+							'</p>'
+						);
 					});
 			}
 

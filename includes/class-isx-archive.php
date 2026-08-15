@@ -348,11 +348,14 @@ class ISX_Archive {
 	 * @return string|false
 	 */
 	public static function read_entry_string( $handle, $header ) {
-		$data = fread( $handle, (int) $header['s'] );
+		// fread() throws on a length of 0 under PHP 8, and an entry is allowed
+		// to be empty — see verify_batch() for where that actually bit.
+		$len  = (int) $header['s'];
+		$data = $len > 0 ? fread( $handle, $len ) : '';
 		if ( $data === false ) {
 			return false;
 		}
-		if ( ! empty( $header['z'] ) ) {
+		if ( $len > 0 && ! empty( $header['z'] ) ) {
 			$data = @gzinflate( $data ); // phpcs:ignore
 			if ( $data === false ) {
 				return false; // Corrupt deflate stream — don't trust the bytes.
@@ -612,14 +615,22 @@ class ISX_Archive {
 					sprintf( 'ไฟล์แพ็กเกจไม่สมบูรณ์ (ข้อมูลของ "%s" ขาดหายไป)', isset( $header['p'] ) ? $header['p'] : '?' )
 				);
 			}
-			if ( (int) $header['s'] <= (int) apply_filters( 'isx_verify_crc_max_bytes', self::VERIFY_CRC_MAX_BYTES ) && ! empty( $header['c'] ) ) {
-				$stored = fread( $handle, (int) $header['s'] );
-				if ( $stored === false || strlen( $stored ) !== (int) $header['s'] ) {
+			$len = (int) $header['s'];
+			if ( $len <= (int) apply_filters( 'isx_verify_crc_max_bytes', self::VERIFY_CRC_MAX_BYTES ) && ! empty( $header['c'] ) ) {
+				// Zero-byte entries are ordinary in a real site (empty index.php
+				// guards, placeholder files, minified assets that compiled to
+				// nothing) and the export records crc32b('') = "00000000" for
+				// them, so they reach this branch — but fread() with a length of
+				// 0 is a ValueError on PHP 8, which killed the whole verify
+				// request and surfaced in the browser as "can't reach the
+				// server". Read nothing and let the CRC below confirm it.
+				$stored = $len > 0 ? fread( $handle, $len ) : '';
+				if ( $len > 0 && ( $stored === false || strlen( $stored ) !== $len ) ) {
 					fclose( $handle );
 					return $fail( $offset, $entries, sprintf( 'ไฟล์แพ็กเกจไม่สมบูรณ์ (อ่านข้อมูลของ "%s" ไม่ครบ)', isset( $header['p'] ) ? $header['p'] : '?' ) );
 				}
 				$original = $stored;
-				if ( ! empty( $header['z'] ) ) {
+				if ( $len > 0 && ! empty( $header['z'] ) ) {
 					$original = @gzinflate( $stored ); // phpcs:ignore
 					if ( $original === false ) {
 						fclose( $handle );
