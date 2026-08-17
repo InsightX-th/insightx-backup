@@ -1,0 +1,29 @@
+name: Tests
+
+# Runs the self-contained test suite (tests/run.php) on every push to main
+# and every pull request, across the PHP versions the plugin supports
+# (readme.txt: PHP 7.4+). Failing a matrix row fails the run — the suite
+# covers the import restore/sweep logic that has historically broken in ways
+# a syntax check alone never caught.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  php:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: [ '7.4', '8.0', '8.1', '8.2', '8.3' ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: zlib
+
+      - name: Run test suite
+        run: php tests/run.php
