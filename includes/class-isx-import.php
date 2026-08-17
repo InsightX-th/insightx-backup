@@ -277,6 +277,19 @@ class ISX_Import {
 		$cursor  = (array) $job->get( 'cursor', array( 'offset' => ISX_Archive::first_offset() ) );
 		$db_dump = $job->db_dump();
 
+		// Where this step records every file it restores, so finalize()'s sweep
+		// can tell "restored by the package" apart from "leftover of the old
+		// site" without trusting file mtimes — restored files carry their
+		// original mtimes from the archive (ISX_Archive::stream_entry_to_file()),
+		// so an mtime-based guess deletes freshly-restored themes exactly when
+		// the package was exported a while ago. Created empty on first entry;
+		// resumed runs (multi-poll imports) append to whatever is already there.
+		$restored_log = $job->restored_list();
+		if ( ! is_file( $restored_log ) ) {
+			@touch( $restored_log ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		}
+		ISX_Files::set_restored_log( $restored_log );
+
 		$manifest_ref = array( 'data' => $job->get( 'manifest', array() ) );
 
 		// URL rewrite for restored FILE contents (CSS/JS/HTML…) — the database
@@ -514,18 +527,26 @@ class ISX_Import {
 		// the previously-active theme / plugins / mu-plugins / drop-ins in
 		// place so the site could keep booting between polls (see
 		// ISX_Files::deferred_roots()). The package is fully extracted by now,
-		// so whatever it did not write over is a leftover of the old site and
-		// can go.
+		// so whatever restored.list does not name is a leftover of the old site
+		// and can go.
 		$deferred = (array) $job->get( 'deferred_roots', array() );
-		$started  = (int) $job->get( 'created', 0 );
-		if ( ! empty( $deferred ) && $started > 0 ) {
-			$swept = ISX_Files::sweep_deferred( $deferred, $started );
+		if ( ! empty( $deferred ) ) {
+			$swept = ISX_Files::sweep_deferred( $deferred, $job->restored_list() );
 			ISX_Logger::log_debug( 'import', 'ลบไฟล์เก่าที่เหลือค้าง', array( 'job' => $job->id(), 'deleted' => $swept ) );
 		}
 
 		// Put this site's own options back over the package's, now that the
 		// whole dump has been applied — see snapshot_options().
 		self::restore_preserved_options( $job );
+
+		// Re-assert the package's template/stylesheet/active_plugins over the
+		// imported values — see reassert_package_theme(). Only when the package
+		// actually carried a database (imported_tables is empty for a
+		// "ไม่รวมฐานข้อมูล" export, and then the target's own options must
+		// stay put).
+		if ( ! empty( $imported_tables ) ) {
+			self::reassert_package_theme( $job );
+		}
 
 		// Flush rewrite rules on next load; clear caches.
 		delete_option( 'rewrite_rules' );
@@ -572,6 +593,40 @@ class ISX_Import {
 			'done'     => true,
 			'message'  => $message,
 		);
+	}
+
+	/**
+	 * Re-assert the package's theme and plugins over the values the dump just
+	 * imported — the same safety net All-in-One WP Migration builds with its
+	 * package.json: it blanks template/stylesheet/active_plugins out of the
+	 * dump at export and re-applies them from the manifest at the end of its
+	 * import, so the site always comes up on the theme/plugins the source ran.
+	 *
+	 * Here the dump normally carries these values already (this plugin doesn't
+	 * blank them), so this is a belt-and-braces pass for the cases that can
+	 * still go wrong: the URL rewrite mangling a plugin path that contained the
+	 * old domain, a builder's option row corrupting mid-dump, a table that was
+	 * excluded from the export. Stylesheet first, then template, then the
+	 * plugin list — the finalize() callers that follow (the safety net that
+	 * re-adds this plugin, deactivate_lockout_plugins()) run after, so their
+	 * adjustments still win.
+	 *
+	 * @param ISX_Job $job
+	 * @return void
+	 */
+	private static function reassert_package_theme( ISX_Job $job ) {
+		$manifest = (array) $job->get( 'manifest', array() );
+
+		foreach ( array( 'stylesheet', 'template' ) as $opt ) {
+			if ( isset( $manifest[ $opt ] ) && is_string( $manifest[ $opt ] ) && $manifest[ $opt ] !== '' ) {
+				update_option( $opt, $manifest[ $opt ] );
+			}
+		}
+
+		$plugins = isset( $manifest['active_plugins'] ) ? (array) $manifest['active_plugins'] : array();
+		if ( ! empty( $plugins ) ) {
+			update_option( 'active_plugins', array_values( array_unique( array_map( 'strval', $plugins ) ) ) );
+		}
 	}
 
 	/**

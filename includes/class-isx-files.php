@@ -563,19 +563,24 @@ class ISX_Files {
 	 * left of the previously-active theme / plugins / mu-plugins / drop-ins
 	 * that the package did NOT restore over.
 	 *
-	 * "Did not restore over" is decided by mtime: stream_entry_to_file() writes
-	 * every extracted file fresh, so anything under a deferred root still
-	 * carrying an mtime from before this job started is a leftover of the old
-	 * site. Called from ISX_Import::finalize(), i.e. only once the extract and
-	 * the database import have both completed and the site no longer needs the
-	 * old code to boot.
+	 * "Did not restore over" is decided from the job's restored.list — the
+	 * exact set of files the extract step wrote back out of the archive (see
+	 * restore_stream() / ISX_Job::restored_list()) — not from mtimes. mtimes
+	 * can't tell the two apart: stream_entry_to_file() restores each file's
+	 * original mtime from the archive, so a theme that shipped in the package
+	 * can look every bit as "old" as a leftover of the previous site, and the
+	 * old mtime heuristic deleted freshly-restored themes/plugins exactly when
+	 * the package was exported a while ago. Called from ISX_Import::finalize(),
+	 * i.e. only once the extract and the database import have both completed
+	 * and the site no longer needs the old code to boot.
 	 *
-	 * @param array $roots     The deferred roots captured when the clean step ran.
-	 * @param int   $before_ts Files with an mtime older than this are stale.
+	 * @param array  $roots        The deferred roots captured when the clean step ran.
+	 * @param string $restored_log Path to the restored.list written by the extract step.
 	 * @return int Number of files deleted.
 	 */
-	public static function sweep_deferred( array $roots, $before_ts ) {
+	public static function sweep_deferred( array $roots, $restored_log ) {
 		$protected = self::permanent_protected();
+		$restored  = self::read_path_set( $restored_log );
 		$deleted   = 0;
 		$fresh     = array();
 
@@ -584,7 +589,11 @@ class ISX_Files {
 				continue;
 			}
 			if ( is_file( $root ) ) {
-				if ( @filemtime( $root ) < $before_ts && @unlink( $root ) ) { // phpcs:ignore
+				// A drop-in at the wp-content root (index.php, advanced-cache.php…)
+				// — if the package didn't restore it, it's a leftover of the old
+				// site (the source never had it, or it was excluded from the
+				// export) and the package defines the new site's wp-content.
+				if ( ! isset( $restored[ str_replace( '\\', '/', $root ) ] ) && @unlink( $root ) ) { // phpcs:ignore
 					$deleted++;
 				}
 				continue;
@@ -603,7 +612,7 @@ class ISX_Files {
 			// by the source site, and should go.
 			$container = self::sweep_container( $root );
 			if ( ! isset( $fresh[ $container ] ) ) {
-				$fresh[ $container ] = is_dir( $container ) && self::has_fresh_file( $container, $before_ts );
+				$fresh[ $container ] = self::container_has_restored( $container, $restored );
 			}
 			if ( ! $fresh[ $container ] ) {
 				continue;
@@ -622,7 +631,7 @@ class ISX_Files {
 					@rmdir( $abs ); // phpcs:ignore
 					continue;
 				}
-				if ( $entry->getMTime() < $before_ts && @unlink( $abs ) ) { // phpcs:ignore
+				if ( ! isset( $restored[ str_replace( '\\', '/', $abs ) ] ) && @unlink( $abs ) ) { // phpcs:ignore
 					$deleted++;
 				}
 			}
@@ -646,20 +655,44 @@ class ISX_Files {
 	}
 
 	/**
-	 * Whether anything under $dir was written on or after $ts — i.e. whether the
-	 * extract that just ran put any content here at all. Stops at the first hit.
+	 * Read a newline-delimited list of absolute paths into an associative set
+	 * (path => true, separators normalised to '/') for O(1) membership checks.
 	 *
-	 * @param string $dir
-	 * @param int    $ts
+	 * @param string $log
+	 * @return array<string,bool>
+	 */
+	private static function read_path_set( $log ) {
+		$set = array();
+		if ( ! is_file( $log ) ) {
+			return $set;
+		}
+		$fh = @fopen( $log, 'rb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		if ( $fh === false ) {
+			return $set;
+		}
+		while ( ( $line = fgets( $fh ) ) !== false ) {
+			$line = rtrim( $line, "\r\n" );
+			if ( $line !== '' ) {
+				$set[ str_replace( '\\', '/', $line ) ] = true;
+			}
+		}
+		fclose( $fh );
+		return $set;
+	}
+
+	/**
+	 * Whether the restored set contains anything under $container — the "did
+	 * the package restore anything into plugins/ or themes/ at all?" answer
+	 * that gates the per-root sweep (see sweep_deferred()).
+	 *
+	 * @param string          $container
+	 * @param array<string,bool> $restored
 	 * @return bool
 	 */
-	private static function has_fresh_file( $dir, $ts ) {
-		$iterator = new RecursiveIteratorIterator(
-			new RecursiveDirectoryIterator( $dir, FilesystemIterator::SKIP_DOTS ),
-			RecursiveIteratorIterator::LEAVES_ONLY
-		);
-		foreach ( $iterator as $file ) {
-			if ( $file->isFile() && $file->getMTime() >= $ts ) {
+	private static function container_has_restored( $container, array $restored ) {
+		$prefix = str_replace( '\\', '/', untrailingslashit( $container ) ) . '/';
+		foreach ( $restored as $path => $unused ) {
+			if ( strpos( $path, $prefix ) === 0 ) {
 				return true;
 			}
 		}
@@ -684,6 +717,24 @@ class ISX_Files {
 	 */
 	public static function set_url_replace_map( array $map ) {
 		self::$url_replace_map = $map;
+	}
+
+	/**
+	 * Path to the job's restored.list (set by ISX_Import before the extract
+	 * step). While set, restore_stream() appends every file it writes back out
+	 * of the archive, so finalize()'s sweep_deferred() knows exactly what the
+	 * package restored — see sweep_deferred() for why mtimes can't answer that.
+	 *
+	 * @var string|null
+	 */
+	private static $restored_log = null;
+
+	/**
+	 * @param string $path Absolute path to the restored.list file.
+	 * @return void
+	 */
+	public static function set_restored_log( $path ) {
+		self::$restored_log = $path;
 	}
 
 	/** Text-file size cap (bytes) for the post-restore URL pass. Anything
@@ -730,6 +781,9 @@ class ISX_Files {
 		wp_mkdir_p( dirname( $dest ) );
 
 		$ok = ISX_Archive::stream_entry_to_file( $handle, $header, $dest );
+		if ( $ok ) {
+			self::log_restored( $dest );
+		}
 		if ( $ok && ! empty( self::$url_replace_map ) && self::is_text_asset( $rel ) ) {
 			$size = @filesize( $dest ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
 			if ( $size !== false && $size <= (int) apply_filters( 'isx_replace_file_urls_max_bytes', self::TEXT_REPLACE_MAX_BYTES ) ) {
@@ -748,6 +802,30 @@ class ISX_Files {
 			}
 		}
 		return $ok;
+	}
+
+	/**
+	 * Append one restored path to the job's restored.list, if the import set
+	 * one (see set_restored_log()). Locked so concurrent poll requests — the
+	 * browser and WP-Cron can race the same job — can't interleave two lines
+	 * into one.
+	 *
+	 * @param string $dest
+	 * @return void
+	 */
+	private static function log_restored( $dest ) {
+		if ( self::$restored_log === null ) {
+			return;
+		}
+		$fh = @fopen( self::$restored_log, 'ab' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		if ( $fh === false ) {
+			return;
+		}
+		if ( flock( $fh, LOCK_EX ) ) { // phpcs:ignore
+			@fwrite( $fh, $dest . "\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			flock( $fh, LOCK_UN ); // phpcs:ignore
+		}
+		fclose( $fh );
 	}
 
 	/**

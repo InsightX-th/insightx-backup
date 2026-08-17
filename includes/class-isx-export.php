@@ -88,6 +88,14 @@ class ISX_Export {
 			'table_prefix'            => $wpdb->prefix,
 			'wp_version'              => get_bloginfo( 'version' ),
 			'no_replace_email_domain' => ! empty( $options['no_replace_email_domain'] ),
+			// Recorded so the import can re-assert the theme/plugins at the very
+			// end (same trick All-in-One WP Migration plays with its
+			// package.json — see ISX_Import::reassert_package_theme()). The dump
+			// normally carries these values too, but this copy is immune to any
+			// mangling the URL rewrite does on the way in.
+			'template'                => (string) get_option( 'template' ),
+			'stylesheet'              => (string) get_option( 'stylesheet' ),
+			'active_plugins'          => (array) get_option( 'active_plugins', array() ),
 		);
 
 		$tables = empty( $options['exclude_database'] ) ? ISX_Database::tables() : array();

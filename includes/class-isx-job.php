@@ -215,6 +215,17 @@ class ISX_Job {
 	}
 
 	/**
+	 * Work list for finalize()'s sweep: every file the extract step restored
+	 * from the archive, one absolute path per line, appended as it goes — so
+	 * the sweep can tell "restored by the package" apart from "leftover of the
+	 * old site" without trusting file mtimes (restored files carry their
+	 * original mtimes from the archive, see ISX_Archive::stream_entry_to_file()).
+	 */
+	public function restored_list() {
+		return $this->dir . '/restored.list';
+	}
+
+	/**
 	 * Snapshot of the options this site keeps across an import, taken before
 	 * the database is replaced and written back in ISX_Import::finalize().
 	 *
