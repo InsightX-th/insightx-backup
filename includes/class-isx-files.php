@@ -584,6 +584,18 @@ class ISX_Files {
 		$deleted   = 0;
 		$fresh     = array();
 
+		// Defense in depth on top of the per-container gate: an entirely
+		// empty log means the extract never reported what it restored (ran
+		// under pre-0.1.21 code, or the file vanished). Sweeping on that
+		// would treat every file under the deferred roots — freshly-restored
+		// themes included — as a leftover. The container gate alone would
+		// already skip everything here (no container has restored entries),
+		// but say so explicitly: leave the old files in place, deleted ones
+		// are not recoverable.
+		if ( empty( $restored ) ) {
+			return 0;
+		}
+
 		foreach ( $roots as $root ) {
 			if ( self::is_excluded( $root, $protected ) ) {
 				continue;
@@ -778,6 +790,24 @@ class ISX_Files {
 		}
 		$rel  = substr( $path, strlen( self::NS ) );
 		$dest = untrailingslashit( WP_CONTENT_DIR ) . '/' . $rel;
+
+		// Never overwrite the plugin driving this very import (or its storage
+		// dir / WP's upgrade dir) with the package's copy of itself. The
+		// package carries this plugin's own files — export packs plugins/ as
+		// it finds them — and restoring them mid-extract swaps the running
+		// code for whatever version the SOURCE exported (plugins/ come first
+		// in the archive, so it happens in the opening polls): from then on
+		// every step, including the finalize sweep, runs that version's
+		// logic, restored.list logging stops, and an old package silently
+		// re-enables the very sweep bug this version fixes. The target keeps
+		// its installed version instead, so the whole import runs on one
+		// consistent codebase. The clean pass and the sweep already leave
+		// these paths alone (permanent_protected()), so skipping them here
+		// keeps all three passes in agreement.
+		if ( self::is_excluded( $dest, self::permanent_protected() ) ) {
+			return null;
+		}
+
 		wp_mkdir_p( dirname( $dest ) );
 
 		$ok = ISX_Archive::stream_entry_to_file( $handle, $header, $dest );
