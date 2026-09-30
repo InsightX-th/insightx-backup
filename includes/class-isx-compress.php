@@ -25,16 +25,16 @@ class ISX_Compress {
 	 */
 	public static function gzip_file( $src, $dest, $level = 6 ) {
 		if ( ! function_exists( 'gzopen' ) ) {
-			return new WP_Error( 'isx_compress_ext', __( 'ต้องมีส่วนขยาย PHP zlib เพื่อบีบอัดไฟล์', 'insightx-backup' ) );
+			return new WP_Error( 'isx_compress_ext', __( 'The PHP zlib extension is required to compress files', 'insightx-backup' ) );
 		}
 		$in = fopen( $src, 'rb' );
 		if ( $in === false ) {
-			return new WP_Error( 'isx_compress_open', __( 'เปิดไฟล์ต้นทางไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_compress_open', __( 'Could not open the source file', 'insightx-backup' ) );
 		}
 		$out = gzopen( $dest, 'wb' . max( 1, min( 9, (int) $level ) ) );
 		if ( $out === false ) {
 			fclose( $in );
-			return new WP_Error( 'isx_compress_open', __( 'เปิดไฟล์ปลายทางไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_compress_open', __( 'Could not open the destination file', 'insightx-backup' ) );
 		}
 
 		while ( ! feof( $in ) ) {
@@ -57,16 +57,16 @@ class ISX_Compress {
 	 */
 	public static function gunzip_file( $src, $dest ) {
 		if ( ! function_exists( 'gzopen' ) ) {
-			return new WP_Error( 'isx_compress_ext', __( 'ต้องมีส่วนขยาย PHP zlib เพื่อคลายการบีบอัด', 'insightx-backup' ) );
+			return new WP_Error( 'isx_compress_ext', __( 'The PHP zlib extension is required to decompress files', 'insightx-backup' ) );
 		}
 		$in = gzopen( $src, 'rb' );
 		if ( $in === false ) {
-			return new WP_Error( 'isx_compress_open', __( 'เปิดไฟล์ต้นทางไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_compress_open', __( 'Could not open the source file', 'insightx-backup' ) );
 		}
 		$out = fopen( $dest, 'wb' );
 		if ( $out === false ) {
 			gzclose( $in );
-			return new WP_Error( 'isx_compress_open', __( 'เปิดไฟล์ปลายทางไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_compress_open', __( 'Could not open the destination file', 'insightx-backup' ) );
 		}
 
 		while ( ! gzeof( $in ) ) {

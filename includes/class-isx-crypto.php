@@ -86,12 +86,12 @@ class ISX_Crypto {
 	public static function encrypt_file( $password, $src_path, $dest_path ) {
 		$in = fopen( $src_path, 'rb' );
 		if ( $in === false ) {
-			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ต้นทางไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_open', __( 'Could not open the source file', 'insightx-backup' ) );
 		}
 		$out = @fopen( $dest_path, 'wb' );
 		if ( $out === false ) {
 			fclose( $in );
-			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ปลายทางไม่สำเร็จ (พื้นที่ดิสก์อาจเต็ม)', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_open', __( 'Could not open the destination file (the disk may be full)', 'insightx-backup' ) );
 		}
 
 		$salt         = random_bytes( 16 );
@@ -135,7 +135,7 @@ class ISX_Crypto {
 
 		if ( ! $ok ) {
 			@unlink( $dest_path );
-			return new WP_Error( 'isx_crypto_write', __( 'เขียนไฟล์ที่เข้ารหัสไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_write', __( 'Could not write the encrypted file — the server disk may be full', 'insightx-backup' ) );
 		}
 		return true;
 	}
@@ -170,7 +170,7 @@ class ISX_Crypto {
 	public static function decrypt_file( $password, $src_path, $dest_path ) {
 		$in = fopen( $src_path, 'rb' );
 		if ( $in === false ) {
-			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ต้นทางไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_open', __( 'Could not open the source file', 'insightx-backup' ) );
 		}
 		$magic = fread( $in, strlen( self::FILE_MAGIC_V2 ) );
 		fclose( $in );
@@ -179,7 +179,7 @@ class ISX_Crypto {
 			return self::decrypt_file_v2( $password, $src_path, $dest_path );
 		}
 		if ( $magic !== self::FILE_MAGIC ) {
-			return new WP_Error( 'isx_crypto_magic', __( 'ไฟล์นี้ไม่ได้เข้ารหัสด้วย InsightX Backup', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_magic', __( 'This file was not encrypted by InsightX Backup', 'insightx-backup' ) );
 		}
 		return self::decrypt_file_v1( $password, $src_path, $dest_path );
 	}
@@ -191,21 +191,21 @@ class ISX_Crypto {
 	private static function decrypt_file_v1( $password, $src_path, $dest_path ) {
 		$in = fopen( $src_path, 'rb' );
 		if ( $in === false ) {
-			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ต้นทางไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_open', __( 'Could not open the source file', 'insightx-backup' ) );
 		}
 
 		fread( $in, strlen( self::FILE_MAGIC ) ); // Magic already matched.
 		$salt = fread( $in, 16 );
 		if ( strlen( $salt ) < 16 ) {
 			fclose( $in );
-			return new WP_Error( 'isx_crypto_corrupt', __( 'ไฟล์เสียหาย', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_corrupt', __( 'The file is corrupted', 'insightx-backup' ) );
 		}
 		$key = self::derive_key( $password, $salt );
 
 		$out = fopen( $dest_path, 'wb' );
 		if ( $out === false ) {
 			fclose( $in );
-			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ปลายทางไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_open', __( 'Could not open the destination file', 'insightx-backup' ) );
 		}
 
 		while ( ! feof( $in ) ) {
@@ -224,25 +224,25 @@ class ISX_Crypto {
 				fclose( $in );
 				fclose( $out );
 				@unlink( $dest_path );
-				return new WP_Error( 'isx_crypto_password', __( 'รหัสผ่านไม่ถูกต้อง หรือไฟล์เสียหาย', 'insightx-backup' ) );
+				return new WP_Error( 'isx_crypto_password', __( 'Incorrect password, or the file is corrupted', 'insightx-backup' ) );
 			}
 			if ( ! self::write_ok( $out, $plain ) ) {
 				fclose( $in );
 				fclose( $out );
 				@unlink( $dest_path );
-				return new WP_Error( 'isx_crypto_write', __( 'เขียนไฟล์ที่ถอดรหัสไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม', 'insightx-backup' ) );
+				return new WP_Error( 'isx_crypto_write', __( 'Could not write the decrypted file — the server disk may be full', 'insightx-backup' ) );
 			}
 		}
 
 		fclose( $in );
 		if ( ! fclose( $out ) ) {
 			@unlink( $dest_path );
-			return new WP_Error( 'isx_crypto_write', __( 'เขียนไฟล์ที่ถอดรหัสไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_write', __( 'Could not write the decrypted file — the server disk may be full', 'insightx-backup' ) );
 		}
 
 		if ( ! ISX_Archive::is_valid( $dest_path ) ) {
 			@unlink( $dest_path );
-			return new WP_Error( 'isx_crypto_password', __( 'รหัสผ่านไม่ถูกต้อง หรือไฟล์เสียหาย', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_password', __( 'Incorrect password, or the file is corrupted', 'insightx-backup' ) );
 		}
 
 		return true;
@@ -258,14 +258,14 @@ class ISX_Crypto {
 		$size = (int) @filesize( $src_path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
 		$in   = fopen( $src_path, 'rb' );
 		if ( $in === false ) {
-			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ต้นทางไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_open', __( 'Could not open the source file', 'insightx-backup' ) );
 		}
 
 		fread( $in, strlen( self::FILE_MAGIC_V2 ) ); // Magic already matched.
 		$salt = fread( $in, 16 );
 		if ( strlen( $salt ) < 16 ) {
 			fclose( $in );
-			return new WP_Error( 'isx_crypto_corrupt', __( 'ไฟล์เสียหาย', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_corrupt', __( 'The file is corrupted', 'insightx-backup' ) );
 		}
 		$key_material = self::derive_keys( $password, $salt );
 		$enc_key      = substr( $key_material, 0, 32 );
@@ -274,7 +274,7 @@ class ISX_Crypto {
 		$out = fopen( $dest_path, 'wb' );
 		if ( $out === false ) {
 			fclose( $in );
-			return new WP_Error( 'isx_crypto_open', __( 'เปิดไฟล์ปลายทางไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_open', __( 'Could not open the destination file', 'insightx-backup' ) );
 		}
 
 		$mac = hash_init( 'sha256', HASH_HMAC, $mac_key );
@@ -326,12 +326,12 @@ class ISX_Crypto {
 
 		if ( ! $ok ) {
 			@unlink( $dest_path );
-			return new WP_Error( 'isx_crypto_password', __( 'รหัสผ่านไม่ถูกต้อง หรือไฟล์เสียหาย', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_password', __( 'Incorrect password, or the file is corrupted', 'insightx-backup' ) );
 		}
 
 		if ( ! ISX_Archive::is_valid( $dest_path ) ) {
 			@unlink( $dest_path );
-			return new WP_Error( 'isx_crypto_password', __( 'รหัสผ่านไม่ถูกต้อง หรือไฟล์เสียหาย', 'insightx-backup' ) );
+			return new WP_Error( 'isx_crypto_password', __( 'Incorrect password, or the file is corrupted', 'insightx-backup' ) );
 		}
 
 		return true;

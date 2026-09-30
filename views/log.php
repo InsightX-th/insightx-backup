@@ -30,18 +30,18 @@ if ( $isx_filter !== '' ) {
 ?>
 <div class="wrap isx-wrap">
 	<div class="isx-card">
-		<h1 class="isx-title"><span class="dashicons dashicons-warning"></span> <?php esc_html_e( 'Log ข้อผิดพลาด', 'insightx-backup' ); ?></h1>
-		<p class="isx-muted"><?php esc_html_e( 'บันทึกทุกครั้งที่ ส่งออก/นำเข้า/ข้อมูลสำรอง ล้มเหลว พร้อมรายละเอียด job/ขั้นตอนที่เกิดปัญหา', 'insightx-backup' ); ?></p>
+		<h1 class="isx-title"><span class="dashicons dashicons-warning"></span> <?php esc_html_e( 'Error Log', 'insightx-backup' ); ?></h1>
+		<p class="isx-muted"><?php esc_html_e( 'Records every failed export/import/backup, with details of the job/step where the problem occurred', 'insightx-backup' ); ?></p>
 
 		<?php if ( isset( $_GET['cleared'] ) ) : ?>
 			<div class="isx-progress-warning" style="background:#e3f9f0;border-color:#a7ecd2;color:#0f766e;">
-				<?php esc_html_e( 'ล้าง log แล้ว', 'insightx-backup' ); ?>
+				<?php esc_html_e( 'Log cleared', 'insightx-backup' ); ?>
 			</div>
 		<?php endif; ?>
 
 		<?php if ( isset( $_GET['verbose_saved'] ) ) : ?>
 			<div class="isx-progress-warning" style="background:#e3f9f0;border-color:#a7ecd2;color:#0f766e;">
-				<?php esc_html_e( 'บันทึกการตั้งค่า log แล้ว', 'insightx-backup' ); ?>
+				<?php esc_html_e( 'Log settings saved', 'insightx-backup' ); ?>
 			</div>
 		<?php endif; ?>
 
@@ -50,26 +50,26 @@ if ( $isx_filter !== '' ) {
 			<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">
 				<input type="checkbox" name="isx_verbose" value="1" <?php checked( $isx_verbose ); ?> style="margin-top:3px;">
 				<span>
-					<strong><?php esc_html_e( 'เปิดโหมด log ละเอียด (verbose)', 'insightx-backup' ); ?></strong><br>
+					<strong><?php esc_html_e( 'Enable verbose logging', 'insightx-backup' ); ?></strong><br>
 					<span class="isx-muted" style="font-size:12px;">
-						<?php esc_html_e( 'บันทึกทุกขั้นตอนพร้อมเวลาที่ใช้ รายละเอียดการเชื่อมต่อ Storage (cURL errno / timing / response header) และข้อผิดพลาดฝั่งเบราว์เซอร์ — เปิดเฉพาะตอนไล่ปัญหา เพราะ log จะยาวมาก', 'insightx-backup' ); ?>
+						<?php esc_html_e( 'Records every step with timings, Storage connection details (cURL errno / timing / response headers) and browser-side errors — only enable while troubleshooting, the log gets very long', 'insightx-backup' ); ?>
 					</span>
 				</span>
 			</label>
 			<button type="submit" name="isx_log_verbose_save" value="1" class="button isx-btn isx-btn-secondary" style="margin-top:10px;">
-				<?php esc_html_e( 'บันทึก', 'insightx-backup' ); ?>
+				<?php esc_html_e( 'Save', 'insightx-backup' ); ?>
 			</button>
 		</form>
 
 		<p style="margin-bottom:8px;">
-			<?php esc_html_e( 'กรองตามระดับ:', 'insightx-backup' ); ?>
+			<?php esc_html_e( 'Filter by level:', 'insightx-backup' ); ?>
 			<?php
 			$isx_levels = array(
-				''      => __( 'ทั้งหมด', 'insightx-backup' ),
-				'error' => __( 'ข้อผิดพลาด', 'insightx-backup' ),
-				'warn'  => __( 'คำเตือน', 'insightx-backup' ),
-				'info'  => __( 'ข้อมูล', 'insightx-backup' ),
-				'debug' => __( 'รายละเอียด', 'insightx-backup' ),
+				''      => __( 'All', 'insightx-backup' ),
+				'error' => __( 'Error', 'insightx-backup' ),
+				'warn'  => __( 'Warning', 'insightx-backup' ),
+				'info'  => __( 'Info', 'insightx-backup' ),
+				'debug' => __( 'Debug', 'insightx-backup' ),
 			);
 			foreach ( $isx_levels as $isx_key => $isx_label ) :
 				$isx_url = add_query_arg(
@@ -97,7 +97,7 @@ if ( $isx_filter !== '' ) {
 			</div>
 			<pre id="isx-log-body" class="isx-terminal-body" data-cursor="<?php echo (int) $isx_cursor; ?>" data-level="<?php echo esc_attr( $isx_filter ); ?>"><?php
 			if ( empty( $isx_entries ) ) {
-				?><span id="isx-log-empty" class="isx-muted"><?php esc_html_e( 'ยังไม่มี log', 'insightx-backup' ); ?></span><?php
+				?><span id="isx-log-empty" class="isx-muted"><?php esc_html_e( 'No log entries yet', 'insightx-backup' ); ?></span><?php
 			} else {
 				foreach ( $isx_entries as $isx_entry ) {
 					echo ISX_Logger::render_line_html( $isx_entry ); // phpcs:ignore WordPress.Security.EscapeOutput -- already escaped
@@ -139,12 +139,12 @@ if ( $isx_filter !== '' ) {
 				<?php wp_nonce_field( 'isx_log_download' ); ?>
 				<button type="submit" name="isx_log_download" value="1" class="button isx-btn isx-btn-secondary">
 					<span class="dashicons dashicons-download"></span>
-					<?php esc_html_e( 'ดาวน์โหลด Log', 'insightx-backup' ); ?>
+					<?php esc_html_e( 'Download Log', 'insightx-backup' ); ?>
 				</button>
 			</form>
-			<form method="post" onsubmit="return window.confirm('<?php echo esc_js( __( 'ล้าง log ทั้งหมด?', 'insightx-backup' ) ); ?>');">
+			<form method="post" onsubmit="return window.confirm('<?php echo esc_js( __( 'Clear the entire log?', 'insightx-backup' ) ); ?>');">
 				<?php wp_nonce_field( 'isx_log_clear' ); ?>
-				<button type="submit" name="isx_log_clear" value="1" class="button isx-btn isx-btn-secondary"><?php esc_html_e( 'ล้าง Log', 'insightx-backup' ); ?></button>
+				<button type="submit" name="isx_log_clear" value="1" class="button isx-btn isx-btn-secondary"><?php esc_html_e( 'Clear Log', 'insightx-backup' ); ?></button>
 			</form>
 		</div>
 	</div>

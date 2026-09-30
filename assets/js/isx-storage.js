@@ -8,6 +8,8 @@
 (function ($) {
 	'use strict';
 
+	var t = window.ISX.t;
+
 	if (typeof isx_storage === 'undefined') {
 		return;
 	}
@@ -22,7 +24,7 @@
 
 	// Icon dropdown used wherever a provider (or another icon-bearing choice)
 	// is picked — reuses the same open/close + menu markup as the import page's
-	// "นำเข้าจาก" picker instead of a plain <select>, since a native <option>
+	// "Import from" picker instead of a plain <select>, since a native <option>
 	// can't render an icon. Expects #<prefix>-picker / -toggle / -icon / -label
 	// plus a hidden #<prefix> holding the value.
 	function wireIconPicker(prefix) {
@@ -77,7 +79,7 @@
 			event.preventDefault();
 			var slug = $provider.val();
 			if (!isConfigured(slug)) {
-				window.alert('ยังไม่ได้ตั้งค่า provider นี้ — ไปที่เมนู "การเชื่อมต่อ" ก่อน');
+				window.alert(t('This provider is not configured yet — go to the "Connections" menu first'));
 				return;
 			}
 			$flag.val(slug);
@@ -103,7 +105,7 @@
 				function (res) {
 					$('#isx-export-progress').hide();
 					var $msg = $('#isx-export-done-msg');
-					$msg.text(res.message || (res.error ? 'เกิดข้อผิดพลาด' : 'เสร็จสิ้น'));
+					$msg.text(res.message || (res.error ? t('An error occurred') : t('Done')));
 					$msg.toggleClass('isx-ok', !res.error).toggleClass('isx-error-msg', !!res.error);
 					$('#isx-export-download').toggle(!res.error);
 					if (!res.error && res.backup) {
@@ -147,7 +149,7 @@
 				function (res) {
 					$('#isx-import-progress').hide();
 					var $msg = $('#isx-import-done-msg');
-					$msg.text(res.message || (res.error ? 'เกิดข้อผิดพลาด' : 'เสร็จสิ้น'));
+					$msg.text(res.message || (res.error ? t('An error occurred') : t('Done')));
 					$msg.toggleClass('isx-ok', !res.error).toggleClass('isx-error-msg', !!res.error);
 					$('#isx-import-done').show();
 				}
@@ -155,35 +157,35 @@
 		}
 
 		function importKey(slug, key) {
-			$list.append('<p class="isx-fetch-status">กำลังดาวน์โหลดจาก Storage...</p>');
+			$list.append('<p class="isx-fetch-status">' + t('Downloading from Storage...') + '</p>');
 			ISX.post('isx_storage_import_prepare', { provider: slug, key: key })
 				.done(function (res) {
 					$list.find('.isx-fetch-status').remove();
 					if (res && res.success) {
 						startImportJob(res.data.job, res.data.secret);
 					} else {
-						window.alert((res && res.data && res.data.message) || 'ดาวน์โหลดไม่สำเร็จ');
+						window.alert((res && res.data && res.data.message) || t('Download failed'));
 					}
 				})
 				.fail(function () {
 					$list.find('.isx-fetch-status').remove();
-					window.alert('ดาวน์โหลดไม่สำเร็จ');
+					window.alert(t('Download failed'));
 				});
 		}
 
 		function loadBackups(slug) {
 			currentProvider = slug;
 			$manual.show();
-			$list.html('<p class="isx-fetch-status">กำลังโหลดรายการ...</p>');
+			$list.html('<p class="isx-fetch-status">' + t('Loading list...') + '</p>');
 			ISX.post('isx_storage_import_list', { provider: slug })
 				.done(function (res) {
 					if (!res || !res.success) {
-						$list.html('<p class="isx-fetch-status is-error">' + escapeHtml((res && res.data && res.data.message) || 'โหลดรายการไม่สำเร็จ') + '</p>');
+						$list.html('<p class="isx-fetch-status is-error">' + escapeHtml((res && res.data && res.data.message) || t('Could not load the list')) + '</p>');
 						return;
 					}
 					var backups = res.data.backups || [];
 					if (backups.length === 0) {
-						$list.html('<p class="isx-fetch-status">ไม่พบไฟล์ .wpress ใน bucket นี้</p>');
+						$list.html('<p class="isx-fetch-status">' + t('No .wpress files found in this bucket') + '</p>');
 						return;
 					}
 					var html = '<table class="isx-backups"><tbody>';
@@ -192,18 +194,18 @@
 							'<td class="isx-b-name">' + escapeHtml(b.name) + '</td>' +
 							'<td class="isx-b-size">' + escapeHtml(b.size) + '</td>' +
 							'<td class="isx-b-date">' + escapeHtml(b.last_modified) + '</td>' +
-							'<td class="isx-b-action"><button type="button" class="button button-primary isx-btn isx-import-go" data-key="' + escapeHtml(b.key) + '">นำเข้า</button></td>' +
+							'<td class="isx-b-action"><button type="button" class="button button-primary isx-btn isx-import-go" data-key="' + escapeHtml(b.key) + '">' + t('Import') + '</button></td>' +
 							'</tr>';
 					});
 					html += '</tbody></table>';
 					$list.html(html);
 				})
 				.fail(function () {
-					$list.html('<p class="isx-fetch-status is-error">โหลดรายการไม่สำเร็จ</p>');
+					$list.html('<p class="isx-fetch-status is-error">' + t('Could not load the list') + '</p>');
 				});
 		}
 
-		// Toggle the "นำเข้าจาก" dropdown.
+		// Toggle the "Import from" dropdown.
 		$(document).on('click', '#isx-import-from-toggle', function (event) {
 			event.preventDefault();
 			event.stopPropagation();
@@ -215,7 +217,7 @@
 			}
 		});
 
-		// "ไฟล์" opens the native file picker (upload flow handled in isx-admin.js).
+		// "File" opens the native file picker (upload flow handled in isx-admin.js).
 		$(document).on('click', '#isx-import-from-file', function (event) {
 			event.preventDefault();
 			closeMenu();
@@ -228,7 +230,7 @@
 			closeMenu();
 			var slug = $(this).data('provider');
 			if (!isConfigured(slug)) {
-				window.alert('ยังไม่ได้ตั้งค่า provider นี้ — ไปที่เมนู "การเชื่อมต่อ" ก่อน');
+				window.alert(t('This provider is not configured yet — go to the "Connections" menu first'));
 				return;
 			}
 			loadBackups(slug);
@@ -237,7 +239,7 @@
 		$(document).on('click', '.isx-import-go', function (event) {
 			event.preventDefault();
 			var key = $(this).data('key');
-			if (!window.confirm('นำเข้าไฟล์นี้จะเขียนทับเว็บปัจจุบัน ยืนยันหรือไม่?')) {
+			if (!window.confirm(t('Importing this file will overwrite the current site. Continue?'))) {
 				return;
 			}
 			importKey(currentProvider, key);
@@ -247,13 +249,13 @@
 			event.preventDefault();
 			var key = $.trim($('#isx-import-key').val());
 			if (!currentProvider || !isConfigured(currentProvider)) {
-				window.alert('เลือก provider จากเมนู "นำเข้าจาก" ก่อน');
+				window.alert(t('Choose a provider from the "Import from" menu first'));
 				return;
 			}
 			if (!key) {
 				return;
 			}
-			if (!window.confirm('นำเข้าไฟล์นี้จะเขียนทับเว็บปัจจุบัน ยืนยันหรือไม่?')) {
+			if (!window.confirm(t('Importing this file will overwrite the current site. Continue?'))) {
 				return;
 			}
 			importKey(currentProvider, key);
@@ -272,7 +274,7 @@
 
 		// Every field is required except a locked endpoint (Amazon S3 — computed
 		// from Region, see the `disabled` attribute on that input); keeps
-		// "บันทึก" disabled until the provider is actually fully filled in,
+		// "Save" disabled until the provider is actually fully filled in,
 		// instead of letting a half-filled save through.
 		function fieldFilled($input) {
 			return $input.is(':disabled') || $.trim($input.val()) !== '';
@@ -340,7 +342,7 @@
 			};
 
 			$button.prop('disabled', true);
-			$status.text('กำลังทดสอบการเชื่อมต่อ...').removeClass('is-ok is-error');
+			$status.text(t('Testing connection...')).removeClass('is-ok is-error');
 
 			ISX.post('isx_storage_save', { provider: slug, config: config })
 				.done(function (res) {
@@ -349,19 +351,19 @@
 						if (secret !== '') {
 							$secret.val(DOTS).attr('data-has-secret', '1');
 						}
-						var message = (res.data && res.data.message) || 'บันทึกแล้ว';
+						var message = (res.data && res.data.message) || t('Saved');
 						if (res.data && res.data.connected) {
 							$status.text(message).addClass('is-ok');
 						} else {
 							$status.text(message).addClass('is-error');
 						}
 					} else {
-						$status.text((res && res.data && res.data.message) || 'บันทึกไม่สำเร็จ').addClass('is-error');
+						$status.text((res && res.data && res.data.message) || t('Could not save')).addClass('is-error');
 					}
 				})
 				.fail(function () {
 					refreshSaveState($block);
-					$status.text('บันทึกไม่สำเร็จ').addClass('is-error');
+					$status.text(t('Could not save')).addClass('is-error');
 				});
 		});
 	})();
@@ -382,7 +384,7 @@
 			var path = $.trim($input.val());
 
 			$button.prop('disabled', true);
-			$status.text('กำลังบันทึก...').removeClass('is-ok is-error');
+			$status.text(t('Saving...')).removeClass('is-ok is-error');
 
 			ISX.post('isx_storage_dir_save', { path: path })
 				.done(function (res) {
@@ -391,12 +393,12 @@
 						$input.val(res.data.path);
 						$status.text(res.data.message).removeClass('is-error').addClass('is-ok');
 					} else {
-						$status.text((res && res.data && res.data.message) || 'บันทึกไม่สำเร็จ').removeClass('is-ok').addClass('is-error');
+						$status.text((res && res.data && res.data.message) || t('Could not save')).removeClass('is-ok').addClass('is-error');
 					}
 				})
 				.fail(function () {
 					$button.prop('disabled', false);
-					$status.text('บันทึกไม่สำเร็จ').removeClass('is-ok').addClass('is-error');
+					$status.text(t('Could not save')).removeClass('is-ok').addClass('is-error');
 				});
 		});
 	})();
@@ -424,7 +426,7 @@
 			};
 
 			$button.prop('disabled', true);
-			$status.text('กำลังบันทึก...').removeClass('is-ok is-error');
+			$status.text(t('Saving...')).removeClass('is-ok is-error');
 
 			ISX.post('isx_schedule_save', data)
 				.done(function (res) {
@@ -432,12 +434,12 @@
 					if (res && res.success) {
 						$status.text(res.data.message).removeClass('is-error').addClass('is-ok');
 					} else {
-						$status.text((res && res.data && res.data.message) || 'บันทึกไม่สำเร็จ').removeClass('is-ok').addClass('is-error');
+						$status.text((res && res.data && res.data.message) || t('Could not save')).removeClass('is-ok').addClass('is-error');
 					}
 				})
 				.fail(function () {
 					$button.prop('disabled', false);
-					$status.text('บันทึกไม่สำเร็จ').removeClass('is-ok').addClass('is-error');
+					$status.text(t('Could not save')).removeClass('is-ok').addClass('is-error');
 				});
 		});
 	})();
@@ -468,7 +470,7 @@
 			// One listing request per provider being checked, so this is slower
 			// than it looks — say so rather than leaving a dead-looking button.
 			$button.prop('disabled', true);
-			$status.text('กำลังตรวจสอบ...').removeClass('is-ok is-error');
+			$status.text(t('Checking...')).removeClass('is-ok is-error');
 
 			ISX.post('isx_cleanup_uploads', { providers: providers })
 				.done(function (res) {
@@ -477,14 +479,14 @@
 						$status.text(res.data.message).removeClass('is-error').addClass('is-ok');
 					} else {
 						$status
-							.text((res && res.data && res.data.message) || 'ล้างไม่สำเร็จ')
+							.text((res && res.data && res.data.message) || t('Cleanup failed'))
 							.removeClass('is-ok')
 							.addClass('is-error');
 					}
 				})
 				.fail(function () {
 					$button.prop('disabled', false);
-					$status.text('ล้างไม่สำเร็จ — ดูรายละเอียดที่หน้า Log').removeClass('is-ok').addClass('is-error');
+					$status.text(t('Cleanup failed — see the Log page for details')).removeClass('is-ok').addClass('is-error');
 				});
 		});
 	})();
@@ -517,7 +519,7 @@
 					if (res.error) {
 						$list.show();
 						$actions.show();
-						window.alert(res.message || 'เกิดข้อผิดพลาด');
+						window.alert(res.message || t('An error occurred'));
 						return;
 					}
 					window.location.reload();
@@ -527,7 +529,7 @@
 
 		$(document).on('click', '.isx-backup-delete', function (event) {
 			event.preventDefault();
-			if (!window.confirm('ลบข้อมูลสำรองนี้?')) {
+			if (!window.confirm(t('Delete this backup?'))) {
 				return;
 			}
 			var $row = $(this).closest('tr');
@@ -536,17 +538,17 @@
 				if (res && res.success) {
 					$row.remove();
 					if ($('#isx-backups-list tbody tr').length === 0) {
-						$('#isx-backups-list').html('<p class="isx-muted">ยังไม่มีข้อมูลสำรอง</p>');
+						$('#isx-backups-list').html('<p class="isx-muted">' + t('No backups yet') + '</p>');
 					}
 				} else {
-					window.alert((res && res.data && res.data.message) || 'ลบไม่สำเร็จ');
+					window.alert((res && res.data && res.data.message) || t('Could not delete'));
 				}
 			});
 		});
 
 		$(document).on('click', '.isx-backup-restore', function (event) {
 			event.preventDefault();
-			if (!window.confirm('การนำเข้าจะเขียนทับเว็บปัจจุบันทั้งหมด ยืนยันหรือไม่?')) {
+			if (!window.confirm(t('Importing will overwrite the entire current site. Continue?'))) {
 				return;
 			}
 			var name = $(this).closest('tr').data('name');
@@ -559,7 +561,7 @@
 				.done(function (res) {
 					if (!res || !res.success) {
 						$('#isx-backups-restore-progress').hide();
-						window.alert((res && res.data && res.data.message) || 'เริ่มไม่สำเร็จ');
+						window.alert((res && res.data && res.data.message) || t('Could not start'));
 						return;
 					}
 					ISX.poll(
@@ -571,7 +573,7 @@
 						function (r) {
 							$('#isx-backups-restore-progress').hide();
 							var $msg = $('#isx-backups-restore-done-msg');
-							$msg.text(r.message || (r.error ? 'เกิดข้อผิดพลาด' : 'เสร็จสิ้น'));
+							$msg.text(r.message || (r.error ? t('An error occurred') : t('Done')));
 							$msg.toggleClass('isx-ok', !r.error).toggleClass('isx-error-msg', !!r.error);
 							$('#isx-backups-restore-done').show();
 						}
@@ -579,7 +581,7 @@
 				})
 				.fail(function () {
 					$('#isx-backups-restore-progress').hide();
-					window.alert('เริ่มไม่สำเร็จ');
+					window.alert(t('Could not start'));
 				});
 		});
 
@@ -661,7 +663,7 @@
 					escapeAttrLocal(prefix + name + '/') +
 					'"><summary><span class="dashicons dashicons-category"></span>' +
 					escapeHtmlLocal(name) +
-					'<span class="isx-content-meta">' + dir.files.toLocaleString() + ' ไฟล์</span>' +
+					'<span class="isx-content-meta">' + t('%s files', dir.files.toLocaleString()) + '</span>' +
 					'<span class="isx-content-size">' + formatBytes(dir.bytes) + '</span>' +
 					'</summary><ul class="isx-tree-list"></ul></details></li>';
 			});
@@ -679,14 +681,13 @@
 				html +=
 					'<li class="isx-tree-more">' +
 					escapeHtmlLocal(
-						'แสดง ' + level.files.length.toLocaleString() +
-						' จาก ' + level.filesSeen.toLocaleString() + ' ไฟล์ในโฟลเดอร์นี้'
+						t('Showing %1$s of %2$s files in this folder', level.files.length.toLocaleString(), level.filesSeen.toLocaleString())
 					) +
 					'</li>';
 			}
 
 			if (html === '') {
-				html = '<li class="isx-tree-more">ไม่มีไฟล์ในโฟลเดอร์นี้</li>';
+				html = '<li class="isx-tree-more">' + t('No files in this folder') + '</li>';
 			}
 			return html;
 		}
@@ -706,7 +707,7 @@
 				ISX.post('isx_backups_list_content', { name: name, prefix: prefix, offset: offset })
 					.done(function (res) {
 						if (!res || !res.success) {
-							onError((res && res.data && res.data.message) || 'โหลดรายการไม่สำเร็จ');
+							onError((res && res.data && res.data.message) || t('Could not load the list'));
 							return;
 						}
 						var d = res.data;
@@ -743,7 +744,7 @@
 						// the modal stays open. Stop instead of hammering.
 						var next = Number(d.offset) || 0;
 						if (next <= offset) {
-							onError('อ่านรายการในแพ็กเกจไม่คืบหน้า — ไฟล์แพ็กเกจอาจเสียหาย');
+							onError(t('Reading the package contents is not progressing — the package file may be corrupted'));
 							return;
 						}
 						batch(next);
@@ -756,8 +757,8 @@
 						var status = jqXHR && jqXHR.status ? jqXHR.status : 0;
 						onError(
 							status
-								? 'โหลดรายการไม่สำเร็จ (HTTP ' + status + ') — เซิร์ฟเวอร์อาจหน่วยความจำหรือเวลาไม่พอ'
-								: 'โหลดรายการไม่สำเร็จ — เชื่อมต่อเซิร์ฟเวอร์ไม่ได้'
+								? t('Could not load the list (HTTP %s) — the server may have run out of memory or time', status)
+								: t('Could not load the list — cannot reach the server')
 						);
 					});
 			}
@@ -817,7 +818,7 @@
 							ISX.resetTweens($body);
 							$body.html(
 								'<p class="isx-fetch-status is-error">' +
-									escapeHtmlLocal((res && res.data && res.data.message) || 'ตรวจสอบไม่สำเร็จ') +
+									escapeHtmlLocal((res && res.data && res.data.message) || t('Verification failed')) +
 									'</p>'
 							);
 							return;
@@ -828,7 +829,7 @@
 							step(d.offset, d.entries);
 							return;
 						}
-						$body.find('.isx-step-label').text(d.ok ? 'ตรวจสอบผ่าน' : 'ตรวจสอบไม่ผ่าน');
+						$body.find('.isx-step-label').text(d.ok ? t('Verification passed') : t('Verification did not pass'));
 						ISX.snapStepPct($body, 100);
 						$body.append(
 							'<p class="isx-fetch-status' + (d.ok ? ' is-ok' : ' is-error') + '">' +
@@ -847,8 +848,8 @@
 							'<p class="isx-fetch-status is-error">' +
 								escapeHtmlLocal(
 									status
-										? 'ตรวจสอบไม่สำเร็จ (HTTP ' + status + ') — เซิร์ฟเวอร์ตอบผิดพลาด ดูสาเหตุได้ที่หน้า Log'
-										: 'ตรวจสอบไม่สำเร็จ — เชื่อมต่อเซิร์ฟเวอร์ไม่ได้'
+										? t('Verification failed (HTTP %s) — the server returned an error, see the Log page for details', status)
+										: t('Verification failed — cannot reach the server')
 								) +
 							'</p>'
 						);
@@ -856,7 +857,7 @@
 			}
 
 			ISX.resetTweens($body);
-			$body.html(renderBar('กำลังตรวจสอบ...'));
+			$body.html(renderBar(t('Checking...')));
 			step(0, 0);
 		});
 
@@ -875,7 +876,7 @@
 			$body.html(
 				'<div class="isx-steps"><div class="isx-step is-active">' +
 					'<div class="isx-step-head">' +
-						'<span class="isx-step-label">กำลังอ่านรายการในแพ็กเกจ...</span>' +
+						'<span class="isx-step-label">' + t('Reading package contents...') + '</span>' +
 						'<span class="isx-step-pct">0.00%</span>' +
 					'</div>' +
 					'<div class="isx-step-bar"><div class="isx-step-bar-fill" style="width:0%"></div></div>' +
@@ -892,14 +893,14 @@
 				function (level) {
 					ISX.resetTweens($body);
 					if (Object.keys(level.dirs).length === 0 && level.files.length === 0) {
-						$body.html('<p class="isx-fetch-status">ไม่พบไฟล์ในแพ็กเกจนี้</p>');
+						$body.html('<p class="isx-fetch-status">' + t('No files found in this package') + '</p>');
 						return;
 					}
 					$body
 						.data('backup', name)
 						.html(
 							'<p class="isx-content-total">' +
-								escapeHtmlLocal('รวมทั้งหมด: ' + formatBytes(level.bytesSeen + levelDirBytes(level))) +
+								escapeHtmlLocal(t('Total: %s', formatBytes(level.bytesSeen + levelDirBytes(level)))) +
 							'</p>' +
 							'<ul class="isx-tree-list isx-tree-root">' + renderContentLevel(level, '') + '</ul>'
 						);
@@ -946,7 +947,7 @@
 			var prefix = $details.data('prefix');
 			var name = $('#isx-content-body').data('backup');
 			var $list = $details.children('ul');
-			$list.html('<li class="isx-tree-more">กำลังอ่าน...</li>');
+			$list.html('<li class="isx-tree-more">' + t('Reading...') + '</li>');
 
 			scanContentLevel(
 				name,

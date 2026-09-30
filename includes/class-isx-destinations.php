@@ -34,9 +34,9 @@ class ISX_Destinations {
 				'label'           => __( 'Amazon S3', 'insightx-backup' ),
 				'path_style'      => false,
 				'endpoint_locked' => true,
-				'endpoint_hint'   => 'เว้นว่างไว้ (ใช้ s3.<region>.amazonaws.com อัตโนมัติ)',
+				'endpoint_hint'   => __( 'Leave empty (uses s3.<region>.amazonaws.com automatically)', 'insightx-backup' ),
 				'placeholders'    => array(
-					'endpoint'   => 'ไม่ต้องกรอก (คำนวณจาก Region)',
+					'endpoint'   => __( 'Not required (derived from Region)', 'insightx-backup' ),
 					'region'     => 'us-east-1',
 					'bucket'     => 'my-bucket',
 					'access_key' => 'Access Key',
@@ -45,7 +45,7 @@ class ISX_Destinations {
 			'minio'               => array(
 				'label'         => __( 'Minio', 'insightx-backup' ),
 				'path_style'    => true,
-				'endpoint_hint' => 'เช่น https://minio.example.com:9000',
+				'endpoint_hint' => __( 'e.g. https://minio.example.com:9000', 'insightx-backup' ),
 				'placeholders'  => array(
 					'endpoint'   => 'https://minio.example.com:9000',
 					'region'     => 'us-east-1',
@@ -56,7 +56,7 @@ class ISX_Destinations {
 			'garage'              => array(
 				'label'         => __( 'Garage', 'insightx-backup' ),
 				'path_style'    => true,
-				'endpoint_hint' => 'เช่น https://garage.example.com',
+				'endpoint_hint' => __( 'e.g. https://garage.example.com', 'insightx-backup' ),
 				'placeholders'  => array(
 					'endpoint'   => 'https://garage.example.com',
 					'region'     => 'garage',
@@ -67,7 +67,7 @@ class ISX_Destinations {
 			'cloudflare_r2'       => array(
 				'label'         => __( 'Cloudflare R2', 'insightx-backup' ),
 				'path_style'    => true,
-				'endpoint_hint' => 'เช่น https://<accountid>.r2.cloudflarestorage.com',
+				'endpoint_hint' => __( 'e.g. https://<accountid>.r2.cloudflarestorage.com', 'insightx-backup' ),
 				'placeholders'  => array(
 					'endpoint'   => 'https://<accountid>.r2.cloudflarestorage.com',
 					'region'     => 'auto',
@@ -78,7 +78,7 @@ class ISX_Destinations {
 			'digitalocean_spaces' => array(
 				'label'         => __( 'DigitalOcean Spaces', 'insightx-backup' ),
 				'path_style'    => false,
-				'endpoint_hint' => 'เช่น https://sgp1.digitaloceanspaces.com',
+				'endpoint_hint' => __( 'e.g. https://sgp1.digitaloceanspaces.com', 'insightx-backup' ),
 				'placeholders'  => array(
 					'endpoint'   => 'https://sgp1.digitaloceanspaces.com',
 					'region'     => 'sgp1',
@@ -100,7 +100,7 @@ class ISX_Destinations {
 			'other'               => array(
 				'label'         => __( 'Other (S3-compatible)', 'insightx-backup' ),
 				'path_style'    => true,
-				'endpoint_hint' => 'S3 endpoint แบบเต็ม',
+				'endpoint_hint' => __( 'Full S3 endpoint', 'insightx-backup' ),
 				'placeholders'  => array(
 					'endpoint'   => 'https://s3.example.com',
 					'region'     => 'us-east-1',

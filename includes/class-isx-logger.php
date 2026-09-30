@@ -197,13 +197,13 @@ class ISX_Logger {
 	/** @return array type => label, shared between the initial page render and the live-poll endpoint. */
 	public static function type_labels() {
 		return array(
-			'export' => __( 'ส่งออก', 'insightx-backup' ),
-			'import' => __( 'นำเข้า', 'insightx-backup' ),
-			'backup' => __( 'ข้อมูลสำรอง', 'insightx-backup' ),
-			'reset'  => __( 'รีเซ็ต', 'insightx-backup' ),
-			'system' => __( 'ระบบ', 'insightx-backup' ),
+			'export' => __( 'Export', 'insightx-backup' ),
+			'import' => __( 'Import', 'insightx-backup' ),
+			'backup' => __( 'Backups', 'insightx-backup' ),
+			'reset'  => __( 'Reset', 'insightx-backup' ),
+			'system' => __( 'System', 'insightx-backup' ),
 			's3'     => __( 'Storage', 'insightx-backup' ),
-			'client' => __( 'เบราว์เซอร์', 'insightx-backup' ),
+			'client' => __( 'Browser', 'insightx-backup' ),
 		);
 	}
 

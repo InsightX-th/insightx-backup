@@ -60,7 +60,7 @@ class ISX_Export {
 				return self::upload( $job );
 		}
 
-		return array( 'progress' => 100, 'done' => true, 'message' => 'เสร็จสิ้น' );
+		return array( 'progress' => 100, 'done' => true, 'message' => __( 'Done', 'insightx-backup' ) );
 	}
 
 	private static function init( ISX_Job $job ) {
@@ -152,7 +152,7 @@ class ISX_Export {
 		$job->set( 'progress', 5 );
 		$job->save();
 
-		return array( 'progress' => 5, 'done' => false, 'message' => 'เตรียมข้อมูล...' );
+		return array( 'progress' => 5, 'done' => false, 'message' => __( 'Preparing...', 'insightx-backup' ) );
 	}
 
 	private static function database( ISX_Job $job ) {
@@ -201,7 +201,7 @@ class ISX_Export {
 				$job->set( 'step', 'pack_meta' );
 				$job->set( 'progress', 50 );
 				$job->save();
-				return array( 'progress' => 50, 'done' => false, 'message' => 'แพ็กฐานข้อมูล...' );
+				return array( 'progress' => 50, 'done' => false, 'message' => __( 'Packing database...', 'insightx-backup' ) );
 			}
 
 			$table = $tables[ $ti ];
@@ -258,8 +258,8 @@ class ISX_Export {
 			$table_fraction = $table_rows > 0 ? min( 1, ( $off + $written ) / $table_rows ) : 1;
 			$progress       = 5 + 45 * ( ( $ti + $table_fraction ) / max( 1, count( $tables ) ) );
 			$message        = $table_rows > 0
-				? sprintf( 'ส่งออกตาราง %s (%d/%d แถว)...', $table, min( $off + $written, $table_rows ), $table_rows )
-				: sprintf( 'ส่งออกตาราง %s...', $table );
+				? sprintf( __( 'Exporting table %s (%d/%d rows)...', 'insightx-backup' ), $table, min( $off + $written, $table_rows ), $table_rows )
+				: sprintf( __( 'Exporting table %s...', 'insightx-backup' ), $table );
 		} while ( microtime( true ) < $deadline && ! $job->is_cancel_requested() );
 
 		fclose( $fh );
@@ -298,7 +298,7 @@ class ISX_Export {
 		$job->set( 'progress', 55 );
 		$job->save();
 
-		return array( 'progress' => 55, 'done' => false, 'message' => 'แพ็กไฟล์...' );
+		return array( 'progress' => 55, 'done' => false, 'message' => __( 'Packing files...', 'insightx-backup' ) );
 	}
 
 	private static function files( ISX_Job $job ) {
@@ -314,7 +314,7 @@ class ISX_Export {
 		// Keep packing file batches into the archive until the time budget is
 		// spent (or every file is packed), rather than one small batch per
 		// request — the same round-trip collapse the database step gets. The
-		// cancel check is what makes "ยกเลิก" feel immediate on a big site: this
+		// cancel check is what makes "Cancel" feel immediate on a big site: this
 		// is the phase that runs for hours, and without it the click would sit
 		// there until the whole time budget was spent.
 		do {
@@ -349,14 +349,14 @@ class ISX_Export {
 		return array(
 			'progress' => $progress,
 			'done'     => false,
-			'message'  => sprintf( 'กำลังรวบรวม%s — %d/%d รายการ', self::current_category_label( $job, $done_files ), $done_files, $total ),
+			'message'  => sprintf( __( 'Collecting %s — %d/%d items', 'insightx-backup' ), self::current_category_label( $job, $done_files ), $done_files, $total ),
 		);
 	}
 
 	/**
 	 * Which content category $done_files (the cumulative files-packed count)
 	 * currently falls into, based on the per-category boundaries build_list()
-	 * recorded — so the status message can say "รวบรวมปลั๊กอิน" / "รวบรวมธีม" /
+	 * recorded — so the status message can say "Collecting plugins" / "Collecting themes" /
 	 * etc. instead of just a bare item counter.
 	 *
 	 * @param ISX_Job $job
@@ -380,19 +380,19 @@ class ISX_Export {
 
 	private static function current_category_label( ISX_Job $job, $done_files ) {
 		$labels = array(
-			'plugins'    => 'ปลั๊กอิน',
-			'themes'     => 'ธีม',
-			'uploads'    => 'คลังสื่อ',
-			'mu-plugins' => 'ปลั๊กอิน',
-			'other'      => 'ไฟล์อื่นๆ',
+			'plugins'    => __( 'plugins', 'insightx-backup' ),
+			'themes'     => __( 'themes', 'insightx-backup' ),
+			'uploads'    => __( 'media library', 'insightx-backup' ),
+			'mu-plugins' => __( 'plugins', 'insightx-backup' ),
+			'other'      => __( 'other files', 'insightx-backup' ),
 		);
 		$bounds = (array) $job->get( 'file_category_bounds', array() );
 		foreach ( $bounds as $key => $upto ) {
 			if ( $done_files <= $upto ) {
-				return isset( $labels[ $key ] ) ? $labels[ $key ] : 'ไฟล์';
+				return isset( $labels[ $key ] ) ? $labels[ $key ] : __( 'files', 'insightx-backup' );
 			}
 		}
-		return 'ไฟล์';
+		return __( 'files', 'insightx-backup' );
 	}
 
 	private static function finalize( ISX_Job $job ) {
@@ -411,7 +411,7 @@ class ISX_Export {
 		if ( $backup_path !== null && ! empty( $options['encrypt'] ) ) {
 			$password = ISX_Crypto::decrypt_string( (string) $job->get( 'encrypt_password_enc', '' ) );
 			if ( $password === '' ) {
-				return self::encrypt_failed( $job, $backup_path, 'อ่านรหัสผ่านที่บันทึกไว้ไม่ได้' );
+				return self::encrypt_failed( $job, $backup_path, __( 'Could not read the saved password', 'insightx-backup' ) );
 			}
 
 			$tmp    = $backup_path . '.enc';
@@ -432,7 +432,7 @@ class ISX_Export {
 				@unlink( $backup_path );
 				if ( ! @rename( $tmp, $backup_path ) ) {
 					@unlink( $tmp );
-					return self::encrypt_failed( $job, $backup_path, 'ย้ายไฟล์ที่เข้ารหัสแล้วไม่สำเร็จ' );
+					return self::encrypt_failed( $job, $backup_path, __( 'Could not move the encrypted file', 'insightx-backup' ) );
 				}
 			}
 			clearstatcache( true, $backup_path );
@@ -447,15 +447,15 @@ class ISX_Export {
 			$job->set( 'step', 'upload' );
 			$job->set( 'progress', 97 );
 			$job->save();
-			return array( 'progress' => 97, 'done' => false, 'message' => 'สร้างไฟล์สำรองเสร็จแล้ว' );
+			return array( 'progress' => 97, 'done' => false, 'message' => __( 'Backup file created', 'insightx-backup' ) );
 		}
 
-		$job->finish( 'ส่งออกเสร็จสิ้น' );
+		$job->finish( __( 'Export complete', 'insightx-backup' ) );
 
 		return array(
 			'progress' => 100,
 			'done'     => true,
-			'message'  => 'ส่งออกเสร็จสิ้น',
+			'message'  => __( 'Export complete', 'insightx-backup' ),
 			'size'     => size_format( (int) $size ),
 			'backup'   => $backup_name,
 		);
@@ -491,7 +491,7 @@ class ISX_Export {
 		$backup      = ISX_Backups::path( $backup_name );
 
 		if ( $backup === null || ! ISX_Destinations::is_configured( $provider ) ) {
-			$message = 'ยังไม่ได้ตั้งค่า provider นี้ — ไฟล์ถูกเก็บไว้ในข้อมูลสำรองแล้ว';
+			$message = __( 'This provider is not configured yet — the file has been kept in Backups', 'insightx-backup' );
 			$job->finish( $message, true );
 			return array(
 				'progress' => 100,
@@ -573,7 +573,7 @@ class ISX_Export {
 
 				ISX_Logger::log_error(
 					'export',
-					sprintf( 'อัปโหลดส่วนที่ %d ไม่สำเร็จ กำลังลองใหม่ (%d/%d)', $number, $retries, self::UPLOAD_MAX_RETRIES ),
+					sprintf( __( 'Uploading part %d failed, retrying (%d/%d)', 'insightx-backup' ), $number, $retries, self::UPLOAD_MAX_RETRIES ),
 					array(
 						'job'    => $job->id(),
 						'part'   => $number,
@@ -585,7 +585,7 @@ class ISX_Export {
 				return array(
 					'progress' => 97 + 3 * ( $offset / $total ),
 					'done'     => false,
-					'message'  => sprintf( 'กำลังลองใหม่ (%d/%d)', $retries, self::UPLOAD_MAX_RETRIES ),
+					'message'  => sprintf( __( 'Retrying (%d/%d)', 'insightx-backup' ), $retries, self::UPLOAD_MAX_RETRIES ),
 				);
 			}
 
@@ -628,7 +628,7 @@ class ISX_Export {
 
 		ISX_Logger::log_info(
 			's3',
-			'อัปโหลด multipart สำเร็จ',
+			__( 'Multipart upload completed', 'insightx-backup' ),
 			array(
 				'host'  => $host,
 				'parts' => count( $parts ),
@@ -647,7 +647,7 @@ class ISX_Export {
 	 * doesn't throw when fwrite()/rename()/copy() come up short on a full
 	 * disk — it just quietly writes less than asked, or nothing — so an
 	 * unchecked return here was the difference between "no backup" and a
-	 * truncated .wpress reported as ส่งออกเสร็จสิ้น.
+	 * truncated .wpress reported as "Export complete".
 	 *
 	 * @return array Step result.
 	 */
@@ -658,12 +658,13 @@ class ISX_Export {
 		// Name the file and the space left, the way All-in-One WP Migration does
 		// ("Out of disk space. Could not write content to file. File: …"): on a
 		// shared host the path is what tells the user *which* mount filled up,
-		// and without it "ดิสก์เต็ม" sends people to check the wrong volume.
-		$message = 'พื้นที่ดิสก์ไม่พอ เขียนไฟล์ไม่สำเร็จ';
+		// and without it "disk full" sends people to check the wrong volume.
+		$message = __( 'Not enough disk space, could not write the file', 'insightx-backup' );
 		if ( $free !== false ) {
-			$message .= ' (เหลือ ' . size_format( (float) $free ) . ')';
+			/* translators: %s: free disk space */
+			$message .= sprintf( __( ' (free: %s)', 'insightx-backup' ), size_format( (float) $free ) );
 		}
-		$message .= ' — ไฟล์: ' . $path;
+		$message .= __( ' — file: ', 'insightx-backup' ) . $path;
 
 		$job->finish( $message, true );
 
@@ -690,7 +691,7 @@ class ISX_Export {
 	 * Encryption was requested but couldn't be delivered. The half-made backup
 	 * is deleted rather than kept: it is plaintext, it sits in a directory whose
 	 * only protection on nginx is an unguessable filename, and leaving it would
-	 * mean the "ข้อมูลสำรอง" list shows a file the user would reasonably assume
+	 * mean the "Backups" list shows a file the user would reasonably assume
 	 * is encrypted.
 	 *
 	 * @param string $backup_path Plaintext archive to remove, or null.
@@ -702,7 +703,8 @@ class ISX_Export {
 			@unlink( $backup_path );
 		}
 
-		$message = 'เข้ารหัสข้อมูลสำรองไม่สำเร็จ: ' . $reason . ' — ยกเลิกไฟล์สำรองนี้แล้วเพื่อไม่ให้เหลือไฟล์ที่ไม่ได้เข้ารหัสไว้';
+		/* translators: %s: error reason */
+		$message = sprintf( __( 'Backup encryption failed: %s — this backup has been discarded so no unencrypted file is left behind', 'insightx-backup' ), $reason );
 		$job->finish( $message, true );
 
 		ISX_Logger::log_error(
@@ -748,13 +750,14 @@ class ISX_Export {
 	 */
 	private static function upload_failed( ISX_Job $job, $message ) {
 		// Naming the local copy matters: finalize() stores the package in
-		// ข้อมูลสำรอง *before* the upload step begins, so a failed upload never
+		// Backups *before* the upload step begins, so a failed upload never
 		// costs the export itself. Without saying so, the red error next to a
 		// backup that is sitting right there reads as a contradiction.
 		$backup  = (string) $job->get( 'backup_name', '' );
-		$message = 'อัปโหลดไม่สำเร็จ: ' . $message;
+		$message = __( 'Upload failed: ', 'insightx-backup' ) . $message;
 		if ( $backup !== '' ) {
-			$message .= ' — ไฟล์สำรองถูกสร้างเรียบร้อยแล้วและอยู่ในเมนู "ข้อมูลสำรอง" (' . $backup . ') ดาวน์โหลดหรือสั่งส่งขึ้น Storage ใหม่ได้';
+			/* translators: %s: backup file name */
+			$message .= sprintf( __( ' — the backup file was already created and is in the "Backups" menu (%s) — you can download it or send it to Storage again', 'insightx-backup' ), $backup );
 		}
 		$job->finish( $message, true );
 
@@ -770,7 +773,7 @@ class ISX_Export {
 	 * @return array Step result.
 	 */
 	private static function upload_finished( ISX_Job $job, $backup_name ) {
-		$message = 'ส่งออกและอัปโหลดไปยัง Storage สำเร็จ';
+		$message = __( 'Exported and uploaded to Storage successfully', 'insightx-backup' );
 		$job->finish( $message );
 
 		return array(
@@ -891,7 +894,7 @@ class ISX_Export {
 				// costs storage indefinitely.
 				ISX_Logger::log_warn(
 					's3',
-					'พบ upload ที่ค้างแต่ยกเลิกไม่ได้ตอนนี้ (ยังไม่ได้ตั้งค่า provider หรือข้อมูลไม่ครบ) — เก็บไว้ลองใหม่รอบหน้า',
+					__( 'Found a stale upload that cannot be aborted right now (provider not configured or incomplete settings) — keeping it for the next run', 'insightx-backup' ),
 					array( 'provider' => $provider, 'upload_id' => $upload_id )
 				);
 				continue;
@@ -915,7 +918,7 @@ class ISX_Export {
 			if ( $job === null && $job_id !== '' && ISX_Job::exists( $job_id ) ) {
 				ISX_Logger::log_debug(
 					's3',
-					'ข้ามการล้าง upload: อ่านสถานะงานไม่ได้ แต่โฟลเดอร์งานยังอยู่',
+					__( 'Skipped upload cleanup: cannot read the job state, but the job folder still exists', 'insightx-backup' ),
 					array( 'provider' => $provider, 'upload_id' => $upload_id, 'job' => $job_id )
 				);
 				continue;
@@ -941,7 +944,7 @@ class ISX_Export {
 				// simply have been unreachable this minute.
 				ISX_Logger::log_warn(
 					's3',
-					'ล้าง upload ที่ค้างไม่สำเร็จ: ' . $result->get_error_message(),
+					__( 'Stale upload cleanup failed: ', 'insightx-backup' ) . $result->get_error_message(),
 					array( 'provider' => $provider, 'upload_id' => $upload_id )
 				);
 				continue;
@@ -951,7 +954,7 @@ class ISX_Export {
 			$aborted++;
 			ISX_Logger::log_info(
 				's3',
-				'ล้าง upload ที่ค้างของงานที่จบไปแล้ว',
+				__( 'Cleaned up stale upload of a finished job', 'insightx-backup' ),
 				array( 'provider' => $provider, 'upload_id' => $upload_id )
 			);
 		}
@@ -982,7 +985,7 @@ class ISX_Export {
 				$errors[ $slug ] = $uploads->get_error_message();
 				ISX_Logger::log_warn(
 					's3',
-					'อ่านรายการ upload ที่ค้างบน Storage ไม่ได้: ' . $uploads->get_error_message(),
+					__( 'Could not list stale uploads on Storage: ', 'insightx-backup' ) . $uploads->get_error_message(),
 					array( 'provider' => $slug )
 				);
 				continue;
@@ -1005,7 +1008,7 @@ class ISX_Export {
 				$aborted++;
 				ISX_Logger::log_info(
 					's3',
-					'ล้าง upload ที่ค้างที่ไม่มีเจ้าของ',
+					__( 'Cleaned up orphaned stale upload', 'insightx-backup' ),
 					array( 'provider' => $slug, 'key' => $upload['key'] )
 				);
 			}
@@ -1064,11 +1067,11 @@ class ISX_Export {
 
 		if ( is_wp_error( $result ) ) {
 			$context['error'] = $result->get_error_message();
-			ISX_Logger::log_warn( 's3', 'ยกเลิกการอัปโหลดที่ค้างไม่สำเร็จ — ล้างได้จากหน้าตั้งค่า Storage', $context );
+			ISX_Logger::log_warn( 's3', __( 'Could not abort the stale upload — you can clean it up from the Storage Settings page', 'insightx-backup' ), $context );
 			return false;
 		}
 
-		ISX_Logger::log_info( 's3', 'ยกเลิกการอัปโหลดที่ค้างบน Storage แล้ว', $context );
+		ISX_Logger::log_info( 's3', __( 'Aborted the stale upload on Storage', 'insightx-backup' ), $context );
 		return true;
 	}
 }

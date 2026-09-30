@@ -112,7 +112,7 @@ class ISX_Files {
 	 * update and has no restore value). Cache is deliberately NOT in this
 	 * list — unlike these, a "cache" dir can hold real, restorable output
 	 * (e.g. a page-cache plugin), so whether to skip it is the opt-in
-	 * "ไม่รวมไฟล์แคช" filter (exclude_cache) instead, same as AI1WM's
+	 * "Do not export cache files" filter (exclude_cache) instead, same as AI1WM's
 	 * default-include-unless-asked behaviour.
 	 *
 	 * @return array
@@ -146,7 +146,7 @@ class ISX_Files {
 	 *               nasty, because `total` is counted from the loop rather than
 	 *               read back from the file, so the export would pack fewer
 	 *               files than the site has, still reach 100%, and report
-	 *               ส่งออกเสร็จสิ้น over a backup with files silently missing.
+	 *               "Export complete" over a backup with files silently missing.
 	 */
 	public static function build_list( $list_file, $filters = array() ) {
 		$fh = fopen( $list_file, 'wb' );
@@ -617,7 +617,7 @@ class ISX_Files {
 			// Decided one level up, at plugins/ or themes/ rather than at the
 			// individual plugin or theme: "the package restored no plugins at
 			// all" means it was exported with plugins excluded
-			// ("ไม่รวมปลั๊กอิน"), and wiping the target's plugins on the
+			// ("Do not export plugins"), and wiping the target's plugins on the
 			// strength of an archive that never mentioned them would strip a
 			// working site for no reason. But once the package *did* restore
 			// plugins, one that got nothing written into it really was dropped

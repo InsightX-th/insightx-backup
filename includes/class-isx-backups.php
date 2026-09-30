@@ -212,7 +212,7 @@ class ISX_Backups {
 	 * ISX_Admin::run_scheduled_backup(), which walks all() and calls delete()
 	 * above — both local-only). A site backing up to a bucket every night was
 	 * therefore keeping N files locally while the bucket grew without limit,
-	 * paying storage on every backup ever taken, with the "ข้อมูลสำรอง" screen
+	 * paying storage on every backup ever taken, with the "Backups" screen
 	 * showing a tidy N and nothing anywhere hinting at the other pile.
 	 *
 	 * Only this site's own backups are considered: prefix + a name matching
@@ -282,7 +282,7 @@ class ISX_Backups {
 			if ( is_wp_error( $result ) ) {
 				ISX_Logger::log_error(
 					's3',
-					'ลบข้อมูลสำรองเก่าบน Storage ไม่สำเร็จ: ' . $result->get_error_message(),
+					__( 'Could not delete old backup on Storage: ', 'insightx-backup' ) . $result->get_error_message(),
 					array( 'provider' => $slug, 'key' => $old['key'] )
 				);
 				continue;
@@ -293,7 +293,7 @@ class ISX_Backups {
 		if ( $deleted > 0 ) {
 			ISX_Logger::log_info(
 				's3',
-				sprintf( 'ลบข้อมูลสำรองเก่าบน Storage %d ไฟล์ (เก็บไว้ %d ล่าสุด)', $deleted, $retain ),
+				sprintf( __( 'Deleted %d old backups on Storage (keeping the latest %d)', 'insightx-backup' ), $deleted, $retain ),
 				array( 'provider' => $slug, 'prefix' => $prefix )
 			);
 		}
@@ -302,13 +302,16 @@ class ISX_Backups {
 	}
 
 	/**
-	 * Format a timestamp as a Thai Buddhist-era date, e.g. "24/07/69"
-	 * (24 July 2026 → พ.ศ. 2569).
+	 * Format a timestamp as a short date, e.g. "24/07/26". Thai admins get the
+	 * Buddhist-era year instead ("24/07/69" — 24 July 2026 is B.E. 2569).
 	 *
 	 * @param int $timestamp
 	 * @return string
 	 */
-	public static function format_thai_date( $timestamp ) {
+	public static function format_date( $timestamp ) {
+		if ( strpos( determine_locale(), 'th' ) !== 0 ) {
+			return wp_date( 'd/m/y', $timestamp );
+		}
 		$buddhist_year = ( (int) wp_date( 'Y', $timestamp ) + 543 ) % 100;
 		return wp_date( 'd/m/', $timestamp ) . sprintf( '%02d', $buddhist_year );
 	}

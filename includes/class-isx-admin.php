@@ -89,7 +89,7 @@ class ISX_Admin {
 		add_action( 'wp_ajax_isx_import_decrypt', array( __CLASS__, 'ajax_import_decrypt' ) );
 		// Cancelling authenticates on the job secret like isx_run, and needs the
 		// nopriv hook for the same reason: an import can log the session out
-		// mid-job, and that is exactly when someone reaches for "ยกเลิก".
+		// mid-job, and that is exactly when someone reaches for "Cancel".
 		add_action( 'wp_ajax_isx_job_cancel', array( __CLASS__, 'ajax_job_cancel' ) );
 		add_action( 'wp_ajax_nopriv_isx_job_cancel', array( __CLASS__, 'ajax_job_cancel' ) );
 		// Browser-side failures (the poll request never coming back) are invisible
@@ -132,7 +132,7 @@ class ISX_Admin {
 		if ( ! isset( $schedules['monthly'] ) ) {
 			$schedules['monthly'] = array(
 				'interval' => 30 * DAY_IN_SECONDS,
-				'display'  => __( 'รายเดือน', 'insightx-backup' ),
+				'display'  => __( 'Monthly', 'insightx-backup' ),
 			);
 		}
 		return $schedules;
@@ -148,9 +148,9 @@ class ISX_Admin {
 			'dashicons-database-export',
 			76
 		);
-		add_submenu_page( 'isx_export', __( 'ส่งออก', 'insightx-backup' ), __( 'ส่งออก', 'insightx-backup' ), 'export', 'isx_export', array( __CLASS__, 'page_export' ) );
-		add_submenu_page( 'isx_export', __( 'นำเข้า', 'insightx-backup' ), __( 'นำเข้า', 'insightx-backup' ), 'import', 'isx_import', array( __CLASS__, 'page_import' ) );
-		$isx_backups_label = __( 'ข้อมูลสำรอง', 'insightx-backup' );
+		add_submenu_page( 'isx_export', __( 'Export', 'insightx-backup' ), __( 'Export', 'insightx-backup' ), 'export', 'isx_export', array( __CLASS__, 'page_export' ) );
+		add_submenu_page( 'isx_export', __( 'Import', 'insightx-backup' ), __( 'Import', 'insightx-backup' ), 'import', 'isx_import', array( __CLASS__, 'page_import' ) );
+		$isx_backups_label = __( 'Backups', 'insightx-backup' );
 		$isx_backup_count  = count( ISX_Backups::all() );
 		if ( $isx_backup_count > 0 ) {
 			$isx_backups_label .= sprintf(
@@ -158,12 +158,12 @@ class ISX_Admin {
 				$isx_backup_count
 			);
 		}
-		add_submenu_page( 'isx_export', __( 'ข้อมูลสำรอง', 'insightx-backup' ), $isx_backups_label, 'export', 'isx_backups', array( __CLASS__, 'page_backups' ) );
-		add_submenu_page( 'isx_export', __( 'การเชื่อมต่อ', 'insightx-backup' ), __( 'การเชื่อมต่อ', 'insightx-backup' ), 'export', 'isx_connections', array( __CLASS__, 'page_connections' ) );
-		add_submenu_page( 'isx_export', __( 'ตั้งค่า Storage', 'insightx-backup' ), __( 'ตั้งค่า Storage', 'insightx-backup' ), 'export', 'isx_settings', array( __CLASS__, 'page_settings' ) );
+		add_submenu_page( 'isx_export', __( 'Backups', 'insightx-backup' ), $isx_backups_label, 'export', 'isx_backups', array( __CLASS__, 'page_backups' ) );
+		add_submenu_page( 'isx_export', __( 'Connections', 'insightx-backup' ), __( 'Connections', 'insightx-backup' ), 'export', 'isx_connections', array( __CLASS__, 'page_connections' ) );
+		add_submenu_page( 'isx_export', __( 'Storage Settings', 'insightx-backup' ), __( 'Storage Settings', 'insightx-backup' ), 'export', 'isx_settings', array( __CLASS__, 'page_settings' ) );
 		// Stricter cap than the rest of this plugin ('export'/'import') — these
 		// tools purge plugins/themes/media or wipe the database outright.
-		add_submenu_page( 'isx_export', __( 'ศูนย์รีเซ็ต', 'insightx-backup' ), __( 'ศูนย์รีเซ็ต', 'insightx-backup' ), 'manage_options', 'isx_reset_hub', array( __CLASS__, 'page_reset_hub' ) );
+		add_submenu_page( 'isx_export', __( 'Reset Hub', 'insightx-backup' ), __( 'Reset Hub', 'insightx-backup' ), 'manage_options', 'isx_reset_hub', array( __CLASS__, 'page_reset_hub' ) );
 		add_submenu_page( 'isx_export', __( 'Log', 'insightx-backup' ), __( 'Log', 'insightx-backup' ), 'export', 'isx_log', array( __CLASS__, 'page_log' ) );
 	}
 
@@ -175,7 +175,7 @@ class ISX_Admin {
 	 * bump it, and a JS change shipped without that bump is invisible: the PHP
 	 * views update (they're read from disk every request) while the browser keeps
 	 * running yesterday's script against today's markup. That's exactly how the
-	 * "ยกเลิก" button ended up rendered by a 0.1.7 view with no 0.1.7 click
+	 * "Cancel" button ended up rendered by a 0.1.7 view with no 0.1.7 click
 	 * handler behind it. These are admin-only assets, so the mtime differing
 	 * between servers costs nothing.
 	 *
@@ -227,6 +227,7 @@ class ISX_Admin {
 				// path lives outside the web root, where admin-ajax.php's
 				// streamed download is the only way to reach it.
 				'backups_url' => ISX_Backups::base_url(),
+				'i18n'        => self::js_i18n(),
 			)
 		);
 
@@ -244,6 +245,118 @@ class ISX_Admin {
 		if ( strpos( $hook, 'isx_reset_hub' ) !== false ) {
 			wp_enqueue_script( 'isx-reset', ISX_URL . 'assets/js/isx-reset.js', array( 'jquery', 'isx-admin' ), self::asset_ver( 'assets/js/isx-reset.js' ), true );
 		}
+	}
+
+	/**
+	 * Every UI string the admin scripts show, keyed by its English source, for
+	 * t() in isx-admin.js. Must list each t('...') literal used in assets/js —
+	 * tests/run.php fails if one is missing.
+	 *
+	 * @return array<string, string>
+	 */
+	private static function js_i18n() {
+		return array(
+			'The server dropped the connection midway (HTTP %s) — the job took longer than the server allows (see the Log page)' => __( 'The server dropped the connection midway (HTTP %s) — the job took longer than the server allows (see the Log page)', 'insightx-backup' ),
+			'Session expired (HTTP 403) — please refresh this page and start again' => __( 'Session expired (HTTP 403) — please refresh this page and start again', 'insightx-backup' ),
+			'Server error (HTTP 500) — see the Log page for details' => __( 'Server error (HTTP 500) — see the Log page for details', 'insightx-backup' ),
+			'Cannot reach the server — the connection dropped or the server is not responding' => __( 'Cannot reach the server — the connection dropped or the server is not responding', 'insightx-backup' ),
+			'Connection failed %1$s times in a row (HTTP %2$s) — see the Log page' => __( 'Connection failed %1$s times in a row (HTTP %2$s) — see the Log page', 'insightx-backup' ),
+			'Connection failed' => __( 'Connection failed', 'insightx-backup' ),
+			'Could not cancel' => __( 'Could not cancel', 'insightx-backup' ),
+			'Please enter the password' => __( 'Please enter the password', 'insightx-backup' ),
+			'Import cancelled' => __( 'Import cancelled', 'insightx-backup' ),
+			'Incorrect password' => __( 'Incorrect password', 'insightx-backup' ),
+			'An error occurred' => __( 'An error occurred', 'insightx-backup' ),
+			'Poll succeeded' => __( 'Poll succeeded', 'insightx-backup' ),
+			'Poll failed (connection failed)' => __( 'Poll failed (connection failed)', 'insightx-backup' ),
+			'Stopped polling: too many consecutive failures' => __( 'Stopped polling: too many consecutive failures', 'insightx-backup' ),
+			' — stopped waiting after %s retries. The job may still be running on the server. Refresh this page to see the latest status' => __( ' — stopped waiting after %s retries. The job may still be running on the server. Refresh this page to see the latest status', 'insightx-backup' ),
+			'Please enter an encryption password' => __( 'Please enter an encryption password', 'insightx-backup' ),
+			'Passwords do not match' => __( 'Passwords do not match', 'insightx-backup' ),
+			'Remove this row' => __( 'Remove this row', 'insightx-backup' ),
+			'%s tables selected' => __( '%s tables selected', 'insightx-backup' ),
+			'No tables selected' => __( 'No tables selected', 'insightx-backup' ),
+			'Could not load the table list' => __( 'Could not load the table list', 'insightx-backup' ),
+			'%s rows' => __( '%s rows', 'insightx-backup' ),
+			'No tables found' => __( 'No tables found', 'insightx-backup' ),
+			'%s items selected' => __( '%s items selected', 'insightx-backup' ),
+			'No files selected' => __( 'No files selected', 'insightx-backup' ),
+			'Could not start' => __( 'Could not start', 'insightx-backup' ),
+			'Could not connect to the server' => __( 'Could not connect to the server', 'insightx-backup' ),
+			'%1$s — retrying (%2$s/%3$s)...' => __( '%1$s — retrying (%2$s/%3$s)...', 'insightx-backup' ),
+			'Upload failed' => __( 'Upload failed', 'insightx-backup' ),
+			'Uploading...' => __( 'Uploading...', 'insightx-backup' ),
+			'Preparing' => __( 'Preparing', 'insightx-backup' ),
+			'Exporting database' => __( 'Exporting database', 'insightx-backup' ),
+			'Packing files' => __( 'Packing files', 'insightx-backup' ),
+			'File created' => __( 'File created', 'insightx-backup' ),
+			'Uploading to Storage' => __( 'Uploading to Storage', 'insightx-backup' ),
+			'Uploading file' => __( 'Uploading file', 'insightx-backup' ),
+			'Verifying package' => __( 'Verifying package', 'insightx-backup' ),
+			'Clearing existing files' => __( 'Clearing existing files', 'insightx-backup' ),
+			'Restoring files' => __( 'Restoring files', 'insightx-backup' ),
+			'Importing database' => __( 'Importing database', 'insightx-backup' ),
+			'Finalizing' => __( 'Finalizing', 'insightx-backup' ),
+			'%1$s hr %2$s min' => __( '%1$s hr %2$s min', 'insightx-backup' ),
+			'%1$s min %2$s sec' => __( '%1$s min %2$s sec', 'insightx-backup' ),
+			'%s sec' => __( '%s sec', 'insightx-backup' ),
+			'Elapsed: %s' => __( 'Elapsed: %s', 'insightx-backup' ),
+			'No running job found on this page — please refresh to see the latest status' => __( 'No running job found on this page — please refresh to see the latest status', 'insightx-backup' ),
+			'Cancel clicked but there is no activeJob' => __( 'Cancel clicked but there is no activeJob', 'insightx-backup' ),
+			'Cancel the export?' => __( 'Cancel the export?', 'insightx-backup' ),
+			'Cancelled' => __( 'Cancelled', 'insightx-backup' ),
+			'Please choose a .wpress file' => __( 'Please choose a .wpress file', 'insightx-backup' ),
+			'Importing will overwrite the entire current site. Continue?' => __( 'Importing will overwrite the entire current site. Continue?', 'insightx-backup' ),
+			'Done' => __( 'Done', 'insightx-backup' ),
+			'Upload failed, please try again' => __( 'Upload failed, please try again', 'insightx-backup' ),
+			'This provider is not configured yet — go to the "Connections" menu first' => __( 'This provider is not configured yet — go to the "Connections" menu first', 'insightx-backup' ),
+			'Downloading from Storage...' => __( 'Downloading from Storage...', 'insightx-backup' ),
+			'Download failed' => __( 'Download failed', 'insightx-backup' ),
+			'Loading list...' => __( 'Loading list...', 'insightx-backup' ),
+			'Could not load the list' => __( 'Could not load the list', 'insightx-backup' ),
+			'No .wpress files found in this bucket' => __( 'No .wpress files found in this bucket', 'insightx-backup' ),
+			'Import' => __( 'Import', 'insightx-backup' ),
+			'Importing this file will overwrite the current site. Continue?' => __( 'Importing this file will overwrite the current site. Continue?', 'insightx-backup' ),
+			'Choose a provider from the "Import from" menu first' => __( 'Choose a provider from the "Import from" menu first', 'insightx-backup' ),
+			'Testing connection...' => __( 'Testing connection...', 'insightx-backup' ),
+			'Saved' => __( 'Saved', 'insightx-backup' ),
+			'Could not save' => __( 'Could not save', 'insightx-backup' ),
+			'Saving...' => __( 'Saving...', 'insightx-backup' ),
+			'Checking...' => __( 'Checking...', 'insightx-backup' ),
+			'Cleanup failed' => __( 'Cleanup failed', 'insightx-backup' ),
+			'Cleanup failed — see the Log page for details' => __( 'Cleanup failed — see the Log page for details', 'insightx-backup' ),
+			'Delete this backup?' => __( 'Delete this backup?', 'insightx-backup' ),
+			'No backups yet' => __( 'No backups yet', 'insightx-backup' ),
+			'Could not delete' => __( 'Could not delete', 'insightx-backup' ),
+			'%s files' => __( '%s files', 'insightx-backup' ),
+			'Showing %1$s of %2$s files in this folder' => __( 'Showing %1$s of %2$s files in this folder', 'insightx-backup' ),
+			'No files in this folder' => __( 'No files in this folder', 'insightx-backup' ),
+			'Reading the package contents is not progressing — the package file may be corrupted' => __( 'Reading the package contents is not progressing — the package file may be corrupted', 'insightx-backup' ),
+			'Could not load the list (HTTP %s) — the server may have run out of memory or time' => __( 'Could not load the list (HTTP %s) — the server may have run out of memory or time', 'insightx-backup' ),
+			'Could not load the list — cannot reach the server' => __( 'Could not load the list — cannot reach the server', 'insightx-backup' ),
+			'Verification failed' => __( 'Verification failed', 'insightx-backup' ),
+			'Verification passed' => __( 'Verification passed', 'insightx-backup' ),
+			'Verification did not pass' => __( 'Verification did not pass', 'insightx-backup' ),
+			'Verification failed (HTTP %s) — the server returned an error, see the Log page for details' => __( 'Verification failed (HTTP %s) — the server returned an error, see the Log page for details', 'insightx-backup' ),
+			'Verification failed — cannot reach the server' => __( 'Verification failed — cannot reach the server', 'insightx-backup' ),
+			'Reading package contents...' => __( 'Reading package contents...', 'insightx-backup' ),
+			'No files found in this package' => __( 'No files found in this package', 'insightx-backup' ),
+			'Total: %s' => __( 'Total: %s', 'insightx-backup' ),
+			'Reading...' => __( 'Reading...', 'insightx-backup' ),
+			'All plugins except InsightX Backup will be deactivated and deleted. This cannot be undone.' => __( 'All plugins except InsightX Backup will be deactivated and deleted. This cannot be undone.', 'insightx-backup' ),
+			'All themes will be deleted and the default theme activated. This cannot be undone.' => __( 'All themes will be deleted and the default theme activated. This cannot be undone.', 'insightx-backup' ),
+			'Every file in the media library will be deleted. This cannot be undone.' => __( 'Every file in the media library will be deleted. This cannot be undone.', 'insightx-backup' ),
+			'Everything in the database will be permanently deleted and the site returned to its initial state. This cannot be undone.' => __( 'Everything in the database will be permanently deleted and the site returned to its initial state. This cannot be undone.', 'insightx-backup' ),
+			'The entire site (plugins, themes, media and database) will be reset to its initial state. This cannot be undone.' => __( 'The entire site (plugins, themes, media and database) will be reset to its initial state. This cannot be undone.', 'insightx-backup' ),
+			"Database reset complete\n\nAdmin account: %1\$s\nNew password: %2\$s\n\nSave this password now — it is shown only once. This page will now reload" => __( "Database reset complete\n\nAdmin account: %1\$s\nNew password: %2\$s\n\nSave this password now — it is shown only once. This page will now reload", 'insightx-backup' ),
+			'Database reset complete, but the new password could not be retrieved (%s) — reset the password from the login screen (Lost your password) or WP-CLI' => __( 'Database reset complete, but the new password could not be retrieved (%s) — reset the password from the login screen (Lost your password) or WP-CLI', 'insightx-backup' ),
+			'Token expired' => __( 'Token expired', 'insightx-backup' ),
+			'Database reset complete, but the new password could not be retrieved — reset the password from the login screen (Lost your password) or WP-CLI' => __( 'Database reset complete, but the new password could not be retrieved — reset the password from the login screen (Lost your password) or WP-CLI', 'insightx-backup' ),
+			'Creating backup...' => __( 'Creating backup...', 'insightx-backup' ),
+			'Could not create the backup' => __( 'Could not create the backup', 'insightx-backup' ),
+			'Backup created (%s)' => __( 'Backup created (%s)', 'insightx-backup' ),
+			'Backup created' => __( 'Backup created', 'insightx-backup' ),
+		);
 	}
 
 	public static function page_export() {
@@ -311,16 +424,16 @@ class ISX_Admin {
 			'plugin          : InsightX Backup ' . ISX_VERSION,
 			'wordpress       : ' . get_bloginfo( 'version' ),
 			'php             : ' . PHP_VERSION,
-			'curl            : ' . ( isset( $curl['version'] ) ? $curl['version'] : 'ไม่มี' ),
+			'curl            : ' . ( isset( $curl['version'] ) ? $curl['version'] : __( 'none', 'insightx-backup' ) ),
 			'ssl             : ' . ( isset( $curl['ssl_version'] ) ? $curl['ssl_version'] : '-' ),
 			'max_execution   : ' . ini_get( 'max_execution_time' ),
 			'memory_limit    : ' . ini_get( 'memory_limit' ),
 			'site_url        : ' . site_url(),
-			'verbose_log     : ' . ( ISX_Logger::is_verbose() ? 'เปิด' : 'ปิด' ),
+			'verbose_log     : ' . ( ISX_Logger::is_verbose() ? __( 'on', 'insightx-backup' ) : __( 'off', 'insightx-backup' ) ),
 		);
 
 		$behind_cf = ! empty( $_SERVER['HTTP_CF_RAY'] ) || ! empty( $_SERVER['HTTP_CF_CONNECTING_IP'] );
-		$lines[]   = 'cloudflare      : ' . ( $behind_cf ? 'ใช่ (พบ CF header)' : 'ไม่พบ CF header' );
+		$lines[]   = 'cloudflare      : ' . ( $behind_cf ? __( 'yes (CF header found)', 'insightx-backup' ) : __( 'no CF header found', 'insightx-backup' ) );
 		if ( $behind_cf && ! empty( $_SERVER['HTTP_CF_RAY'] ) ) {
 			$lines[] = 'cf_ray          : ' . sanitize_text_field( wp_unslash( $_SERVER['HTTP_CF_RAY'] ) );
 		}
@@ -367,7 +480,7 @@ class ISX_Admin {
 
 		$job = ISX_Job::create( 'export' );
 		if ( ! $job ) {
-			wp_send_json_error( array( 'message' => 'สร้างงานไม่สำเร็จ ดูสาเหตุได้ที่หน้า Log' ) );
+			wp_send_json_error( array( 'message' => __( 'Could not create the job. See the Log page for details', 'insightx-backup' ) ) );
 		}
 
 		$provider = isset( $_POST['to_storage'] ) ? sanitize_key( wp_unslash( $_POST['to_storage'] ) ) : '';
@@ -445,7 +558,7 @@ class ISX_Admin {
 		self::guard( 'import' );
 		$job = ISX_Job::create( 'import' );
 		if ( ! $job ) {
-			wp_send_json_error( array( 'message' => 'สร้างงานไม่สำเร็จ ดูสาเหตุได้ที่หน้า Log' ) );
+			wp_send_json_error( array( 'message' => __( 'Could not create the job. See the Log page for details', 'insightx-backup' ) ) );
 		}
 		// Creating the (empty) target up front is also the earliest cheap proof
 		// that the storage directory is actually writable — better to say so now
@@ -454,10 +567,10 @@ class ISX_Admin {
 			$job->cleanup();
 			ISX_Logger::log_error(
 				'import',
-				'สร้างไฟล์ปลายทางสำหรับอัปโหลดไม่สำเร็จ',
+				__( 'Could not create the upload destination file', 'insightx-backup' ),
 				array( 'job' => $job->id(), 'free_space' => @disk_free_space( dirname( $job->archive() ) ) )
 			);
-			wp_send_json_error( array( 'message' => 'สร้างไฟล์สำหรับรับข้อมูลไม่ได้ — ตรวจสอบสิทธิ์เขียนและพื้นที่ว่างของเซิร์ฟเวอร์' ) );
+			wp_send_json_error( array( 'message' => __( 'Could not create the file to receive data — check write permissions and free space on the server', 'insightx-backup' ) ) );
 		}
 		wp_send_json_success( array( 'job' => $job->id(), 'secret' => $job->get( 'secret' ) ) );
 	}
@@ -467,14 +580,14 @@ class ISX_Admin {
 		$job_id = isset( $_POST['job'] ) ? sanitize_text_field( wp_unslash( $_POST['job'] ) ) : '';
 		$job    = ISX_Job::load( $job_id );
 		if ( ! $job || $job->get( 'type' ) !== 'import' ) {
-			ISX_Logger::log_error( 'import', 'งานไม่ถูกต้อง (chunk upload)', array( 'job' => $job_id ) );
-			wp_send_json_error( array( 'message' => 'งานไม่ถูกต้อง' ) );
+			ISX_Logger::log_error( 'import', __( 'Invalid job (chunk upload)', 'insightx-backup' ), array( 'job' => $job_id ) );
+			wp_send_json_error( array( 'message' => __( 'Invalid job', 'insightx-backup' ) ) );
 		}
 		if ( empty( $_FILES['chunk']['tmp_name'] ) || ! is_uploaded_file( $_FILES['chunk']['tmp_name'] ) ) {
 			// Common causes: upload_max_filesize/post_max_size smaller than the
 			// chunk size, or the request hit a proxy/host body-size limit.
-			ISX_Logger::log_error( 'import', 'ไม่พบข้อมูล chunk', array( 'job' => $job_id ) );
-			wp_send_json_error( array( 'message' => 'ไม่พบข้อมูล chunk' ) );
+			ISX_Logger::log_error( 'import', __( 'No chunk data found', 'insightx-backup' ), array( 'job' => $job_id ) );
+			wp_send_json_error( array( 'message' => __( 'No chunk data found', 'insightx-backup' ) ) );
 		}
 
 		$out = fopen( $job->archive(), 'ab' );
@@ -482,7 +595,7 @@ class ISX_Admin {
 		// This is where the uploaded package's bytes actually land, so it's the
 		// most likely place for a full disk to bite on an import — and the
 		// consequence used to be invisible: every chunk reported "received",
-		// then extraction failed much later with "ไฟล์แพ็กเกจไม่ถูกต้อง", which
+		// then extraction failed much later with "Invalid package file", which
 		// points at the file rather than at the disk that truncated it.
 		$ok = ( $out !== false && $in !== false );
 		if ( $ok ) {
@@ -505,7 +618,7 @@ class ISX_Admin {
 		}
 
 		if ( ! $ok ) {
-			$message = 'เขียนไฟล์ที่อัปโหลดไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม กรุณาตรวจสอบพื้นที่ว่างแล้วลองใหม่';
+			$message = __( 'Could not write the uploaded file — the server disk may be full. Please check free space and try again', 'insightx-backup' );
 			ISX_Logger::log_error(
 				'import',
 				$message,
@@ -527,16 +640,16 @@ class ISX_Admin {
 			// Job dir/state.json missing or unreadable — mid-run causes seen in
 			// practice: disk full, PHP-FPM/host killed the process while
 			// state.json was mid-write, or someone changed the storage path
-			// (Settings → ตั้งค่า Storage) while a job was still in flight.
+			// (Settings → Storage Settings) while a job was still in flight.
 			ISX_Logger::log_error(
 				'system',
-				'ไม่พบงาน',
+				__( 'Job not found', 'insightx-backup' ),
 				array(
 					'job'      => $job_id,
 					'searched' => implode( ', ', ISX_Job::search_paths() ),
 				)
 			);
-			wp_send_json_error( array( 'message' => 'ไม่พบงาน' ) );
+			wp_send_json_error( array( 'message' => __( 'Job not found', 'insightx-backup' ) ) );
 		}
 
 		// Authenticate against the on-disk per-job secret rather than the WP
@@ -544,7 +657,7 @@ class ISX_Admin {
 		// break auth partway through the poll loop.
 		$secret = isset( $_POST['secret'] ) ? sanitize_text_field( wp_unslash( $_POST['secret'] ) ) : '';
 		if ( ! hash_equals( (string) $job->get( 'secret' ), $secret ) ) {
-			wp_send_json_error( array( 'message' => 'secret ไม่ถูกต้อง' ) );
+			wp_send_json_error( array( 'message' => __( 'Invalid secret', 'insightx-backup' ) ) );
 		}
 
 		// This request is itself a loopback successor — clear the throttle so
@@ -553,11 +666,11 @@ class ISX_Admin {
 		// throttle). See spawn_loopback().
 		if ( isset( $_POST['isx_lb'] ) ) {
 			delete_transient( 'isx_lb_' . $job->id() );
-			// Pairs with the "ยิง loopback" entry in spawn_loopback(). Spawns
+			// Pairs with the "Firing loopback" entry in spawn_loopback(). Spawns
 			// without matching arrivals mean the site can't reach itself over
 			// HTTP — a firewall/WAF/reverse proxy in front of the domain eating
 			// the self-request is the usual cause, and it's invisible otherwise.
-			ISX_Logger::log_debug( 'system', 'loopback มาถึงแล้ว', array( 'job' => $job->id() ) );
+			ISX_Logger::log_debug( 'system', __( 'Loopback arrived', 'insightx-backup' ), array( 'job' => $job->id() ) );
 		}
 
 		$result = self::run_step( $job );
@@ -589,17 +702,17 @@ class ISX_Admin {
 		$job_id = isset( $_POST['job'] ) ? sanitize_text_field( wp_unslash( $_POST['job'] ) ) : '';
 		$job    = ISX_Job::load( $job_id );
 		if ( ! $job ) {
-			wp_send_json_error( array( 'message' => 'ไม่พบงาน' ) );
+			wp_send_json_error( array( 'message' => __( 'Job not found', 'insightx-backup' ) ) );
 		}
 
 		// Same on-disk secret as ajax_run(), for the same reason: a restore can
 		// invalidate the WP session partway through the run.
 		$secret = isset( $_POST['secret'] ) ? sanitize_text_field( wp_unslash( $_POST['secret'] ) ) : '';
 		if ( ! hash_equals( (string) $job->get( 'secret' ), $secret ) ) {
-			wp_send_json_error( array( 'message' => 'secret ไม่ถูกต้อง' ) );
+			wp_send_json_error( array( 'message' => __( 'Invalid secret', 'insightx-backup' ) ) );
 		}
 
-		$message = 'ยกเลิกโดยผู้ใช้';
+		$message = __( 'Cancelled by user', 'insightx-backup' );
 
 		if ( $job->get( 'step' ) === 'done' ) {
 			// Already finished between the click and this request — don't
@@ -635,16 +748,19 @@ class ISX_Admin {
 		if ( $finished === false ) {
 			ISX_Logger::log_debug(
 				(string) $job->get( 'type', 'export' ),
-				'ยกเลิก: งานกำลังรันอยู่ รอ step ปัจจุบันจบ',
+				__( 'Cancel: job is running, waiting for the current step to finish', 'insightx-backup' ),
 				array( 'job' => $job->id() )
 			);
 		}
 
+		// The flag, not the (translated) message text, tells the client this
+		// ended as a cancel rather than a job that finished on its own.
 		wp_send_json_success(
 			array(
-				'progress' => 100,
-				'done'     => true,
-				'message'  => $message,
+				'progress'  => 100,
+				'done'      => true,
+				'cancelled' => true,
+				'message'   => $message,
 			)
 		);
 	}
@@ -653,7 +769,7 @@ class ISX_Admin {
 	 * Record a browser-side event in the same log as everything else.
 	 *
 	 * The failure users actually report — the progress bar stopping with
-	 * "การเชื่อมต่อล้มเหลว" — happens when a poll request never comes back, so
+	 * "Connection failed" — happens when a poll request never comes back, so
 	 * the server never runs a line of code for it and the log stays empty. The
 	 * XHR status the browser saw is the one piece of evidence that identifies
 	 * the culprit: 522/524/520 is a reverse proxy giving up on a slow origin,
@@ -773,13 +889,13 @@ class ISX_Admin {
 				$where = basename( (string) $error['file'] ) . ':' . (int) $error['line'];
 				ISX_Logger::log_error(
 					'backup',
-					$context . 'ล้มเหลวกลางคัน: ' . $error['message'],
+					$context . __( 'failed midway: ', 'insightx-backup' ) . $error['message'],
 					array( 'file' => $error['file'], 'line' => (int) $error['line'] )
 				);
 				wp_send_json_error(
 					array(
 						'message' => sprintf(
-							'%sล้มเหลวกลางคัน: %s (%s) — ดูรายละเอียดได้ที่หน้า Log',
+							__( '%sfailed midway: %s (%s) — see the Log page for details', 'insightx-backup' ),
 							$context,
 							$error['message'],
 							$where
@@ -802,7 +918,7 @@ class ISX_Admin {
 	 * @return array
 	 */
 	private static function finish_cancelled( ISX_Job $job, $type, $step ) {
-		$message = 'ยกเลิกโดยผู้ใช้';
+		$message = __( 'Cancelled by user', 'insightx-backup' );
 
 		if ( $type !== 'import' ) {
 			ISX_Export::abort_pending_upload( $job );
@@ -811,7 +927,7 @@ class ISX_Admin {
 
 		ISX_Logger::log_warn(
 			$type !== '' ? $type : 'export',
-			'หยุดงานตามคำสั่งยกเลิก',
+			__( 'Stopped by cancel request', 'insightx-backup' ),
 			array(
 				'job'  => $job->id(),
 				'step' => $step,
@@ -849,7 +965,7 @@ class ISX_Admin {
 						'progress'       => 100,
 						'done'           => true,
 						'error'          => (bool) $locked_job->get( 'last_error', false ),
-						'message'        => (string) $locked_job->get( 'last_message', 'เสร็จสิ้น' ),
+						'message'        => (string) $locked_job->get( 'last_message', __( 'Done', 'insightx-backup' ) ),
 						'phase'          => 'finalize',
 						'phase_progress' => 100,
 					);
@@ -872,7 +988,7 @@ class ISX_Admin {
 				$type        = (string) $locked_job->get( 'type' );
 				$step_before = (string) $locked_job->get( 'step', 'init' );
 
-				// Someone hit "ยกเลิก" while this job was between steps (or while a
+				// Someone hit "Cancel" while this job was between steps (or while a
 				// previous step held the lock, in which case ajax_job_cancel() left
 				// the flag for whoever got here first). Finishing it here — inside
 				// the lock, before any new work starts — is the only place that can
@@ -889,10 +1005,10 @@ class ISX_Admin {
 				// Every step is supposed to return within STEP_TIME_BUDGET (~10s)
 				// so no single HTTP request runs long. One that badly overshoots
 				// is the request a proxy's edge timeout would cut off — which is
-				// exactly what "การเชื่อมต่อล้มเหลว" looks like from the browser.
+				// exactly what "Connection failed" looks like from the browser.
 				ISX_Logger::log_debug(
 					$type,
-					'จบ step',
+					__( 'Step finished', 'insightx-backup' ),
 					array(
 						'job'        => $locked_job->id(),
 						'step'       => $step_before,
@@ -905,11 +1021,11 @@ class ISX_Admin {
 
 				// Cancelled while this step was running — but only if the step is
 				// still mid-pipeline. A step like finalize() is atomic: it packs the
-				// archive, saves it into ข้อมูลสำรอง, and calls $job->finish() itself
+				// archive, saves it into Backups, and calls $job->finish() itself
 				// as its very last action, all within this one call, uninterrupted.
 				// If the cancel flag happened to land at that exact moment, the job
 				// is already 'done' with a real outcome (success or its own genuine
-				// failure) by the time we get here — overwriting that with "ยกเลิก"
+				// failure) by the time we get here — overwriting that with "Cancel"
 				// would relabel a finished export as cancelled while leaving the
 				// backup file it already wrote sitting right there in the list,
 				// which is more confusing than the flag arriving one poll too late.
@@ -935,7 +1051,7 @@ class ISX_Admin {
 				if ( ! empty( $result['error'] ) ) {
 					ISX_Logger::log_error(
 						$type,
-						isset( $result['message'] ) ? $result['message'] : 'เกิดข้อผิดพลาดไม่ทราบสาเหตุ',
+						isset( $result['message'] ) ? $result['message'] : __( 'An unknown error occurred', 'insightx-backup' ),
 						array(
 							'job'      => $locked_job->id(),
 							'step'     => $step_before,
@@ -984,7 +1100,7 @@ class ISX_Admin {
 			// bouncing off a lock nobody is releasing.
 			ISX_Logger::log_debug(
 				(string) $job->get( 'type', 'export' ),
-				'ข้าม step — lock ถูกถือโดย driver อื่น',
+				__( 'Skipped step — lock held by another driver', 'insightx-backup' ),
 				array(
 					'job'   => $job->id(),
 					'phase' => (string) $job->get( 'last_phase', '' ),
@@ -993,7 +1109,7 @@ class ISX_Admin {
 			$result = array(
 				'progress'       => (int) $job->get( 'last_progress', $job->get( 'progress', 0 ) ),
 				'done'           => false,
-				'message'        => (string) $job->get( 'last_message', 'กำลังดำเนินการ...' ),
+				'message'        => (string) $job->get( 'last_message', __( 'Working...', 'insightx-backup' ) ),
 				'phase'          => (string) $job->get( 'last_phase', 'init' ),
 				'phase_progress' => (float) $job->get( 'last_phase_progress', 0 ),
 			);
@@ -1012,7 +1128,7 @@ class ISX_Admin {
 			if ( time() - $heartbeat > self::STALL_LIMIT ) {
 				ISX_Logger::log_error(
 					(string) $job->get( 'type', 'export' ),
-					'งานหยุดค้าง',
+					__( 'Job stalled', 'insightx-backup' ),
 					array(
 						'job'          => $job->id(),
 						'phase'        => (string) $job->get( 'last_phase', '' ),
@@ -1024,7 +1140,7 @@ class ISX_Admin {
 				);
 				$result['error']   = true;
 				$result['done']    = true;
-				$result['message'] = sprintf( 'งานหยุดค้าง (ไม่มีความคืบหน้าเกิน %d นาที)', (int) round( self::STALL_LIMIT / 60 ) );
+				$result['message'] = sprintf( __( 'Job stalled (no progress for over %d minutes)', 'insightx-backup' ), (int) round( self::STALL_LIMIT / 60 ) );
 
 				// An export that already produced its package before stalling
 				// (the stall almost always happens in the upload step, which
@@ -1033,7 +1149,8 @@ class ISX_Admin {
 				// whether anything survived.
 				$stalled_backup = (string) $job->get( 'backup_name', '' );
 				if ( $stalled_backup !== '' ) {
-					$result['message'] .= ' — ไฟล์สำรองถูกสร้างเรียบร้อยแล้วและอยู่ในเมนู "ข้อมูลสำรอง" (' . $stalled_backup . ')';
+					/* translators: %s: backup file name */
+					$result['message'] .= sprintf( __( ' — the backup file was already created and is in the "Backups" menu (%s)', 'insightx-backup' ), $stalled_backup );
 				}
 
 				// A job wedged mid-upload has parts sitting in the bucket as an
@@ -1195,13 +1312,13 @@ class ISX_Admin {
 		if ( get_transient( $throttle ) ) {
 			// Worth recording: "no loopback was sent" and "one was sent but never
 			// arrived" look identical in the log otherwise.
-			ISX_Logger::log_debug( 'system', 'ข้ามการยิง loopback (throttle)', array( 'job' => $job->id() ) );
+			ISX_Logger::log_debug( 'system', __( 'Skipped loopback (throttled)', 'insightx-backup' ), array( 'job' => $job->id() ) );
 			return; // A loopback is already in flight for this job.
 		}
 		set_transient( $throttle, 1, 20 );
 
 		$url = admin_url( 'admin-ajax.php' );
-		ISX_Logger::log_debug( 'system', 'ยิง loopback', array( 'job' => $job->id(), 'url' => $url ) );
+		ISX_Logger::log_debug( 'system', __( 'Firing loopback', 'insightx-backup' ), array( 'job' => $job->id(), 'url' => $url ) );
 
 		// Verify the loopback's TLS certificate by default. The request goes
 		// site-to-self, so on most hosts it verifies fine; only when
@@ -1233,7 +1350,7 @@ class ISX_Admin {
 		if ( is_wp_error( $sent ) && $sslverify && self::is_loopback_ssl_failure( $sent ) ) {
 			ISX_Logger::log_warn(
 				'system',
-				'loopback ถูกปฏิเสธเพราะตรวจสอบใบรับรอง TLS ไม่ผ่าน — ส่งใหม่โดยไม่ตรวจสอบใบรับรอง (SSL verify off)',
+				__( 'Loopback rejected because TLS certificate verification failed — resending without certificate verification (SSL verify off)', 'insightx-backup' ),
 				array(
 					'job'   => $job->id(),
 					'error' => $sent->get_error_message(),
@@ -1246,7 +1363,7 @@ class ISX_Admin {
 		if ( is_wp_error( $sent ) ) {
 			ISX_Logger::log_error(
 				'system',
-				'ยิง loopback ไม่สำเร็จ: ' . $sent->get_error_message(),
+				__( 'Loopback request failed: ', 'insightx-backup' ) . $sent->get_error_message(),
 				array(
 					'job'  => $job->id(),
 					'url'  => $url,
@@ -1290,17 +1407,17 @@ class ISX_Admin {
 	public static function ajax_import_decrypt() {
 		$job = ISX_Job::load( isset( $_POST['job'] ) ? sanitize_text_field( wp_unslash( $_POST['job'] ) ) : '' );
 		if ( ! $job || $job->get( 'type' ) !== 'import' ) {
-			wp_send_json_error( array( 'message' => 'ไม่พบงาน' ) );
+			wp_send_json_error( array( 'message' => __( 'Job not found', 'insightx-backup' ) ) );
 		}
 
 		$secret = isset( $_POST['secret'] ) ? sanitize_text_field( wp_unslash( $_POST['secret'] ) ) : '';
 		if ( ! hash_equals( (string) $job->get( 'secret' ), $secret ) ) {
-			wp_send_json_error( array( 'message' => 'secret ไม่ถูกต้อง' ) );
+			wp_send_json_error( array( 'message' => __( 'Invalid secret', 'insightx-backup' ) ) );
 		}
 
 		$password = isset( $_POST['password'] ) ? (string) wp_unslash( $_POST['password'] ) : '';
 		if ( $password === '' ) {
-			wp_send_json_error( array( 'message' => 'กรุณากรอกรหัสผ่าน' ) );
+			wp_send_json_error( array( 'message' => __( 'Please enter the password', 'insightx-backup' ) ) );
 		}
 
 		@set_time_limit( 0 );
@@ -1322,10 +1439,10 @@ class ISX_Admin {
 				@unlink( $tmp );
 				ISX_Logger::log_error(
 					'import',
-					'ย้ายไฟล์ที่ถอดรหัสแล้วไม่สำเร็จ',
+					__( 'Could not move the decrypted file', 'insightx-backup' ),
 					array( 'job' => $job->id(), 'free_space' => @disk_free_space( dirname( $job->archive() ) ) )
 				);
-				wp_send_json_error( array( 'message' => 'ถอดรหัสสำเร็จแต่บันทึกไฟล์ไม่ได้ — พื้นที่ดิสก์อาจเต็ม' ) );
+				wp_send_json_error( array( 'message' => __( 'Decryption succeeded but the file could not be saved — the disk may be full', 'insightx-backup' ) ) );
 			}
 		}
 		$job->set( 'decrypted', true );
@@ -1372,7 +1489,7 @@ class ISX_Admin {
 		$name = isset( $_GET['backup'] ) ? sanitize_text_field( wp_unslash( $_GET['backup'] ) ) : '';
 		$path = ISX_Backups::path( $name );
 		if ( $path === null ) {
-			wp_die( esc_html__( 'ไม่พบไฟล์', 'insightx-backup' ) );
+			wp_die( esc_html__( 'File not found', 'insightx-backup' ) );
 		}
 
 		@set_time_limit( 0 ); // phpcs:ignore
@@ -1432,7 +1549,7 @@ class ISX_Admin {
 
 		$fh = fopen( $path, 'rb' );
 		if ( $fh === false ) {
-			wp_die( esc_html__( 'เปิดไฟล์ไม่สำเร็จ', 'insightx-backup' ) );
+			wp_die( esc_html__( 'Could not open the file', 'insightx-backup' ) );
 		}
 		if ( $start > 0 ) {
 			fseek( $fh, (int) $start );
@@ -1544,7 +1661,7 @@ class ISX_Admin {
 		self::guard( 'export' );
 		$name = isset( $_POST['name'] ) ? sanitize_text_field( wp_unslash( $_POST['name'] ) ) : '';
 		if ( ! ISX_Backups::delete( $name ) ) {
-			wp_send_json_error( array( 'message' => 'ลบไม่สำเร็จ' ) );
+			wp_send_json_error( array( 'message' => __( 'Could not delete', 'insightx-backup' ) ) );
 		}
 		wp_send_json_success();
 	}
@@ -1557,26 +1674,26 @@ class ISX_Admin {
 		$name = isset( $_POST['name'] ) ? sanitize_text_field( wp_unslash( $_POST['name'] ) ) : '';
 		$path = ISX_Backups::path( $name );
 		if ( $path === null ) {
-			ISX_Logger::log_error( 'backup', 'ไม่พบไฟล์ข้อมูลสำรอง (กู้คืน)', array( 'name' => $name ) );
-			wp_send_json_error( array( 'message' => 'ไม่พบไฟล์ข้อมูลสำรอง' ) );
+			ISX_Logger::log_error( 'backup', __( 'Backup file not found (restore)', 'insightx-backup' ), array( 'name' => $name ) );
+			wp_send_json_error( array( 'message' => __( 'Backup file not found', 'insightx-backup' ) ) );
 		}
 
 		$job = ISX_Job::create( 'import' );
 		if ( ! $job ) {
-			wp_send_json_error( array( 'message' => 'สร้างงานไม่สำเร็จ ดูสาเหตุได้ที่หน้า Log' ) );
+			wp_send_json_error( array( 'message' => __( 'Could not create the job. See the Log page for details', 'insightx-backup' ) ) );
 		}
 		// A local restore doubles the archive on disk for the duration of the
 		// job, so this is a very ordinary place to run out of room — and an
 		// unchecked copy() meant the restore started against a truncated
-		// package and failed later as "ไฟล์แพ็กเกจไม่ถูกต้อง".
+		// package and failed later as "Invalid package file".
 		if ( ! @copy( $path, $job->archive() ) ) {
 			$job->cleanup();
 			ISX_Logger::log_error(
 				'backup',
-				'คัดลอกไฟล์ข้อมูลสำรองเพื่อกู้คืนไม่สำเร็จ',
+				__( 'Could not copy the backup file for restore', 'insightx-backup' ),
 				array( 'name' => $name, 'free_space' => @disk_free_space( dirname( $job->archive() ) ) )
 			);
-			wp_send_json_error( array( 'message' => 'เตรียมไฟล์เพื่อกู้คืนไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม' ) );
+			wp_send_json_error( array( 'message' => __( 'Could not prepare the file for restore — the server disk may be full', 'insightx-backup' ) ) );
 		}
 
 		wp_send_json_success( array( 'job' => $job->id(), 'secret' => $job->get( 'secret' ) ) );
@@ -1611,17 +1728,17 @@ class ISX_Admin {
 	 */
 	public static function ajax_backups_list_content() {
 		self::guard( 'export' );
-		self::report_fatals_as_json( 'การอ่านรายการในข้อมูลสำรอง' );
+		self::report_fatals_as_json( __( 'Reading backup contents', 'insightx-backup' ) );
 		self::raise_memory_limit();
 
 		$name = isset( $_POST['name'] ) ? sanitize_text_field( wp_unslash( $_POST['name'] ) ) : '';
 		$path = ISX_Backups::path( $name );
 		if ( $path === null ) {
-			wp_send_json_error( array( 'message' => 'ไม่พบไฟล์ข้อมูลสำรอง' ) );
+			wp_send_json_error( array( 'message' => __( 'Backup file not found', 'insightx-backup' ) ) );
 		}
 
 		if ( ISX_Crypto::is_encrypted_file( $path ) ) {
-			wp_send_json_error( array( 'message' => 'ไฟล์นี้เข้ารหัสด้วยรหัสผ่าน จึงแสดงรายการไม่ได้ — กู้คืนได้โดยตรง' ) );
+			wp_send_json_error( array( 'message' => __( 'This file is password-encrypted, so its contents cannot be listed — it can be restored directly', 'insightx-backup' ) ) );
 		}
 
 		// Directory being listed, '' for the root of the package. Normalised to
@@ -1692,7 +1809,7 @@ class ISX_Admin {
 		);
 
 		if ( empty( $result['ok'] ) ) {
-			wp_send_json_error( array( 'message' => 'ไฟล์แพ็กเกจไม่ถูกต้อง' ) );
+			wp_send_json_error( array( 'message' => __( 'Invalid package file', 'insightx-backup' ) ) );
 		}
 
 		usort(
@@ -1805,7 +1922,7 @@ class ISX_Admin {
 
 		ISX_Logger::log_warn(
 			'backup',
-			'แสดงรายการในแพ็กเกจใช้หน่วยความจำเกือบเต็มขีดจำกัด',
+			__( 'Listing the package contents is using nearly all of the memory limit', 'insightx-backup' ),
 			array(
 				'name'   => $name,
 				'prefix' => $prefix,
@@ -1829,26 +1946,26 @@ class ISX_Admin {
 	 */
 	public static function ajax_backups_verify() {
 		self::guard( 'export' );
-		self::report_fatals_as_json( 'การตรวจสอบข้อมูลสำรอง' );
+		self::report_fatals_as_json( __( 'Backup verification', 'insightx-backup' ) );
 		self::raise_memory_limit();
 
 		$name = isset( $_POST['name'] ) ? sanitize_text_field( wp_unslash( $_POST['name'] ) ) : '';
 		$path = ISX_Backups::path( $name );
 		if ( $path === null ) {
-			wp_send_json_error( array( 'message' => 'ไม่พบไฟล์ข้อมูลสำรอง' ) );
+			wp_send_json_error( array( 'message' => __( 'Backup file not found', 'insightx-backup' ) ) );
 		}
 
 		// Both of these wrap the archive in another container, so the entry walk
 		// can't see through them. Say why rather than reporting a false failure.
 		if ( ISX_Crypto::is_encrypted_file( $path ) ) {
-			wp_send_json_error( array( 'message' => 'ไฟล์นี้เข้ารหัสด้วยรหัสผ่าน จึงตรวจสอบเนื้อหาข้างในไม่ได้' ) );
+			wp_send_json_error( array( 'message' => __( 'This file is password-encrypted, so its contents cannot be verified', 'insightx-backup' ) ) );
 		}
 		if ( ISX_Compress::is_gzip_file( $path ) ) {
-			wp_send_json_error( array( 'message' => 'ไฟล์นี้บีบอัดด้วย GZip จึงตรวจสอบเนื้อหาข้างในไม่ได้' ) );
+			wp_send_json_error( array( 'message' => __( 'This file is GZip-compressed, so its contents cannot be verified', 'insightx-backup' ) ) );
 		}
 
 		if ( ! ISX_Archive::is_valid( $path ) ) {
-			wp_send_json_error( array( 'message' => 'ไม่ใช่ไฟล์แพ็กเกจของ InsightX Backup (หรือไฟล์เสียหายตั้งแต่ต้นไฟล์)' ) );
+			wp_send_json_error( array( 'message' => __( 'Not an InsightX Backup package (or the file is corrupted from the start)', 'insightx-backup' ) ) );
 		}
 
 		// Never below first_offset(): the first entry starts after the magic
@@ -1864,7 +1981,7 @@ class ISX_Admin {
 		if ( empty( $result['ok'] ) ) {
 			ISX_Logger::log_error(
 				'backup',
-				'ตรวจสอบข้อมูลสำรองไม่ผ่าน: ' . $result['error'],
+				__( 'Backup verification failed: ', 'insightx-backup' ) . $result['error'],
 				array( 'name' => $name, 'offset' => (int) $result['offset'], 'size' => $size )
 			);
 			wp_send_json_success(
@@ -1895,7 +2012,7 @@ class ISX_Admin {
 			array(
 				'done'    => true,
 				'ok'      => true,
-				'message' => sprintf( 'ไฟล์สมบูรณ์ ตรวจแล้ว %s รายการ', number_format_i18n( $entries ) ),
+				'message' => sprintf( __( 'File is intact — %s entries checked', 'insightx-backup' ), number_format_i18n( $entries ) ),
 			)
 		);
 	}
@@ -1946,10 +2063,10 @@ class ISX_Admin {
 		$message = $aborted > 0
 			? sprintf(
 				/* translators: %d: number of uploads released */
-				__( 'ล้าง upload ที่ค้างแล้ว %d รายการ', 'insightx-backup' ),
+				__( 'Cleaned up %d stale uploads', 'insightx-backup' ),
 				$aborted
 			)
-			: __( 'ไม่พบ upload ที่ค้างอยู่', 'insightx-backup' );
+			: __( 'No stale uploads found', 'insightx-backup' );
 
 		if ( ! empty( $errors ) ) {
 			$providers      = ISX_Destinations::providers();
@@ -1958,7 +2075,8 @@ class ISX_Admin {
 				$label         = isset( $providers[ $slug ]['label'] ) ? $providers[ $slug ]['label'] : $slug;
 				$error_lines[] = $label . ': ' . $error_message;
 			}
-			$message .= ' — ตรวจสอบไม่ได้บาง provider (' . implode( ', ', $error_lines ) . ')';
+			/* translators: %s: comma-separated provider errors */
+			$message .= sprintf( __( ' — some providers could not be checked (%s)', 'insightx-backup' ), implode( ', ', $error_lines ) );
 		}
 
 		wp_send_json_success(
@@ -1980,7 +2098,7 @@ class ISX_Admin {
 			delete_option( 'isx_storage_path' );
 			wp_send_json_success(
 				array(
-					'message' => 'รีเซ็ตกลับค่าเริ่มต้นแล้ว',
+					'message' => __( 'Reset to default', 'insightx-backup' ),
 					'path'    => untrailingslashit( ISX_PATH . 'storage' ),
 				)
 			);
@@ -1993,26 +2111,26 @@ class ISX_Admin {
 		// plugin's protection files across system directories).
 		$normalized = str_replace( '\\', '/', $path );
 		if ( in_array( '..', explode( '/', $normalized ), true ) ) {
-			wp_send_json_error( array( 'message' => 'เส้นทางไม่ถูกต้อง — ห้ามใช้ .. ในเส้นทาง' ) );
+			wp_send_json_error( array( 'message' => __( 'Invalid path — ".." is not allowed in the path', 'insightx-backup' ) ) );
 		}
 		$is_absolute = isset( $normalized[0] ) && ( $normalized[0] === '/' || (bool) preg_match( '/^[A-Za-z]:\//', $normalized ) );
 		if ( ! $is_absolute ) {
-			wp_send_json_error( array( 'message' => 'เส้นทางต้องเป็น absolute path เช่น /var/www/backups' ) );
+			wp_send_json_error( array( 'message' => __( 'The path must be absolute, e.g. /var/www/backups', 'insightx-backup' ) ) );
 		}
 		if ( $normalized === '/' || (bool) preg_match( '/^[A-Za-z]:\/$/', $normalized ) ) {
-			wp_send_json_error( array( 'message' => 'ไม่สามารถใช้รากของระบบไฟล์เป็นโฟลเดอร์เก็บข้อมูลได้' ) );
+			wp_send_json_error( array( 'message' => __( 'The filesystem root cannot be used as the storage folder', 'insightx-backup' ) ) );
 		}
 
 		$parent = dirname( $path );
 		if ( ! is_dir( $parent ) || ! is_writable( $parent ) ) {
-			wp_send_json_error( array( 'message' => 'ไม่พบโฟลเดอร์ต้นทาง หรือเขียนไม่ได้: ' . $parent ) );
+			wp_send_json_error( array( 'message' => __( 'Parent folder not found or not writable: ', 'insightx-backup' ) . $parent ) );
 		}
 
 		if ( ! is_dir( $path ) && ! wp_mkdir_p( $path ) ) {
-			wp_send_json_error( array( 'message' => 'สร้างโฟลเดอร์ไม่สำเร็จ' ) );
+			wp_send_json_error( array( 'message' => __( 'Could not create the folder', 'insightx-backup' ) ) );
 		}
 		if ( ! is_writable( $path ) ) {
-			wp_send_json_error( array( 'message' => 'โฟลเดอร์นี้เขียนไม่ได้' ) );
+			wp_send_json_error( array( 'message' => __( 'This folder is not writable', 'insightx-backup' ) ) );
 		}
 
 		// Same protection files the activation hook creates for the default dir
@@ -2030,7 +2148,7 @@ class ISX_Admin {
 
 		wp_send_json_success(
 			array(
-				'message' => 'บันทึกแล้ว — มีผลตั้งแต่โหลดหน้านี้ใหม่ (backup เก่าที่โฟลเดอร์เดิมต้องย้ายเอง)',
+				'message' => __( 'Saved — takes effect on the next page load (old backups in the previous folder must be moved manually)', 'insightx-backup' ),
 				'path'    => $path,
 			)
 		);
@@ -2071,7 +2189,7 @@ class ISX_Admin {
 
 		wp_send_json_success(
 			array(
-				'message' => $enabled ? 'บันทึกแล้ว — เปิดใช้งาน backup อัตโนมัติ' : 'บันทึกแล้ว — ปิด backup อัตโนมัติ',
+				'message' => $enabled ? __( 'Saved — automatic backup enabled', 'insightx-backup' ) : __( 'Saved — automatic backup disabled', 'insightx-backup' ),
 			)
 		);
 	}
@@ -2110,7 +2228,7 @@ class ISX_Admin {
 		if ( ! empty( $result['error'] ) ) {
 			ISX_Logger::log_error(
 				'export',
-				'Backup อัตโนมัติล้มเหลว: ' . ( isset( $result['message'] ) ? $result['message'] : 'ไม่ทราบสาเหตุ' ),
+				__( 'Automatic backup failed: ', 'insightx-backup' ) . ( isset( $result['message'] ) ? $result['message'] : __( 'Unknown reason', 'insightx-backup' ) ),
 				array( 'job' => $job->id() )
 			);
 			return;
@@ -2133,7 +2251,7 @@ class ISX_Admin {
 
 		$slug = isset( $_POST['provider'] ) ? sanitize_key( wp_unslash( $_POST['provider'] ) ) : '';
 		if ( ! isset( ISX_Destinations::providers()[ $slug ] ) ) {
-			wp_send_json_error( array( 'message' => 'ปลายทางไม่ถูกต้อง' ) );
+			wp_send_json_error( array( 'message' => __( 'Invalid destination', 'insightx-backup' ) ) );
 		}
 
 		$posted  = isset( $_POST['config'] ) && is_array( $_POST['config'] ) ? wp_unslash( $_POST['config'] ) : array();
@@ -2165,9 +2283,9 @@ class ISX_Admin {
 		// be filling a provider in over several saves), but the UI's "connected"
 		// badge should only light up once the credentials actually work — not
 		// just once bucket/access_key/secret_key are non-empty. A typo'd bucket
-		// name or wrong key would otherwise still show as "เชื่อมต่อสำเร็จ".
+		// name or wrong key would otherwise still show as "Connected successfully".
 		$connected = false;
-		$message   = 'บันทึกแล้ว — ยังกรอกไม่ครบ';
+		$message   = __( 'Saved — some fields are still missing', 'insightx-backup' );
 
 		if ( ISX_Destinations::is_configured( $slug ) ) {
 			$saved  = ISX_Destinations::get( $slug );
@@ -2176,10 +2294,10 @@ class ISX_Admin {
 
 			if ( is_wp_error( $result ) ) {
 				$connected = false;
-				$message   = 'เชื่อมต่อไม่สำเร็จ: ' . $result->get_error_message();
+				$message   = __( 'Connection failed: ', 'insightx-backup' ) . $result->get_error_message();
 			} else {
 				$connected = true;
-				$message   = 'เชื่อมต่อสำเร็จ';
+				$message   = __( 'Connected successfully', 'insightx-backup' );
 			}
 		}
 
@@ -2199,10 +2317,10 @@ class ISX_Admin {
 
 		$slug = isset( $_POST['provider'] ) ? sanitize_key( wp_unslash( $_POST['provider'] ) ) : '';
 		if ( ! isset( ISX_Destinations::providers()[ $slug ] ) ) {
-			wp_send_json_error( array( 'message' => 'ปลายทางไม่ถูกต้อง' ) );
+			wp_send_json_error( array( 'message' => __( 'Invalid destination', 'insightx-backup' ) ) );
 		}
 		if ( ! ISX_Destinations::is_configured( $slug ) ) {
-			wp_send_json_error( array( 'message' => 'ยังไม่ได้ตั้งค่า provider นี้ — ไปที่เมนู "ตั้งค่า Storage" ก่อน' ) );
+			wp_send_json_error( array( 'message' => __( 'This provider is not configured yet — go to the "Storage Settings" menu first', 'insightx-backup' ) ) );
 		}
 
 		$client = new ISX_S3_Client( ISX_Destinations::get( $slug ) );
@@ -2238,15 +2356,15 @@ class ISX_Admin {
 		$key  = isset( $_POST['key'] ) ? trim( wp_unslash( $_POST['key'] ) ) : '';
 
 		if ( ! isset( ISX_Destinations::providers()[ $slug ] ) ) {
-			wp_send_json_error( array( 'message' => 'ปลายทางไม่ถูกต้อง' ) );
+			wp_send_json_error( array( 'message' => __( 'Invalid destination', 'insightx-backup' ) ) );
 		}
 		if ( ! ISX_Destinations::is_configured( $slug ) ) {
-			wp_send_json_error( array( 'message' => 'ยังไม่ได้ตั้งค่า provider นี้' ) );
+			wp_send_json_error( array( 'message' => __( 'This provider is not configured yet', 'insightx-backup' ) ) );
 		}
 		// Confine imports to the folder this destination writes to, so a crafted
 		// key can't pull an arbitrary object out of the bucket.
 		if ( strpos( $key, ISX_Destinations::prefix( $slug ) ) !== 0 || substr( $key, -7 ) !== '.wpress' ) {
-			wp_send_json_error( array( 'message' => 'ชื่อไฟล์ไม่ถูกต้อง' ) );
+			wp_send_json_error( array( 'message' => __( 'Invalid file name', 'insightx-backup' ) ) );
 		}
 
 		@set_time_limit( 0 );
@@ -2254,7 +2372,7 @@ class ISX_Admin {
 
 		$job = ISX_Job::create( 'import' );
 		if ( ! $job ) {
-			wp_send_json_error( array( 'message' => 'สร้างงานไม่สำเร็จ ดูสาเหตุได้ที่หน้า Log' ) );
+			wp_send_json_error( array( 'message' => __( 'Could not create the job. See the Log page for details', 'insightx-backup' ) ) );
 		}
 		$client = new ISX_S3_Client( ISX_Destinations::get( $slug ) );
 		$result = $client->get_object( $key, $job->archive() );
@@ -2262,7 +2380,7 @@ class ISX_Admin {
 		if ( is_wp_error( $result ) ) {
 			ISX_Logger::log_error(
 				'import',
-				'ดาวน์โหลดจาก Storage ไม่สำเร็จ: ' . $result->get_error_message(),
+				__( 'Download from Storage failed: ', 'insightx-backup' ) . $result->get_error_message(),
 				array( 'job' => $job->id(), 'provider' => $slug, 'key' => $key )
 			);
 			$job->cleanup();
@@ -2294,10 +2412,10 @@ class ISX_Admin {
 
 		$tool = isset( $_POST['tool'] ) ? sanitize_key( wp_unslash( $_POST['tool'] ) ) : '';
 		if ( ! isset( self::$reset_dispatch[ $tool ] ) ) {
-			wp_send_json_error( array( 'message' => 'ไม่รู้จักเครื่องมือนี้' ) );
+			wp_send_json_error( array( 'message' => __( 'Unknown tool', 'insightx-backup' ) ) );
 		}
 
-		ISX_Logger::log_error( 'reset', "เริ่มใช้งาน Reset Hub: {$tool}", array( 'user' => wp_get_current_user()->user_login ) );
+		ISX_Logger::log_error( 'reset', sprintf( __( 'Reset Hub tool started: %s', 'insightx-backup' ), $tool ), array( 'user' => wp_get_current_user()->user_login ) );
 
 		$result = call_user_func( self::$reset_dispatch[ $tool ] );
 
@@ -2321,23 +2439,23 @@ class ISX_Admin {
 	 */
 	public static function ajax_reset_password_reveal() {
 		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error( array( 'message' => 'ไม่มีสิทธิ์' ) );
+			wp_send_json_error( array( 'message' => __( 'Permission denied', 'insightx-backup' ) ) );
 		}
 
 		$token = isset( $_POST['token'] ) ? sanitize_text_field( wp_unslash( $_POST['token'] ) ) : '';
 		if ( ! preg_match( '/^[A-Za-z0-9]{32}$/', $token ) ) {
-			wp_send_json_error( array( 'message' => 'โทเค็นไม่ถูกต้อง' ) );
+			wp_send_json_error( array( 'message' => __( 'Invalid token', 'insightx-backup' ) ) );
 		}
 
 		// Read-then-delete: exactly one reveal per reset. A second call gets
-		// the same answer as a forged one — "หมดอายุหรือถูกใช้ไปแล้ว".
+		// the same answer as a forged one — "expired or already used".
 		$stored = get_transient( 'isx_reset_pw_' . $token );
 		delete_transient( 'isx_reset_pw_' . $token );
 
 		if ( $stored === false ) {
 			wp_send_json_error(
 				array(
-					'message' => 'โทเค็นหมดอายุหรือถูกใช้ไปแล้ว — รีเซ็ตรหัสผ่านได้ทางหน้าจอเข้าสู่ระบบ (ลืมรหัสผ่าน) หรือ WP-CLI',
+					'message' => __( 'Token expired or already used — reset the password from the login screen (Lost your password) or WP-CLI', 'insightx-backup' ),
 				)
 			);
 		}
@@ -2346,7 +2464,7 @@ class ISX_Admin {
 		if ( $password === '' ) {
 			wp_send_json_error(
 				array(
-					'message' => 'อ่านรหัสผ่านไม่สำเร็จ — รีเซ็ตผ่านหน้าจอเข้าสู่ระบบ (ลืมรหัสผ่าน) หรือ WP-CLI',
+					'message' => __( 'Could not read the password — reset it from the login screen (Lost your password) or WP-CLI', 'insightx-backup' ),
 				)
 			);
 		}
@@ -2362,12 +2480,12 @@ class ISX_Admin {
 	private static function verify_reset_password() {
 		$password = isset( $_POST['password'] ) ? (string) wp_unslash( $_POST['password'] ) : '';
 		if ( $password === '' ) {
-			wp_send_json_error( array( 'message' => 'กรุณากรอกรหัสผ่านเพื่อยืนยัน' ) );
+			wp_send_json_error( array( 'message' => __( 'Please enter your password to confirm', 'insightx-backup' ) ) );
 		}
 
 		$user = wp_get_current_user();
 		if ( ! $user->exists() || ! wp_check_password( $password, $user->user_pass, $user->ID ) ) {
-			wp_send_json_error( array( 'message' => 'รหัสผ่านไม่ถูกต้อง' ) );
+			wp_send_json_error( array( 'message' => __( 'Incorrect password', 'insightx-backup' ) ) );
 		}
 	}
 
@@ -2386,12 +2504,12 @@ class ISX_Admin {
 		$action = isset( $_REQUEST['action'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['action'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
 
 		if ( ! current_user_can( $cap ) && ! current_user_can( 'manage_options' ) ) {
-			ISX_Logger::log_warn( 'system', 'ปฏิเสธคำขอ AJAX: ไม่มีสิทธิ์', array( 'action' => $action, 'cap' => $cap ) );
-			self::reject( 'ไม่มีสิทธิ์', $is_navigation );
+			ISX_Logger::log_warn( 'system', __( 'AJAX request rejected: permission denied', 'insightx-backup' ), array( 'action' => $action, 'cap' => $cap ) );
+			self::reject( __( 'Permission denied', 'insightx-backup' ), $is_navigation );
 		}
 		if ( ! check_ajax_referer( self::NONCE, 'nonce', false ) ) {
-			ISX_Logger::log_warn( 'system', 'ปฏิเสธคำขอ AJAX: nonce ไม่ถูกต้องหรือหมดอายุ', array( 'action' => $action ) );
-			self::reject( 'nonce ไม่ถูกต้องหรือหมดอายุ กรุณารีเฟรชหน้านี้', $is_navigation );
+			ISX_Logger::log_warn( 'system', __( 'AJAX request rejected: invalid or expired nonce', 'insightx-backup' ), array( 'action' => $action ) );
+			self::reject( __( 'Invalid or expired nonce. Please refresh this page', 'insightx-backup' ), $is_navigation );
 		}
 	}
 

@@ -62,8 +62,8 @@ class ISX_Archive {
 		// Silenced deliberately. A short write on a full disk also emits a PHP
 		// notice, and these run inside admin-ajax handlers whose response is
 		// JSON — a notice printed ahead of it makes the body unparseable, so the
-		// browser reports a generic connection failure instead of the "ดิสก์
-		// เต็ม" message this return value is about to produce.
+		// browser reports a generic connection failure instead of the "disk
+		// full" message this return value is about to produce.
 		return @fwrite( $handle, $data ) === strlen( $data );
 	}
 
@@ -568,13 +568,13 @@ class ISX_Archive {
 
 		$handle = @fopen( $path, 'rb' );
 		if ( $handle === false ) {
-			return $fail( $offset, 0, 'เปิดไฟล์แพ็กเกจไม่ได้' );
+			return $fail( $offset, 0, __( 'Could not open the package file', 'insightx-backup' ) );
 		}
 
 		$size = filesize( $path );
 		if ( fseek( $handle, $offset ) !== 0 ) {
 			fclose( $handle );
-			return $fail( $offset, 0, 'ไฟล์แพ็กเกจสั้นกว่าที่ควรจะเป็น' );
+			return $fail( $offset, 0, __( 'The package file is shorter than expected', 'insightx-backup' ) );
 		}
 
 		$entries = 0;
@@ -584,7 +584,7 @@ class ISX_Archive {
 				// Ran out of file without ever meeting the terminator — the
 				// classic shape of an upload or download that stopped early.
 				fclose( $handle );
-				return $fail( $offset, $entries, 'ไฟล์แพ็กเกจไม่สมบูรณ์ (จบกลางคัน ไม่พบเครื่องหมายปิดท้ายไฟล์)' );
+				return $fail( $offset, $entries, __( 'The package file is incomplete (ends abruptly, end-of-file marker not found)', 'insightx-backup' ) );
 			}
 
 			$unpacked = unpack( 'V', $len_raw );
@@ -597,7 +597,7 @@ class ISX_Archive {
 			$header = json_decode( fread( $handle, $unpacked[1] ), true );
 			if ( ! is_array( $header ) || ! isset( $header['s'] ) ) {
 				fclose( $handle );
-				return $fail( $offset, $entries, 'ไฟล์แพ็กเกจเสียหาย (อ่านรายการไฟล์ข้างในไม่ได้)' );
+				return $fail( $offset, $entries, __( 'The package file is corrupted (cannot read the file list inside)', 'insightx-backup' ) );
 			}
 
 			// Small entries are fully read and CRC-checked rather than seeked
@@ -612,7 +612,7 @@ class ISX_Archive {
 				return $fail(
 					$offset,
 					$entries,
-					sprintf( 'ไฟล์แพ็กเกจไม่สมบูรณ์ (ข้อมูลของ "%s" ขาดหายไป)', isset( $header['p'] ) ? $header['p'] : '?' )
+					sprintf( __( 'The package file is incomplete (data for "%s" is missing)', 'insightx-backup' ), isset( $header['p'] ) ? $header['p'] : '?' )
 				);
 			}
 			$len = (int) $header['s'];
@@ -627,19 +627,19 @@ class ISX_Archive {
 				$stored = $len > 0 ? fread( $handle, $len ) : '';
 				if ( $len > 0 && ( $stored === false || strlen( $stored ) !== $len ) ) {
 					fclose( $handle );
-					return $fail( $offset, $entries, sprintf( 'ไฟล์แพ็กเกจไม่สมบูรณ์ (อ่านข้อมูลของ "%s" ไม่ครบ)', isset( $header['p'] ) ? $header['p'] : '?' ) );
+					return $fail( $offset, $entries, sprintf( __( 'The package file is incomplete (data for "%s" could not be fully read)', 'insightx-backup' ), isset( $header['p'] ) ? $header['p'] : '?' ) );
 				}
 				$original = $stored;
 				if ( $len > 0 && ! empty( $header['z'] ) ) {
 					$original = @gzinflate( $stored ); // phpcs:ignore
 					if ( $original === false ) {
 						fclose( $handle );
-						return $fail( $offset, $entries, sprintf( 'ไฟล์แพ็กเกจเสียหาย (ข้อมูลของ "%s" บีบอัดไม่ถูกต้อง)', isset( $header['p'] ) ? $header['p'] : '?' ) );
+						return $fail( $offset, $entries, sprintf( __( 'The package file is corrupted (data for "%s" is not validly compressed)', 'insightx-backup' ), isset( $header['p'] ) ? $header['p'] : '?' ) );
 					}
 				}
 				if ( hash( 'crc32b', $original ) !== $header['c'] ) {
 					fclose( $handle );
-					return $fail( $offset, $entries, sprintf( 'ไฟล์แพ็กเกจเสียหาย (ข้อมูลของ "%s" ไม่ตรงกับค่าตรวจสอบ)', isset( $header['p'] ) ? $header['p'] : '?' ) );
+					return $fail( $offset, $entries, sprintf( __( 'The package file is corrupted (data for "%s" does not match its checksum)', 'insightx-backup' ), isset( $header['p'] ) ? $header['p'] : '?' ) );
 				}
 				$content_end = ftell( $handle ); // Already consumed.
 			} else {

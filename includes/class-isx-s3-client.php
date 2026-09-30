@@ -176,7 +176,7 @@ class ISX_S3_Client {
 		$ok = ( ! $failed && $status >= 200 && $status < 300 );
 
 		if ( $ok ) {
-			ISX_Logger::log_debug( 's3', 'S3 request สำเร็จ', $diag );
+			ISX_Logger::log_debug( 's3', __( 'S3 request succeeded', 'insightx-backup' ), $diag );
 		} else {
 			// S3 answers errors as XML (<Error><Code>…), a proxy answers with an
 			// HTML page — the excerpt alone identifies which one replied.
@@ -184,8 +184,8 @@ class ISX_S3_Client {
 			ISX_Logger::log_error(
 				's3',
 				$failed
-					? sprintf( 'S3 transport ล้มเหลว (cURL %d: %s)', $errno, $error )
-					: sprintf( 'S3 ตอบกลับ HTTP %d', $status ),
+					? sprintf( __( 'S3 transport failed (cURL %d: %s)', 'insightx-backup' ), $errno, $error )
+					: sprintf( __( 'S3 responded HTTP %d', 'insightx-backup' ), $status ),
 				$diag
 			);
 		}
@@ -212,14 +212,14 @@ class ISX_S3_Client {
 	private static function curl_error_to_wp( array $res ) {
 		if ( $res['errno'] !== 0 || $res['status'] === 0 ) {
 			$message = $res['error'] !== ''
-				? sprintf( __( 'การเชื่อมต่อล้มเหลว (cURL %1$d: %2$s)', 'insightx-backup' ), (int) $res['errno'], $res['error'] )
-				: __( 'การเชื่อมต่อล้มเหลว', 'insightx-backup' );
+				? sprintf( __( 'Connection failed (cURL %1$d: %2$s)', 'insightx-backup' ), (int) $res['errno'], $res['error'] )
+				: __( 'Connection failed', 'insightx-backup' );
 			return new WP_Error( 'isx_s3_transport', $message );
 		}
 
 		return new WP_Error(
 			'isx_s3_http_' . $res['status'],
-			sprintf( __( 'เซิร์ฟเวอร์ตอบกลับ HTTP %1$d: %2$s', 'insightx-backup' ), (int) $res['status'], self::extract_error_message( $res['body'] ) )
+			sprintf( __( 'Server responded HTTP %1$d: %2$s', 'insightx-backup' ), (int) $res['status'], self::extract_error_message( $res['body'] ) )
 		);
 	}
 
@@ -269,10 +269,10 @@ class ISX_S3_Client {
 	 */
 	public function put_object( $key, $file_path, $content_type = 'application/octet-stream' ) {
 		if ( ! function_exists( 'curl_init' ) ) {
-			return new WP_Error( 'isx_s3_no_curl', __( 'ต้องมีส่วนขยาย PHP cURL เพื่ออัปโหลดไปยัง S3', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_no_curl', __( 'The PHP cURL extension is required to upload to S3', 'insightx-backup' ) );
 		}
 		if ( ! is_file( $file_path ) ) {
-			return new WP_Error( 'isx_s3_no_file', __( 'ไม่พบไฟล์ที่จะอัปโหลด', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_no_file', __( 'File to upload not found', 'insightx-backup' ) );
 		}
 
 		$target = $this->resolve_target( $key );
@@ -283,7 +283,7 @@ class ISX_S3_Client {
 
 		ISX_Logger::log_info(
 			's3',
-			'เริ่มอัปโหลดไปยัง Storage',
+			__( 'Starting upload to Storage', 'insightx-backup' ),
 			array(
 				'host' => $host,
 				'key'  => $key,
@@ -305,7 +305,7 @@ class ISX_S3_Client {
 
 		$handle = fopen( $file_path, 'rb' );
 		if ( $handle === false ) {
-			return new WP_Error( 'isx_s3_open', __( 'เปิดไฟล์เพื่ออัปโหลดไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_open', __( 'Could not open the file for upload', 'insightx-backup' ) );
 		}
 
 		$ch = curl_init( $url );
@@ -377,7 +377,7 @@ class ISX_S3_Client {
 
 		if ( empty( $parts ) ) {
 			$this->multipart_abort( $host, $uri, $upload_id );
-			return new WP_Error( 'isx_s3_no_file', __( 'ไม่พบไฟล์ที่จะอัปโหลด', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_no_file', __( 'File to upload not found', 'insightx-backup' ) );
 		}
 
 		$result = $this->multipart_complete( $host, $uri, $upload_id, $parts );
@@ -388,7 +388,7 @@ class ISX_S3_Client {
 
 		ISX_Logger::log_info(
 			's3',
-			'อัปโหลด multipart สำเร็จ',
+			__( 'Multipart upload completed', 'insightx-backup' ),
 			array(
 				'host'  => $host,
 				'parts' => count( $parts ),
@@ -435,7 +435,7 @@ class ISX_S3_Client {
 
 		$upload_id = self::xml_value( $res['body'], 'UploadId' );
 		if ( $upload_id === '' ) {
-			return new WP_Error( 'isx_s3_multipart', __( 'เริ่ม multipart upload ไม่สำเร็จ — ไม่พบ UploadId', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_multipart', __( 'Could not start multipart upload — no UploadId returned', 'insightx-backup' ) );
 		}
 		return $upload_id;
 	}
@@ -456,11 +456,11 @@ class ISX_S3_Client {
 	public function multipart_upload_part( $host, $uri, $upload_id, $part_number, $file_path, $offset, $length ) {
 		$handle = fopen( $file_path, 'rb' );
 		if ( $handle === false ) {
-			return new WP_Error( 'isx_s3_open', __( 'เปิดไฟล์เพื่ออัปโหลดไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_open', __( 'Could not open the file for upload', 'insightx-backup' ) );
 		}
 		if ( fseek( $handle, $offset ) === -1 ) {
 			fclose( $handle );
-			return new WP_Error( 'isx_s3_seek', __( 'เลื่อนตำแหน่งไฟล์เพื่ออัปโหลดไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_seek', __( 'Could not seek the file for upload', 'insightx-backup' ) );
 		}
 
 		$query   = 'partNumber=' . (int) $part_number . '&uploadId=' . rawurlencode( $upload_id );
@@ -521,8 +521,8 @@ class ISX_S3_Client {
 		if ( isset( $res['headers']['etag'] ) ) {
 			return trim( $res['headers']['etag'], '"' );
 		}
-		ISX_Logger::log_error( 's3', 'อัปโหลดส่วนไฟล์สำเร็จแต่ไม่มี ETag ในคำตอบ', $res['diag'] );
-		return new WP_Error( 'isx_s3_multipart', __( 'อัปโหลดส่วนไฟล์ไม่สำเร็จ — ไม่พบ ETag', 'insightx-backup' ) );
+		ISX_Logger::log_error( 's3', __( 'Part uploaded but the response had no ETag', 'insightx-backup' ), $res['diag'] );
+		return new WP_Error( 'isx_s3_multipart', __( 'Part upload failed — no ETag found', 'insightx-backup' ) );
 	}
 
 	/**
@@ -584,7 +584,7 @@ class ISX_S3_Client {
 				'isx_s3_complete_failed',
 				sprintf(
 					/* translators: 1: S3 error code, 2: message */
-					__( 'รวมไฟล์ที่อัปโหลดไม่สำเร็จ (%1$s): %2$s', 'insightx-backup' ),
+					__( 'Could not complete the multipart upload (%1$s): %2$s', 'insightx-backup' ),
 					$code !== '' ? $code : 'unknown',
 					self::extract_error_message( $res['body'] )
 				)
@@ -599,7 +599,7 @@ class ISX_S3_Client {
 		if ( stripos( $res['body'], '<CompleteMultipartUploadResult' ) === false ) {
 			return new WP_Error(
 				'isx_s3_complete_incomplete',
-				__( 'เซิร์ฟเวอร์ตอบกลับไม่ครบระหว่างรวมไฟล์ที่อัปโหลด — ตรวจสอบว่าไฟล์ขึ้นถึง Storage จริงหรือไม่ก่อนลองใหม่', 'insightx-backup' )
+				__( 'The server returned an incomplete response while completing the upload — check whether the file actually reached Storage before retrying', 'insightx-backup' )
 			);
 		}
 
@@ -617,7 +617,7 @@ class ISX_S3_Client {
 	 */
 	public function multipart_abort( $host, $uri, $upload_id ) {
 		if ( ! function_exists( 'curl_init' ) ) {
-			return new WP_Error( 'isx_s3_no_curl', __( 'ต้องมีส่วนขยาย PHP cURL เพื่อเข้าถึง S3', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_no_curl', __( 'The PHP cURL extension is required to access S3', 'insightx-backup' ) );
 		}
 
 		$query   = 'uploadId=' . rawurlencode( $upload_id );
@@ -664,7 +664,7 @@ class ISX_S3_Client {
 	 */
 	public function list_multipart_uploads( $prefix = '' ) {
 		if ( ! function_exists( 'curl_init' ) ) {
-			return new WP_Error( 'isx_s3_no_curl', __( 'ต้องมีส่วนขยาย PHP cURL เพื่อเข้าถึง S3', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_no_curl', __( 'The PHP cURL extension is required to access S3', 'insightx-backup' ) );
 		}
 
 		$host = $this->path_style ? $this->host : $this->bucket . '.' . $this->host;
@@ -758,7 +758,7 @@ class ISX_S3_Client {
 	 */
 	public function get_object( $key, $dest_path ) {
 		if ( ! function_exists( 'curl_init' ) ) {
-			return new WP_Error( 'isx_s3_no_curl', __( 'ต้องมีส่วนขยาย PHP cURL เพื่อดาวน์โหลดจาก S3', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_no_curl', __( 'The PHP cURL extension is required to download from S3', 'insightx-backup' ) );
 		}
 
 		$key     = ltrim( $key, '/' );
@@ -771,7 +771,7 @@ class ISX_S3_Client {
 
 		$out = fopen( $dest_path, 'wb' );
 		if ( $out === false ) {
-			return new WP_Error( 'isx_s3_open', __( 'เปิดไฟล์ปลายทางเพื่อเขียนไม่สำเร็จ', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_open', __( 'Could not open the destination file for writing', 'insightx-backup' ) );
 		}
 
 		$ch = curl_init( $url );
@@ -820,7 +820,7 @@ class ISX_S3_Client {
 				'isx_s3_short_download',
 				sprintf(
 					/* translators: 1: bytes received, 2: bytes expected */
-					__( 'ดาวน์โหลดไม่ครบ (ได้ %1$s จาก %2$s) — อาจเน็ตหลุดกลางทางหรือพื้นที่ดิสก์ไม่พอ', 'insightx-backup' ),
+					__( 'Incomplete download (got %1$s of %2$s) — the connection may have dropped or the disk may be full', 'insightx-backup' ),
 					size_format( $written ),
 					$expected >= 0 ? size_format( $expected ) : '?'
 				)
@@ -846,7 +846,7 @@ class ISX_S3_Client {
 	 */
 	public function list_objects( $prefix = '' ) {
 		if ( ! function_exists( 'curl_init' ) ) {
-			return new WP_Error( 'isx_s3_no_curl', __( 'ต้องมีส่วนขยาย PHP cURL เพื่อเข้าถึง S3', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_no_curl', __( 'The PHP cURL extension is required to access S3', 'insightx-backup' ) );
 		}
 
 		$objects = array();
@@ -931,7 +931,7 @@ class ISX_S3_Client {
 	 */
 	public function delete_object( $key ) {
 		if ( ! function_exists( 'curl_init' ) ) {
-			return new WP_Error( 'isx_s3_no_curl', __( 'ต้องมีส่วนขยาย PHP cURL เพื่อเข้าถึง S3', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_no_curl', __( 'The PHP cURL extension is required to access S3', 'insightx-backup' ) );
 		}
 
 		$target = $this->resolve_target( $key );
@@ -974,7 +974,7 @@ class ISX_S3_Client {
 	 */
 	public function test_connection() {
 		if ( ! function_exists( 'curl_init' ) ) {
-			return new WP_Error( 'isx_s3_no_curl', __( 'ต้องมีส่วนขยาย PHP cURL เพื่อเชื่อมต่อ S3', 'insightx-backup' ) );
+			return new WP_Error( 'isx_s3_no_curl', __( 'The PHP cURL extension is required to connect to S3', 'insightx-backup' ) );
 		}
 
 		$host  = $this->path_style ? $this->host : $this->bucket . '.' . $this->host;
@@ -1057,6 +1057,6 @@ class ISX_S3_Client {
 			return trim( html_entity_decode( $m[1] ) );
 		}
 		$snippet = is_string( $body ) ? trim( wp_strip_all_tags( $body ) ) : '';
-		return $snippet !== '' ? mb_substr( $snippet, 0, 200 ) : __( 'ไม่ทราบสาเหตุ', 'insightx-backup' );
+		return $snippet !== '' ? mb_substr( $snippet, 0, 200 ) : __( 'Unknown reason', 'insightx-backup' );
 	}
 }

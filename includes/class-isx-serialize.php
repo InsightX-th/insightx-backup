@@ -27,7 +27,7 @@ class ISX_Serialize {
 	 * @param string|array $replace
 	 * @param bool         $skip_emails Best-effort: don't touch $search occurrences
 	 *                                  that sit inside the domain part of an email
-	 *                                  address (used for the "อย่าแทนที่โดเมนอีเมล" option).
+	 *                                  address (used for the "Do not replace email domain" option).
 	 * @return mixed
 	 */
 	public static function replace( $data, $search, $replace, $skip_emails = false ) {

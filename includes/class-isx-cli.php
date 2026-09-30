@@ -38,16 +38,16 @@ class ISX_CLI_Command {
 		if ( ! empty( $assoc_args['to'] ) ) {
 			$provider = sanitize_key( $assoc_args['to'] );
 			if ( ! isset( ISX_Destinations::providers()[ $provider ] ) ) {
-				WP_CLI::error( "ไม่รู้จัก provider: {$provider}" );
+				WP_CLI::error( sprintf( __( 'Unknown provider: %s', 'insightx-backup' ), $provider ) );
 			}
 			if ( ! ISX_Destinations::is_configured( $provider ) ) {
-				WP_CLI::error( "provider '{$provider}' ยังไม่ได้ตั้งค่า credential — ไปที่หน้า \"ตั้งค่า Storage\" ก่อน" );
+				WP_CLI::error( sprintf( __( 'Provider \'%s\' has no credentials configured — go to the "Storage Settings" page first', 'insightx-backup' ), $provider ) );
 			}
 			$job->set( 'to_storage', $provider );
 		}
 		$job->save();
 
-		$progress = WP_CLI\Utils\make_progress_bar( 'กำลังส่งออก', 100 );
+		$progress = WP_CLI\Utils\make_progress_bar( __( 'Exporting', 'insightx-backup' ), 100 );
 		$last     = 0;
 		$result   = ISX_Admin::run_job_to_completion(
 			$job,
@@ -61,16 +61,16 @@ class ISX_CLI_Command {
 		$progress->finish();
 
 		if ( ! empty( $result['error'] ) ) {
-			WP_CLI::error( isset( $result['message'] ) ? $result['message'] : 'ส่งออกไม่สำเร็จ' );
+			WP_CLI::error( isset( $result['message'] ) ? $result['message'] : __( 'Export failed', 'insightx-backup' ) );
 		}
 
-		WP_CLI::success( isset( $result['message'] ) ? $result['message'] : 'ส่งออกเสร็จสิ้น' );
+		WP_CLI::success( isset( $result['message'] ) ? $result['message'] : __( 'Export complete', 'insightx-backup' ) );
 		if ( ! empty( $result['backup'] ) ) {
 			$path = ISX_Backups::path( $result['backup'] );
-			WP_CLI::log( 'ไฟล์: ' . ( $path !== null ? $path : $result['backup'] ) );
+			WP_CLI::log( __( 'File: ', 'insightx-backup' ) . ( $path !== null ? $path : $result['backup'] ) );
 		}
 		if ( ! empty( $result['size'] ) ) {
-			WP_CLI::log( 'ขนาด: ' . $result['size'] );
+			WP_CLI::log( __( 'Size: ', 'insightx-backup' ) . $result['size'] );
 		}
 	}
 
@@ -96,20 +96,20 @@ class ISX_CLI_Command {
 	public function import( $args, $assoc_args ) {
 		$file = isset( $args[0] ) ? $args[0] : '';
 		if ( $file === '' || ! is_file( $file ) ) {
-			WP_CLI::error( 'ไม่พบไฟล์: ' . $file );
+			WP_CLI::error( __( 'File not found: ', 'insightx-backup' ) . $file );
 		}
 		if ( ! preg_match( '/\.wpress$/i', $file ) ) {
-			WP_CLI::error( 'ต้องเป็นไฟล์ .wpress' );
+			WP_CLI::error( __( 'Must be a .wpress file', 'insightx-backup' ) );
 		}
 
-		WP_CLI::confirm( 'การนำเข้าจะเขียนทับเว็บปัจจุบันทั้งหมด (ไฟล์ + ฐานข้อมูล) ยืนยันหรือไม่?', $assoc_args );
+		WP_CLI::confirm( __( 'Importing will overwrite the entire current site (files + database). Continue?', 'insightx-backup' ), $assoc_args );
 
 		$job = ISX_Job::create( 'import' );
 		if ( ! copy( $file, $job->archive() ) ) {
-			WP_CLI::error( 'คัดลอกไฟล์เข้า job ไม่สำเร็จ' );
+			WP_CLI::error( __( 'Could not copy the file into the job', 'insightx-backup' ) );
 		}
 
-		$progress = WP_CLI\Utils\make_progress_bar( 'กำลังนำเข้า', 100 );
+		$progress = WP_CLI\Utils\make_progress_bar( __( 'Importing', 'insightx-backup' ), 100 );
 		$last     = 0;
 		$result   = ISX_Admin::run_job_to_completion(
 			$job,
@@ -123,10 +123,10 @@ class ISX_CLI_Command {
 		$progress->finish();
 
 		if ( ! empty( $result['error'] ) ) {
-			WP_CLI::error( isset( $result['message'] ) ? $result['message'] : 'นำเข้าไม่สำเร็จ' );
+			WP_CLI::error( isset( $result['message'] ) ? $result['message'] : __( 'Import failed', 'insightx-backup' ) );
 		}
 
-		WP_CLI::success( isset( $result['message'] ) ? $result['message'] : 'นำเข้าเสร็จสิ้น — โปรดล็อกอินใหม่' );
+		WP_CLI::success( isset( $result['message'] ) ? $result['message'] : __( 'Import complete — please log in again', 'insightx-backup' ) );
 	}
 
 	/**
@@ -177,7 +177,7 @@ class ISX_CLI_Command {
 		}
 
 		if ( empty( $slugs ) ) {
-			WP_CLI::error( $only !== '' ? 'ยังไม่ได้ตั้งค่า provider นี้' : 'ยังไม่ได้ตั้งค่า provider ใดเลย' );
+			WP_CLI::error( $only !== '' ? __( 'This provider is not configured yet', 'insightx-backup' ) : __( 'No provider has been configured yet', 'insightx-backup' ) );
 		}
 
 		$found  = 0;
@@ -195,13 +195,13 @@ class ISX_CLI_Command {
 				continue;
 			}
 			if ( empty( $uploads ) ) {
-				WP_CLI::log( sprintf( '%s: ไม่มี upload ที่ค้าง', $slug ) );
+				WP_CLI::log( sprintf( __( '%s: no stale uploads', 'insightx-backup' ), $slug ) );
 				continue;
 			}
 
 			foreach ( $uploads as $upload ) {
 				$found++;
-				WP_CLI::log( sprintf( '%s: %s (เริ่ม %s)', $slug, $upload['key'], $upload['initiated'] ) );
+				WP_CLI::log( sprintf( __( '%s: %s (started %s)', 'insightx-backup' ), $slug, $upload['key'], $upload['initiated'] ) );
 
 				if ( $dry_run ) {
 					continue;
@@ -211,7 +211,7 @@ class ISX_CLI_Command {
 				$result = $client->multipart_abort( $target['host'], $target['uri'], $upload['upload_id'] );
 
 				if ( is_wp_error( $result ) ) {
-					WP_CLI::warning( sprintf( '  ล้างไม่สำเร็จ: %s', $result->get_error_message() ) );
+					WP_CLI::warning( sprintf( __( '  Cleanup failed: %s', 'insightx-backup' ), $result->get_error_message() ) );
 					$failed++;
 					continue;
 				}
@@ -220,12 +220,12 @@ class ISX_CLI_Command {
 		}
 
 		if ( $dry_run ) {
-			WP_CLI::success( sprintf( 'พบ %d รายการที่ค้าง (dry-run — ไม่ได้ล้าง)', $found ) );
+			WP_CLI::success( sprintf( __( 'Found %d stale uploads (dry-run — nothing cleaned)', 'insightx-backup' ), $found ) );
 			return;
 		}
 		if ( $failed > 0 ) {
-			WP_CLI::error( sprintf( 'ล้างแล้ว %d รายการ, ไม่สำเร็จ %d รายการ', $closed, $failed ) );
+			WP_CLI::error( sprintf( __( 'Cleaned %d, failed %d', 'insightx-backup' ), $closed, $failed ) );
 		}
-		WP_CLI::success( sprintf( 'ล้างแล้ว %d รายการ', $closed ) );
+		WP_CLI::success( sprintf( __( 'Cleaned %d', 'insightx-backup' ), $closed ) );
 	}
 }

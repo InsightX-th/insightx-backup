@@ -60,7 +60,7 @@ class ISX_Import {
 				return self::finalize( $job );
 		}
 
-		return array( 'progress' => 100, 'done' => true, 'message' => 'เสร็จสิ้น' );
+		return array( 'progress' => 100, 'done' => true, 'message' => __( 'Done', 'insightx-backup' ) );
 	}
 
 	private static function init( ISX_Job $job ) {
@@ -72,7 +72,7 @@ class ISX_Import {
 				'progress'       => 0,
 				'done'           => false,
 				'needs_password' => true,
-				'message'        => 'ไฟล์นี้เข้ารหัสด้วยรหัสผ่าน กรุณากรอกรหัสผ่าน',
+				'message'        => __( 'This file is password-encrypted. Please enter the password', 'insightx-backup' ),
 			);
 		}
 
@@ -97,7 +97,7 @@ class ISX_Import {
 						'progress' => 0,
 						'done'     => true,
 						'error'    => true,
-						'message'  => 'คลายบีบอัดสำเร็จแต่บันทึกไฟล์ไม่ได้ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม',
+						'message'  => __( 'Decompression succeeded but the file could not be saved — the server disk may be full', 'insightx-backup' ),
 					);
 				}
 			}
@@ -107,7 +107,7 @@ class ISX_Import {
 
 		if ( ! ISX_Archive::is_valid( $job->archive() ) ) {
 			$job->cleanup();
-			return array( 'progress' => 0, 'done' => true, 'error' => true, 'message' => 'ไฟล์แพ็กเกจไม่ถูกต้อง (.wpress)' );
+			return array( 'progress' => 0, 'done' => true, 'error' => true, 'message' => __( 'Invalid package file (.wpress)', 'insightx-backup' ) );
 		}
 
 		// Capture this (target) site's values for the search & replace.
@@ -140,7 +140,7 @@ class ISX_Import {
 		$job->set( 'progress', 1 );
 		$job->save();
 
-		return array( 'progress' => 1, 'done' => false, 'message' => 'ตรวจสอบแพ็กเกจ...' );
+		return array( 'progress' => 1, 'done' => false, 'message' => __( 'Verifying package...', 'insightx-backup' ) );
 	}
 
 	/**
@@ -168,7 +168,8 @@ class ISX_Import {
 		$cursor['entries'] = $entries;
 
 		if ( empty( $result['ok'] ) ) {
-			$message = 'แพ็กเกจไม่สมบูรณ์ จึงยกเลิกการนำเข้าก่อนเริ่ม — ' . $result['error'] . ' (เว็บไซต์ปัจจุบันยังอยู่ครบ ไม่ถูกแก้ไข)';
+			/* translators: %s: verification error */
+			$message = sprintf( __( 'The package is incomplete, so the import was cancelled before it started — %s (the current site is intact and unchanged)', 'insightx-backup' ), $result['error'] );
 			ISX_Logger::log_error(
 				'import',
 				$message,
@@ -195,13 +196,13 @@ class ISX_Import {
 			return array(
 				'progress' => $progress,
 				'done'     => false,
-				'message'  => sprintf( 'ตรวจสอบแพ็กเกจ — %d รายการ', $entries ),
+				'message'  => sprintf( __( 'Verifying package — %d entries', 'insightx-backup' ), $entries ),
 			);
 		}
 
 		ISX_Logger::log_info(
 			'import',
-			sprintf( 'ตรวจสอบแพ็กเกจผ่าน (%d รายการ)', $entries ),
+			sprintf( __( 'Package verified (%d entries)', 'insightx-backup' ), $entries ),
 			array( 'job' => $job->id() )
 		);
 
@@ -209,7 +210,7 @@ class ISX_Import {
 		$job->set( 'progress', 3 );
 		$job->save();
 
-		return array( 'progress' => 3, 'done' => false, 'message' => 'ตรวจสอบแพ็กเกจผ่านแล้ว เริ่มล้างไฟล์เดิม...' );
+		return array( 'progress' => 3, 'done' => false, 'message' => __( 'Package verified, clearing existing files...', 'insightx-backup' ) );
 	}
 
 	private static function clean( ISX_Job $job ) {
@@ -256,7 +257,7 @@ class ISX_Import {
 			$job->set( 'step', 'extract' );
 			$job->set( 'progress', 6 );
 			$job->save();
-			return array( 'progress' => 6, 'done' => false, 'message' => 'ล้างไฟล์เดิมแล้ว เริ่มกู้คืนไฟล์...' );
+			return array( 'progress' => 6, 'done' => false, 'message' => __( 'Existing files cleared, restoring files...', 'insightx-backup' ) );
 		}
 
 		// 3% → 6% of the overall bar, weighted by how much of the list is done,
@@ -269,7 +270,7 @@ class ISX_Import {
 		return array(
 			'progress' => $progress,
 			'done'     => false,
-			'message'  => sprintf( 'ลบไฟล์เดิม (%d/%d ไฟล์)...', $cleaned, $total ),
+			'message'  => sprintf( __( 'Deleting existing files (%d/%d files)...', 'insightx-backup' ), $cleaned, $total ),
 		);
 	}
 
@@ -382,7 +383,7 @@ class ISX_Import {
 		$job->set( 'progress', $progress );
 		$job->save();
 
-		return array( 'progress' => $progress, 'done' => false, 'message' => 'กู้คืนไฟล์...' );
+		return array( 'progress' => $progress, 'done' => false, 'message' => __( 'Restoring files...', 'insightx-backup' ) );
 	}
 
 	/**
@@ -392,7 +393,7 @@ class ISX_Import {
 	 * callback returned false. Same class of bug as the export side
 	 * (ISX_Export::write_failed()): PHP's fwrite() doesn't throw when a disk
 	 * is full, so this used to go completely unnoticed and report
-	 * "นำเข้าเสร็จสิ้น" over a site missing whatever failed to write.
+	 * "Import complete" over a site missing whatever failed to write.
 	 *
 	 * Unlike an export, clean() has already deleted the old wp-content by the
 	 * time this can fire — there is no "your old site is still fine" fallback
@@ -402,7 +403,7 @@ class ISX_Import {
 	 * @return array Step result.
 	 */
 	private static function restore_write_failed( ISX_Job $job ) {
-		$message = 'กู้คืนไฟล์ล้มเหลว (พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม หรือไฟล์ .wpress เสียหาย) — เว็บอยู่ในสถานะกู้คืนไม่สมบูรณ์ กรุณาตรวจสอบพื้นที่ว่างแล้วนำเข้าซ้ำ';
+		$message = __( 'File restore failed (the server disk may be full or the .wpress file is corrupted) — the site is in a partially restored state. Please check free space and import again', 'insightx-backup' );
 		$job->finish( $message, true );
 
 		ISX_Logger::log_error(
@@ -427,7 +428,7 @@ class ISX_Import {
 		if ( ! is_file( $job->db_dump() ) ) {
 			$job->set( 'step', 'finalize' );
 			$job->save();
-			return array( 'progress' => 95, 'done' => false, 'message' => 'เตรียมปิดงาน...' );
+			return array( 'progress' => 95, 'done' => false, 'message' => __( 'Finalizing...', 'insightx-backup' ) );
 		}
 
 		list( $search, $replace, $old_prefix, $new_prefix ) = self::replacements( $job );
@@ -506,7 +507,7 @@ class ISX_Import {
 		$job->set( 'progress', $progress );
 		$job->save();
 
-		return array( 'progress' => $progress, 'done' => false, 'message' => sprintf( 'นำเข้าฐานข้อมูล (%d แถว)...', $done_lines ) );
+		return array( 'progress' => $progress, 'done' => false, 'message' => sprintf( __( 'Importing database (%d rows)...', 'insightx-backup' ), $done_lines ) );
 	}
 
 	private static function finalize( ISX_Job $job ) {
@@ -515,7 +516,7 @@ class ISX_Import {
 		// Deliberately only here — after the ENTIRE dump has been applied —
 		// never before/during import, because WP must be able to bootstrap
 		// off a consistent table set between polls. Skipped entirely when
-		// the package carried no database dump ("ไม่รวมฐานข้อมูล" export
+		// the package carried no database dump ("Do not export the database" export
 		// option): imported_tables being empty then means "the import didn't
 		// touch the DB", not "drop everything".
 		$imported_tables = (array) $job->get( 'imported_tables', array() );
@@ -532,7 +533,7 @@ class ISX_Import {
 		$deferred = (array) $job->get( 'deferred_roots', array() );
 		if ( ! empty( $deferred ) ) {
 			$swept = ISX_Files::sweep_deferred( $deferred, $job->restored_list() );
-			ISX_Logger::log_debug( 'import', 'ลบไฟล์เก่าที่เหลือค้าง', array( 'job' => $job->id(), 'deleted' => $swept ) );
+			ISX_Logger::log_debug( 'import', __( 'Deleted leftover old files', 'insightx-backup' ), array( 'job' => $job->id(), 'deleted' => $swept ) );
 		}
 
 		// Put this site's own options back over the package's, now that the
@@ -542,7 +543,7 @@ class ISX_Import {
 		// Re-assert the package's template/stylesheet/active_plugins over the
 		// imported values — see reassert_package_theme(). Only when the package
 		// actually carried a database (imported_tables is empty for a
-		// "ไม่รวมฐานข้อมูล" export, and then the target's own options must
+		// "Do not export the database" export, and then the target's own options must
 		// stay put).
 		if ( ! empty( $imported_tables ) ) {
 			self::reassert_package_theme( $job );
@@ -572,10 +573,10 @@ class ISX_Import {
 
 		$deactivated = self::deactivate_lockout_plugins( $job );
 
-		$message = 'นำเข้าเสร็จสิ้น — โปรดล็อกอินใหม่';
+		$message = __( 'Import complete — please log in again', 'insightx-backup' );
 		if ( ! empty( $deactivated ) ) {
 			$message .= sprintf(
-				' (ปิดปลั๊กอินที่จะทำให้เข้าหน้าผู้ดูแลไม่ได้ไว้ %d ตัว: %s — เปิดกลับเองได้ที่เมนู Plugins)',
+				__( ' (deactivated %d plugins that would lock you out of the admin: %s — re-enable them from the Plugins menu)', 'insightx-backup' ),
 				count( $deactivated ),
 				implode( ', ', $deactivated )
 			);
@@ -585,7 +586,7 @@ class ISX_Import {
 		// files (copied archive, extracted DB dump) can go. finish() keeps a
 		// "done" marker on disk so a duplicate poll racing this one (browser
 		// tab vs. WP-Cron, see with_lock()) reports success instead of
-		// "ไม่พบงาน" for a directory that no longer exists.
+		// "Job not found" for a directory that no longer exists.
 		$job->finish( $message );
 
 		return array(
@@ -726,7 +727,7 @@ class ISX_Import {
 
 		ISX_Logger::log_warn(
 			'import',
-			'ปิดปลั๊กอินที่จะทำให้เข้าหน้าผู้ดูแลไม่ได้หลังนำเข้า',
+			__( 'Deactivated plugins that would lock you out of the admin after import', 'insightx-backup' ),
 			array(
 				'job'     => $job->id(),
 				'siteurl' => $siteurl,
@@ -944,7 +945,7 @@ class ISX_Import {
 
 		ISX_Logger::log_debug(
 			'import',
-			sprintf( 'เก็บค่าตั้งค่าของเว็บนี้ไว้ก่อนนำเข้า (%d รายการ)', count( $snapshot ) ),
+			sprintf( __( 'Preserved this site\'s settings before import (%d entries)', 'insightx-backup' ), count( $snapshot ) ),
 			array( 'job' => $job->id() )
 		);
 	}
@@ -984,7 +985,7 @@ class ISX_Import {
 
 		ISX_Logger::log_info(
 			'import',
-			sprintf( 'คืนค่าตั้งค่าของเว็บนี้หลังนำเข้า (%d รายการ)', $restored ),
+			sprintf( __( 'Restored this site\'s settings after import (%d entries)', 'insightx-backup' ), $restored ),
 			array( 'job' => $job->id() )
 		);
 	}
@@ -1024,7 +1025,7 @@ class ISX_Import {
 		// these the store isn't something the Freemius SDK can read, and
 		// writing it back would break plugins that were working a moment ago.
 		if ( ! isset( $merged['users'], $merged['sites'] ) ) {
-			ISX_Logger::log_warn( 'import', 'ข้อมูล license ของ Freemius (fs_accounts) ผิดรูปแบบ จึงข้ามการรวมค่า', array() );
+			ISX_Logger::log_warn( 'import', __( 'Freemius license data (fs_accounts) is malformed, skipping merge', 'insightx-backup' ), array() );
 			return;
 		}
 
@@ -1277,7 +1278,7 @@ class ISX_Import {
 		if ( ! empty( $builders ) ) {
 			ISX_Logger::log_info(
 				'import',
-				'พบ page builder ที่เก็บเนื้อหาเป็น base64 — จะแทนที่ URL ข้างในให้ด้วย',
+				__( 'Found a page builder storing content as base64 — URLs inside will be replaced too', 'insightx-backup' ),
 				array( 'builders' => implode( ',', $builders ) )
 			);
 		}

@@ -2,11 +2,12 @@
 /**
  * Plugin Name: InsightX Backup
  * Plugin URI: https://insightx.in.th/
- * Description: ย้าย/สำรอง WordPress ทั้งเว็บ (ฐานข้อมูล + ไฟล์) เป็นแพ็กเกจเดียว แล้ว import กลับหรือส่งขึ้น S3 ได้ — เขียนขึ้นใหม่ทั้งหมดโดย InsightX.
- * Version: 0.1.23
+ * Description: Migrate or back up an entire WordPress site (database + files) as a single package, then import it back or send it to S3 — written from scratch by InsightX.
+ * Version: 0.1.24
  * Author: InsightX
  * Author URI: https://insightx.in.th/
  * Text Domain: insightx-backup
+ * Domain Path: /languages
  * License: GPLv3 or later
  *
  * Copyright (C) 2026 InsightX. Original work — not derived from any third-party plugin.
@@ -20,7 +21,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ISX_VERSION', '0.1.23' );
+define( 'ISX_VERSION', '0.1.24' );
 define( 'ISX_FILE', __FILE__ );
 define( 'ISX_PATH', plugin_dir_path( __FILE__ ) );
 define( 'ISX_URL', plugin_dir_url( __FILE__ ) );
@@ -45,6 +46,16 @@ $isx_update_checker = PucFactory::buildUpdateChecker(
 );
 $isx_update_checker->getVcsApi()->enableReleaseAssets();
 
+// Not hosted on wordpress.org, so WP never fetches a language pack for this
+// plugin — load the bundled languages/*.mo ourselves. English is the source
+// language; any locale without a .mo falls back to it.
+add_action(
+	'init',
+	function () {
+		load_plugin_textdomain( 'insightx-backup', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
+	}
+);
+
 /**
  * Where in-progress job data and finished local backups live. Defaults to the
  * plugin's own storage/ dir, but an admin can point it elsewhere from Settings
@@ -52,7 +63,7 @@ $isx_update_checker->getVcsApi()->enableReleaseAssets();
  * delete/reinstall or land on a bigger disk. Falls back to the default when the
  * saved path isn't usable — but never rewrites the option to say so.
  *
- * Two things here used to make in-flight jobs vanish with "ไม่พบงาน":
+ * Two things here used to make in-flight jobs vanish with "Job not found":
  *
  *  1. The check asked whether the *parent* was writable. For the usual kind of
  *     custom path (/home/user/isx-storage) the parent is the account's home
@@ -103,10 +114,12 @@ add_action(
 			return;
 		}
 		printf(
-			'<div class="notice notice-warning"><p><strong>InsightX Backup:</strong> %s <code>%s</code> %s</p></div>',
-			esc_html__( 'ใช้โฟลเดอร์เก็บข้อมูล', 'insightx-backup' ),
-			esc_html( $GLOBALS['isx_storage_path_fallback'] ),
-			esc_html__( 'ไม่ได้ (ไม่มีอยู่จริงหรือเขียนไม่ได้) — กำลังใช้โฟลเดอร์เริ่มต้นแทน กรุณาแก้ไขที่หน้าตั้งค่า', 'insightx-backup' )
+			'<div class="notice notice-warning"><p><strong>InsightX Backup:</strong> %s</p></div>',
+			sprintf(
+				/* translators: %s: storage folder path */
+				esc_html__( 'Storage folder %s is unavailable (missing or not writable) — using the default folder instead. Please fix it on the settings page', 'insightx-backup' ),
+				'<code>' . esc_html( $GLOBALS['isx_storage_path_fallback'] ) . '</code>'
+			)
 		);
 	}
 );

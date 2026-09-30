@@ -2,7 +2,7 @@
 /**
  * Copyright (C) 2026 InsightX. GPLv3 or later. Original work by InsightX.
  * Storage provider connections — credentials per provider, own save button.
- * Split out of the "ตั้งค่า Storage" screen (which now only holds the local
+ * Split out of the "Storage Settings" screen (which now only holds the local
  * backups dir + scheduled-backup options) so provider credentials get their
  * own dedicated menu item.
  */
@@ -16,8 +16,8 @@ $isx_destinations = ISX_Destinations::all();
 ?>
 <div class="wrap isx-wrap">
 	<div class="isx-card">
-		<h1 class="isx-title"><span class="dashicons dashicons-admin-links"></span> <?php esc_html_e( 'การเชื่อมต่อ', 'insightx-backup' ); ?></h1>
-		<p class="isx-muted"><?php esc_html_e( 'ตั้งค่า credential ของแต่ละ provider แล้วกด "บันทึก" ทีละอัน — ใช้ตอนส่งออก/นำเข้าผ่าน Storage', 'insightx-backup' ); ?></p>
+		<h1 class="isx-title"><span class="dashicons dashicons-admin-links"></span> <?php esc_html_e( 'Connections', 'insightx-backup' ); ?></h1>
+		<p class="isx-muted"><?php esc_html_e( 'Set up each provider\'s credentials and click "Save" one at a time — used when exporting/importing via Storage', 'insightx-backup' ); ?></p>
 
 		<?php foreach ( $isx_providers as $isx_slug => $isx_meta ) : ?>
 			<?php
@@ -30,7 +30,7 @@ $isx_destinations = ISX_Destinations::all();
 						<span class="isx-card-icon"><?php echo ISX_Destinations::icon( $isx_slug ); // phpcs:ignore WordPress.Security.EscapeOutput ?></span>
 						<span class="isx-provider-title"><?php echo esc_html( $isx_meta['label'] ); ?></span>
 					</span>
-					<span class="isx-save-status <?php echo $isx_is_connected ? 'is-ok' : ''; ?>" aria-live="polite"><?php echo $isx_is_connected ? esc_html__( 'เชื่อมต่อสำเร็จ', 'insightx-backup' ) : ''; ?></span>
+					<span class="isx-save-status <?php echo $isx_is_connected ? 'is-ok' : ''; ?>" aria-live="polite"><?php echo $isx_is_connected ? esc_html__( 'Connected successfully', 'insightx-backup' ) : ''; ?></span>
 				</div>
 
 				<div class="isx-connection">
@@ -55,17 +55,17 @@ $isx_destinations = ISX_Destinations::all();
 						<div class="isx-field isx-field-wide">
 							<label><?php esc_html_e( 'Secret Key', 'insightx-backup' ); ?></label>
 							<input type="password" class="isx-secret" data-field="secret_key" autocomplete="new-password" data-has-secret="<?php echo $isx_config['secret_key'] !== '' ? '1' : '0'; ?>" value="<?php echo $isx_config['secret_key'] !== '' ? esc_attr( str_repeat( '•', 16 ) ) : ''; ?>" placeholder="<?php esc_attr_e( 'Secret Key', 'insightx-backup' ); ?>" required />
-							<p class="isx-field-hint"><?php esc_html_e( '🔐 เข้ารหัส AES-256-CBC ก่อนบันทึก', 'insightx-backup' ); ?></p>
+							<p class="isx-field-hint"><?php esc_html_e( '🔐 Encrypted with AES-256-CBC before saving', 'insightx-backup' ); ?></p>
 						</div>
 						<div class="isx-field isx-field-wide">
-							<label><?php esc_html_e( 'โฟลเดอร์ใน Bucket', 'insightx-backup' ); ?></label>
+							<label><?php esc_html_e( 'Folder in bucket', 'insightx-backup' ); ?></label>
 							<input type="text" data-field="prefix" value="<?php echo esc_attr( $isx_config['prefix'] ); ?>" placeholder="<?php echo esc_attr( ISX_Destinations::DEFAULT_PREFIX ); ?>" />
 							<p class="isx-field-hint">
 								<?php
 								echo esc_html(
 									sprintf(
 										/* translators: %s: default folder name */
-										__( 'เว้นว่างไว้เพื่อใช้ %s — ใส่ / คั่นได้ถ้าต้องการโฟลเดอร์ซ้อน เช่น backups/production', 'insightx-backup' ),
+										__( 'Leave empty to use %s — use / for nested folders, e.g. backups/production', 'insightx-backup' ),
 										ISX_Destinations::DEFAULT_PREFIX
 									)
 								);
@@ -76,13 +76,13 @@ $isx_destinations = ISX_Destinations::all();
 					<div class="isx-toggle-row">
 						<label class="isx-field-checkbox">
 							<input type="checkbox" data-field="path_style" value="1" <?php checked( ! empty( $isx_config['path_style'] ) ); ?> />
-							<span><?php esc_html_e( 'ใช้ Path-style URL — จำเป็นสำหรับ Minio / Garage, ปิดสำหรับ AWS S3 (virtual-hosted)', 'insightx-backup' ); ?></span>
+							<span><?php esc_html_e( 'Use path-style URLs — required for Minio / Garage, off for AWS S3 (virtual-hosted)', 'insightx-backup' ); ?></span>
 						</label>
 					</div>
 				</div>
 
 				<div class="isx-actions">
-					<button type="button" class="button button-primary isx-btn isx-save"><?php esc_html_e( 'บันทึก', 'insightx-backup' ); ?></button>
+					<button type="button" class="button button-primary isx-btn isx-save"><?php esc_html_e( 'Save', 'insightx-backup' ); ?></button>
 				</div>
 			</div>
 		<?php endforeach; ?>

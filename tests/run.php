@@ -35,6 +35,7 @@ function wp_mkdir_p( $dir ) { return @mkdir( $dir, 0777, true ) || is_dir( $dir 
 function apply_filters( $tag, $value ) { return $value; }
 function plugin_basename( $file ) { return 'insightx-backup/insightx-backup.php'; }
 function wp_json_encode( $v ) { return json_encode( $v ); }
+function __( $text, $domain = 'default' ) { return $text; }
 function delete_option( $k ) { unset( $GLOBALS['isx_opts'][ $k ] ); return true; }
 function wp_cache_flush() { return true; }
 function maybe_unserialize( $v ) { return $v; }
@@ -341,6 +342,38 @@ $fin->invoke( null, $job );
 t( 'E2 no drop_extra_tables', count( ISX_Database::$calls ) === 0 );
 t( 'E2 no reassert (target theme kept)', $GLOBALS['isx_opts']['stylesheet'] === 'target-theme' );
 t( 'E2 sweep still ran', ! file_exists( "$content/themes/fruit3/leftover.js" ) );
+
+// =====================================================================
+group( 'I18N: every t() string in assets/js is localized by ISX_Admin::js_i18n()' );
+
+$admin_src = file_get_contents( __DIR__ . '/../includes/class-isx-admin.php' );
+$fn_start  = strpos( $admin_src, 'function js_i18n()' );
+$fn_body   = substr( $admin_src, $fn_start, strpos( $admin_src, "\n\t}\n", $fn_start ) - $fn_start );
+$php_keys  = array();
+$tokens    = token_get_all( '<?php ' . $fn_body );
+foreach ( $tokens as $i => $tok ) {
+	if ( is_array( $tok ) && $tok[0] === T_CONSTANT_ENCAPSED_STRING ) {
+		$j = $i + 1;
+		while ( is_array( $tokens[ $j ] ) && $tokens[ $j ][0] === T_WHITESPACE ) {
+			$j++;
+		}
+		if ( is_array( $tokens[ $j ] ) && $tokens[ $j ][0] === T_DOUBLE_ARROW ) {
+			$php_keys[ eval( 'return ' . $tok[1] . ';' ) ] = true;
+		}
+	}
+}
+$missing = array();
+foreach ( glob( __DIR__ . '/../assets/js/*.js' ) as $js_file ) {
+	preg_match_all( "/\\bt\\(\\s*'((?:[^'\\\\]|\\\\.)*)'/", file_get_contents( $js_file ), $m );
+	foreach ( $m[1] as $raw ) {
+		$text = json_decode( '"' . str_replace( array( "\\'", '"' ), array( "'", '\\"' ), $raw ) . '"' );
+		if ( ! isset( $php_keys[ $text ] ) ) {
+			$missing[] = basename( $js_file ) . ': ' . $raw;
+		}
+	}
+}
+t( 'I1 js_i18n() found keys', count( $php_keys ) > 50, (string) count( $php_keys ) );
+t( 'I2 no JS string missing from js_i18n()', empty( $missing ), implode( ' | ', $missing ) );
 
 // =====================================================================
 echo "\n========================================\n";

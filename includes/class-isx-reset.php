@@ -30,7 +30,7 @@ class ISX_Reset {
 		if ( empty( $targets ) ) {
 			return array(
 				'ok'      => true,
-				'message' => 'ไม่มีปลั๊กอินอื่นให้ล้าง',
+				'message' => __( 'No other plugins to remove', 'insightx-backup' ),
 				'stats'   => array( 'count' => 0 ),
 			);
 		}
@@ -41,15 +41,15 @@ class ISX_Reset {
 		if ( is_wp_error( $deleted ) ) {
 			return array(
 				'ok'      => false,
-				'message' => 'ลบไฟล์ปลั๊กอินไม่สำเร็จ: ' . $deleted->get_error_message(),
+				'message' => __( 'Could not delete plugin files: ', 'insightx-backup' ) . $deleted->get_error_message(),
 				'stats'   => array( 'count' => count( $targets ) ),
 			);
 		}
 
 		return array(
 			'ok'      => true,
-			// translators: %d = จำนวนปลั๊กอินที่ถูกล้าง.
-			'message' => sprintf( 'ล้างปลั๊กอินสำเร็จ %d รายการ', count( $targets ) ),
+			// translators: %d: number of plugins removed.
+			'message' => sprintf( __( 'Removed %d plugins', 'insightx-backup' ), count( $targets ) ),
 			'stats'   => array( 'count' => count( $targets ) ),
 		);
 	}
@@ -69,7 +69,7 @@ class ISX_Reset {
 		if ( ! $fallback ) {
 			return array(
 				'ok'      => false,
-				'message' => 'ไม่พบธีมเริ่มต้นที่จะสลับไปใช้',
+				'message' => __( 'No default theme found to switch to', 'insightx-backup' ),
 				'stats'   => array( 'count' => 0 ),
 			);
 		}
@@ -93,8 +93,8 @@ class ISX_Reset {
 
 		return array(
 			'ok'      => true,
-			// translators: %d = จำนวนธีมที่ถูกลบ.
-			'message' => sprintf( 'รีเซ็ตธีมสำเร็จ ลบไป %d รายการ', $deleted ),
+			// translators: %d: number of themes removed.
+			'message' => sprintf( __( 'Theme reset complete, removed %d items', 'insightx-backup' ), $deleted ),
 			'stats'   => array( 'count' => $deleted, 'active' => $default_stylesheet ),
 		);
 	}
@@ -124,8 +124,8 @@ class ISX_Reset {
 
 		return array(
 			'ok'      => true,
-			// translators: %d = จำนวนไฟล์สื่อที่ถูกลบ.
-			'message' => sprintf( 'ล้างคลังสื่อสำเร็จ ลบไป %d รายการ', $deleted ),
+			// translators: %d: number of media files removed.
+			'message' => sprintf( __( 'Media library cleared, removed %d items', 'insightx-backup' ), $deleted ),
 			'stats'   => array( 'count' => $deleted ),
 		);
 	}
@@ -208,7 +208,11 @@ class ISX_Reset {
 		if ( is_wp_error( $user_id ) ) {
 			return array(
 				'ok'      => false,
-				'message' => 'รีเซ็ตฐานข้อมูลสำเร็จ แต่สร้างบัญชีผู้ดูแลใหม่ไม่สำเร็จ: ' . $user_id->get_error_message() . ' — กรุณาสร้างผู้ใช้ใหม่ผ่าน wp-admin/user-new.php หรือ WP-CLI',
+				'message' => sprintf(
+					/* translators: %s: error message */
+					__( 'Database reset succeeded, but creating the new admin account failed: %s — please create a new user via wp-admin/user-new.php or WP-CLI', 'insightx-backup' ),
+					$user_id->get_error_message()
+				),
 				'stats'   => array(),
 			);
 		}
@@ -233,7 +237,7 @@ class ISX_Reset {
 
 		return array(
 			'ok'      => true,
-			'message' => 'รีเซ็ตฐานข้อมูลสำเร็จ',
+			'message' => __( 'Database reset complete', 'insightx-backup' ),
 			'stats'   => array(
 				'admin_login'          => $preserve_login,
 				'admin_password_token' => $token,
@@ -256,30 +260,30 @@ class ISX_Reset {
 		$plugins = self::purge_plugins();
 		$stats['plugins'] = $plugins['stats'];
 		if ( ! $plugins['ok'] ) {
-			return array( 'ok' => false, 'message' => 'หยุดที่ขั้นตอนล้างปลั๊กอิน: ' . $plugins['message'], 'stats' => $stats );
+			return array( 'ok' => false, 'message' => __( 'Stopped at the plugin cleanup step: ', 'insightx-backup' ) . $plugins['message'], 'stats' => $stats );
 		}
 
 		$theme = self::reset_theme();
 		$stats['theme'] = $theme['stats'];
 		if ( ! $theme['ok'] ) {
-			return array( 'ok' => false, 'message' => 'หยุดที่ขั้นตอนรีเซ็ตธีม: ' . $theme['message'], 'stats' => $stats );
+			return array( 'ok' => false, 'message' => __( 'Stopped at the theme reset step: ', 'insightx-backup' ) . $theme['message'], 'stats' => $stats );
 		}
 
 		$media = self::clean_media();
 		$stats['media'] = $media['stats'];
 		if ( ! $media['ok'] ) {
-			return array( 'ok' => false, 'message' => 'หยุดที่ขั้นตอนล้างคลังสื่อ: ' . $media['message'], 'stats' => $stats );
+			return array( 'ok' => false, 'message' => __( 'Stopped at the media cleanup step: ', 'insightx-backup' ) . $media['message'], 'stats' => $stats );
 		}
 
 		$database = self::reset_database();
 		$stats['database'] = $database['stats'];
 		if ( ! $database['ok'] ) {
-			return array( 'ok' => false, 'message' => 'หยุดที่ขั้นตอนรีเซ็ตฐานข้อมูล: ' . $database['message'], 'stats' => $stats );
+			return array( 'ok' => false, 'message' => __( 'Stopped at the database reset step: ', 'insightx-backup' ) . $database['message'], 'stats' => $stats );
 		}
 
 		return array(
 			'ok'      => true,
-			'message' => 'รีเซ็ตทั้งเว็บไซต์สำเร็จ',
+			'message' => __( 'Full site reset complete', 'insightx-backup' ),
 			'stats'   => $stats,
 		);
 	}

@@ -7,12 +7,14 @@
 (function ($) {
 	'use strict';
 
+	var t = window.ISX.t;
+
 	var WARNINGS = {
-		plugins: 'ระบบจะปิดใช้งานและลบปลั๊กอินทั้งหมด ยกเว้น InsightX Backup การกระทำนี้ย้อนกลับไม่ได้',
-		theme: 'ระบบจะลบธีมทั้งหมดและสลับไปใช้ธีมเริ่มต้น การกระทำนี้ย้อนกลับไม่ได้',
-		media: 'ระบบจะลบไฟล์สื่อทั้งหมดในคลังสื่อ การกระทำนี้ย้อนกลับไม่ได้',
-		database: 'ระบบจะลบข้อมูลทั้งหมดในฐานข้อมูลอย่างถาวรและคืนค่าเว็บไซต์กลับสู่สถานะเริ่มต้น การกระทำนี้ย้อนกลับไม่ได้',
-		full: 'ระบบจะรีเซ็ตเว็บไซต์ทั้งหมด (ปลั๊กอิน ธีม สื่อ และฐานข้อมูล) กลับสู่สถานะเริ่มต้น การกระทำนี้ย้อนกลับไม่ได้'
+		plugins: t('All plugins except InsightX Backup will be deactivated and deleted. This cannot be undone.'),
+		theme: t('All themes will be deleted and the default theme activated. This cannot be undone.'),
+		media: t('Every file in the media library will be deleted. This cannot be undone.'),
+		database: t('Everything in the database will be permanently deleted and the site returned to its initial state. This cannot be undone.'),
+		full: t('The entire site (plugins, themes, media and database) will be reset to its initial state. This cannot be undone.')
 	};
 
 	var $overlay = $('#isx-reset-confirm-overlay');
@@ -48,7 +50,7 @@
 		var tool = pendingTool;
 		var password = $('#isx-reset-confirm-password').val() || '';
 		if (password === '') {
-			$('#isx-reset-confirm-error').text('กรุณากรอกรหัสผ่าน').show();
+			$('#isx-reset-confirm-error').text(t('Please enter the password')).show();
 			return;
 		}
 
@@ -58,7 +60,7 @@
 			.done(function (res) {
 				$btn.prop('disabled', false);
 				if (!res || !res.success) {
-					$('#isx-reset-confirm-error').text((res && res.data && res.data.message) || 'เกิดข้อผิดพลาด').show();
+					$('#isx-reset-confirm-error').text((res && res.data && res.data.message) || t('An error occurred')).show();
 					return;
 				}
 				closeConfirm();
@@ -66,13 +68,13 @@
 			})
 			.fail(function () {
 				$btn.prop('disabled', false);
-				$('#isx-reset-confirm-error').text('การเชื่อมต่อล้มเหลว').show();
+				$('#isx-reset-confirm-error').text(t('Connection failed')).show();
 			});
 	});
 
 	function handleSuccess(tool, data) {
 		var $card = $('.isx-reset-tool[data-tool="' + tool + '"]');
-		$card.find('.isx-reset-progress .isx-status').text(data.message || 'เสร็จสิ้น');
+		$card.find('.isx-reset-progress .isx-status').text(data.message || t('Done'));
 		$card.find('.isx-reset-progress').show();
 
 		var stats = data.stats || {};
@@ -88,22 +90,24 @@
 				.done(function (res) {
 					if (res && res.success && res.data && res.data.admin_password) {
 						window.alert(
-							'รีเซ็ตฐานข้อมูลสำเร็จ\n\n' +
-							'บัญชีผู้ดูแล: ' + (stats.admin_login || (stats.database && stats.database.admin_login)) + '\n' +
-							'รหัสผ่านใหม่: ' + res.data.admin_password + '\n\n' +
-							'กรุณาบันทึกรหัสผ่านนี้ไว้ — ระบบจะแสดงเพียงครั้งเดียว หน้านี้กำลังจะโหลดใหม่'
+							t(
+								'Database reset complete\n\nAdmin account: %1$s\nNew password: %2$s\n\nSave this password now — it is shown only once. This page will now reload',
+								stats.admin_login || (stats.database && stats.database.admin_login),
+								res.data.admin_password
+							)
 						);
 					} else {
 						window.alert(
-							'รีเซ็ตฐานข้อมูลสำเร็จ แต่ดึงรหัสผ่านใหม่ไม่ได้ (' +
-							((res && res.data && res.data.message) || 'โทเค็นหมดอายุ') +
-							') — รีเซ็ตรหัสผ่านได้ทางหน้าจอเข้าสู่ระบบ (ลืมรหัสผ่าน) หรือ WP-CLI'
+							t(
+								'Database reset complete, but the new password could not be retrieved (%s) — reset the password from the login screen (Lost your password) or WP-CLI',
+								(res && res.data && res.data.message) || t('Token expired')
+							)
 						);
 					}
 					window.location.reload();
 				})
 				.fail(function () {
-					window.alert('รีเซ็ตฐานข้อมูลสำเร็จ แต่ดึงรหัสผ่านใหม่ไม่ได้ — รีเซ็ตรหัสผ่านได้ทางหน้าจอเข้าสู่ระบบ (ลืมรหัสผ่าน) หรือ WP-CLI');
+					window.alert(t('Database reset complete, but the new password could not be retrieved — reset the password from the login screen (Lost your password) or WP-CLI'));
 					window.location.reload();
 				});
 			return;
@@ -121,20 +125,20 @@
 		var $btn = $(this).prop('disabled', true);
 		var tool = $btn.data('tool');
 		var $box = $('.isx-reset-tool[data-tool="' + tool + '"] .isx-reset-progress');
-		$box.show().find('.isx-status').text('กำลังสร้างข้อมูลสำรอง...');
+		$box.show().find('.isx-status').text(t('Creating backup...'));
 
 		ISX.startExport(
 			{},
 			function (res) {
-				$box.find('.isx-status').text(res.message || 'กำลังสร้างข้อมูลสำรอง...');
+				$box.find('.isx-status').text(res.message || t('Creating backup...'));
 			},
 			function (res) {
 				$btn.prop('disabled', false);
 				if (res.error) {
-					$box.find('.isx-status').text(res.message || 'สร้างข้อมูลสำรองไม่สำเร็จ');
+					$box.find('.isx-status').text(res.message || t('Could not create the backup'));
 					return;
 				}
-				$box.find('.isx-status').text('สร้างข้อมูลสำรองสำเร็จ' + (res.size ? ' (' + res.size + ')' : ''));
+				$box.find('.isx-status').text((res.size ? t('Backup created (%s)', res.size) : t('Backup created')));
 				// The list at the bottom of this page is rendered server-side
 				// (ISX_Backups::all() on page load) — reload so the new file
 				// actually shows up there instead of only in this card's status line.

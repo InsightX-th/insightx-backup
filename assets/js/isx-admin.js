@@ -7,6 +7,20 @@
 (function ($) {
 	'use strict';
 
+	/**
+	 * Translate a UI string via the map ISX_Admin::js_i18n() localizes into
+	 * isx.i18n (keyed by the English source), then fill %s / %d / %1$s
+	 * placeholders from the remaining arguments.
+	 */
+	function t(text) {
+		var args = arguments;
+		var next = 1;
+		var map = (window.isx && window.isx.i18n) || {};
+		return (map[text] || text).replace(/%(\d+\$)?[sd]/g, function (m, pos) {
+			return String(pos ? args[parseInt(pos, 10)] : args[next++]);
+		});
+	}
+
 	function post(action, data) {
 		return $.post(
 			isx.ajax_url,
@@ -62,7 +76,7 @@
 	}
 
 	// Give up rather than hammer a site that is clearly not coming back. The
-	// old code polled forever with the same "อาจมี firewall/proxy บล็อกอยู่"
+	// old code polled forever with the same "a firewall/proxy may be blocking it"
 	// line, which sent people chasing a firewall while the real answer — a
 	// server-side 502/504 or an expired nonce — was sitting in jqXHR.status.
 	var POLL_FAIL_LIMIT = 30;
@@ -74,28 +88,28 @@
 		var status = jqXHR && typeof jqXHR.status !== 'undefined' ? jqXHR.status : 0;
 
 		if (status === 502 || status === 503 || status === 504) {
-			return 'เซิร์ฟเวอร์ตัดการเชื่อมต่อกลางทาง (HTTP ' + status + ') — งานหนักเกินเวลาที่เซิร์ฟเวอร์ยอมให้ (ดูหน้า Log)';
+			return t('The server dropped the connection midway (HTTP %s) — the job took longer than the server allows (see the Log page)', status);
 		}
 		if (status === 403) {
-			return 'เซสชันหมดอายุ (HTTP 403) — กรุณารีเฟรชหน้านี้แล้วเริ่มใหม่';
+			return t('Session expired (HTTP 403) — please refresh this page and start again');
 		}
 		if (status === 500) {
-			return 'เซิร์ฟเวอร์เกิดข้อผิดพลาด (HTTP 500) — ดูรายละเอียดที่หน้า Log';
+			return t('Server error (HTTP 500) — see the Log page for details');
 		}
 		if (status === 0) {
-			return 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ — เน็ตหลุดหรือเซิร์ฟเวอร์ไม่ตอบ';
+			return t('Cannot reach the server — the connection dropped or the server is not responding');
 		}
 		if (streak >= 3) {
-			return 'การเชื่อมต่อล้มเหลว ' + streak + ' ครั้งติดกัน (HTTP ' + status + ') — ดูหน้า Log';
+			return t('Connection failed %1$s times in a row (HTTP %2$s) — see the Log page', streak, status);
 		}
-		return 'การเชื่อมต่อล้มเหลว';
+		return t('Connection failed');
 	}
 
 	// Jobs the user cancelled, by id. Kept for the life of the page: the flag has
 	// to outlive the in-flight poll request it is silencing.
 	var cancelledJobs = {};
 
-	// The job poll() is currently driving, so a "ยกเลิก" button can act on it
+	// The job poll() is currently driving, so a "Cancel" button can act on it
 	// without every caller having to thread the id and secret through itself.
 	var activeJob = null;
 
@@ -119,17 +133,15 @@
 				if (!res || !res.success) {
 					data.error = true;
 					if (!data.message) {
-						data.message = 'ยกเลิกไม่สำเร็จ';
+						data.message = t('Could not cancel');
 					}
-				} else if (data.message !== 'ยกเลิกโดยผู้ใช้') {
-					data.error = false;
 				} else {
-					data.error = true;
+					data.error = data.cancelled === true;
 				}
 				onDone(data);
 			})
 			.fail(function () {
-				onDone({ done: true, error: true, message: 'ยกเลิกไม่สำเร็จ' });
+				onDone({ done: true, error: true, message: t('Could not cancel') });
 			});
 	}
 
@@ -182,9 +194,9 @@
 					// The package is password-protected — pause and ask for it,
 					// then resume the same job once decrypted.
 					if (res.data.needs_password) {
-						var password = window.prompt(res.data.message || 'กรุณากรอกรหัสผ่าน');
+						var password = window.prompt(res.data.message || t('Please enter the password'));
 						if (password === null || password === '') {
-							onDone({ error: true, done: true, message: 'ยกเลิกการนำเข้า' });
+							onDone({ error: true, done: true, message: t('Import cancelled') });
 							return;
 						}
 						post('isx_import_decrypt', { job: job, secret: secret, password: password })
@@ -192,11 +204,11 @@
 								if (res2 && res2.success) {
 									step();
 								} else {
-									onDone({ error: true, done: true, message: (res2 && res2.data && res2.data.message) || 'รหัสผ่านไม่ถูกต้อง' });
+									onDone({ error: true, done: true, message: (res2 && res2.data && res2.data.message) || t('Incorrect password') });
 								}
 							})
 							.fail(function () {
-								onDone({ error: true, done: true, message: 'เกิดข้อผิดพลาด' });
+								onDone({ error: true, done: true, message: t('An error occurred') });
 							});
 						return;
 					}
@@ -220,7 +232,7 @@
 					// change, though: beaconing every poll doubled the request
 					// count for a line that repeated itself.
 					if (phaseChanged) {
-						logToServer('debug', 'poll สำเร็จ', {
+						logToServer('debug', t('Poll succeeded'), {
 							job: job,
 							phase: lastPhase,
 							progress: res.data.progress,
@@ -254,21 +266,20 @@
 					// down would otherwise write a log line per second forever.
 					// The first few and then a periodic sample tell the same story.
 					if (failStreak <= 5 || failStreak % 10 === 0) {
-						logToServer('error', 'poll ล้มเหลว (การเชื่อมต่อล้มเหลว)', info);
+						logToServer('error', t('Poll failed (connection failed)'), info);
 					}
 
 					// Isolated blips recover on the next poll; a sustained run
 					// means the site is not going to answer, so stop instead of
 					// spinning up a four-figure failure count.
 					if (failStreak >= POLL_FAIL_LIMIT) {
-						logToServer('error', 'หยุด poll: ล้มเหลวติดกันเกินกำหนด', info);
+						logToServer('error', t('Stopped polling: too many consecutive failures'), info);
 						onDone({
 							error: true,
 							done: true,
 							message:
 								failureMessage(jqXHR, failStreak) +
-								' — หยุดรอแล้วหลังจากลองซ้ำ ' + failStreak + ' ครั้ง งานยังค้างอยู่บนเซิร์ฟเวอร์ ' +
-								'รีเฟรชหน้านี้เพื่อดูสถานะล่าสุด'
+								t(' — stopped waiting after %s retries. The job may still be running on the server. Refresh this page to see the latest status', failStreak)
 						});
 						return;
 					}
@@ -332,11 +343,11 @@
 			var pw = $('#isx-encrypt-password').val() || '';
 			var pw2 = $('#isx-encrypt-password-confirm').val() || '';
 			if (pw === '') {
-				window.alert('กรุณากรอกรหัสผ่านสำหรับเข้ารหัส');
+				window.alert(t('Please enter an encryption password'));
 				return null;
 			}
 			if (pw !== pw2) {
-				window.alert('รหัสผ่านไม่ตรงกัน');
+				window.alert(t('Passwords do not match'));
 				return null;
 			}
 			extra.encrypt_password = pw;
@@ -351,7 +362,7 @@
 		// Only rows added after the first one are removable.
 		if (!$row.find('.isx-fr-remove').length) {
 			$row.append(
-				$('<button type="button" class="isx-fr-remove" title="ลบแถวนี้">&times;</button>')
+				$('<button type="button" class="isx-fr-remove" title="' + t('Remove this row') + '">&times;</button>')
 			);
 		}
 		$('.isx-findreplace').append($row);
@@ -371,7 +382,7 @@
 
 	function updateTablesButtonLabel() {
 		var count = $('#isx-tables-picker-list input[type="checkbox"]:checked').length;
-		$('#isx-tables-picker-btn').text(count > 0 ? count + ' ตารางถูกเลือก' : 'ยังไม่ได้เลือกตาราง');
+		$('#isx-tables-picker-btn').text(count > 0 ? t('%s tables selected', count) : t('No tables selected'));
 	}
 
 	function loadTablesPicker() {
@@ -381,18 +392,18 @@
 		tablesLoaded = true;
 		post('isx_list_tables').done(function (res) {
 			if (!res || !res.success) {
-				$('#isx-tables-picker-list').html('<p class="isx-fetch-status is-error">โหลดรายการตารางไม่สำเร็จ</p>');
+				$('#isx-tables-picker-list').html('<p class="isx-fetch-status is-error">' + t('Could not load the table list') + '</p>');
 				return;
 			}
 			var tables = res.data.tables || [];
 			var html = '';
-			tables.forEach(function (t) {
+			tables.forEach(function (table) {
 				html += '<label class="isx-checkbox-row">' +
-					'<input type="checkbox" value="' + t.name.replace(/"/g, '&quot;') + '" />' +
-					'<span>' + t.name + ' <span class="isx-muted">(' + t.rows + ' แถว)</span></span>' +
+					'<input type="checkbox" value="' + table.name.replace(/"/g, '&quot;') + '" />' +
+					'<span>' + table.name + ' <span class="isx-muted">(' + t('%s rows', table.rows) + ')</span></span>' +
 					'</label>';
 			});
-			$('#isx-tables-picker-list').html(html || '<p class="isx-fetch-status">ไม่พบตาราง</p>');
+			$('#isx-tables-picker-list').html(html || '<p class="isx-fetch-status">' + t('No tables found') + '</p>');
 		});
 	}
 
@@ -415,7 +426,7 @@
 			.split('\n')
 			.map(function (line) { return $.trim(line); })
 			.filter(function (line) { return line !== ''; }).length;
-		$('#isx-files-picker-btn').text(count > 0 ? count + ' รายการถูกเลือก' : 'ยังไม่ได้เลือกไฟล์');
+		$('#isx-files-picker-btn').text(count > 0 ? t('%s items selected', count) : t('No files selected'));
 	}
 
 	$(document).on('click', '#isx-files-picker-btn', function () {
@@ -453,10 +464,10 @@
 						onReady(res.data.job, res.data.secret);
 						return;
 					}
-					fail((res.data && res.data.message) || 'เริ่มไม่สำเร็จ');
+					fail((res.data && res.data.message) || t('Could not start'));
 				})
 				.fail(function () {
-					fail('เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ');
+					fail(t('Could not connect to the server'));
 				});
 		}
 
@@ -480,7 +491,7 @@
 			'isx_export_start',
 			extra,
 			function (message, attempt, maxAttempts) {
-				onTick({ message: message + ' — ลองใหม่ (' + attempt + '/' + maxAttempts + ')...', progress: 0 });
+				onTick({ message: t('%1$s — retrying (%2$s/%3$s)...', message, attempt, maxAttempts), progress: 0 });
 			},
 			function (job, secret) {
 				poll(job, secret, onTick, onDone);
@@ -524,13 +535,13 @@
 			})
 				.done(function (res) {
 					if (!res.success) {
-						retryOrFail((res.data && res.data.message) || 'อัปโหลดล้มเหลว');
+						retryOrFail((res.data && res.data.message) || t('Upload failed'));
 						return;
 					}
 					attempt = 0;
 					index++;
 					var pct = Math.round((index / total) * 100);
-					onProgress({ message: 'กำลังอัปโหลด...', percent: pct });
+					onProgress({ message: t('Uploading...'), percent: pct });
 					if (index < total) {
 						send();
 					} else {
@@ -538,14 +549,14 @@
 					}
 				})
 				.fail(function () {
-					retryOrFail('อัปโหลดล้มเหลว');
+					retryOrFail(t('Upload failed'));
 				});
 		}
 
 		function retryOrFail(message) {
 			attempt++;
 			if (attempt < MAX_ATTEMPTS) {
-				onProgress({ message: message + ' — ลองใหม่ (' + attempt + '/' + MAX_ATTEMPTS + ')...' });
+				onProgress({ message: t('%1$s — retrying (%2$s/%3$s)...', message, attempt, MAX_ATTEMPTS) });
 				setTimeout(send, 1000 * attempt);
 				return;
 			}
@@ -578,20 +589,20 @@
 	// to the user they're both just "packing the files".
 	var STEP_LABELS = {
 		export: {
-			init: 'เตรียมข้อมูล',
-			database: 'ส่งออกฐานข้อมูล',
-			pack: 'แพ็กไฟล์',
-			finalize: 'สร้างไฟล์สำเร็จ',
-			upload: 'อัปโหลดไปยัง Storage'
+			init: t('Preparing'),
+			database: t('Exporting database'),
+			pack: t('Packing files'),
+			finalize: t('File created'),
+			upload: t('Uploading to Storage')
 		},
 		import: {
-			upload: 'อัปโหลดไฟล์',
-			init: 'เตรียมข้อมูล',
-			verify: 'ตรวจสอบแพ็กเกจ',
-			clean: 'ล้างไฟล์เดิม',
-			extract: 'กู้คืนไฟล์',
-			database: 'นำเข้าฐานข้อมูล',
-			finalize: 'ปิดงาน'
+			upload: t('Uploading file'),
+			init: t('Preparing'),
+			verify: t('Verifying package'),
+			clean: t('Clearing existing files'),
+			extract: t('Restoring files'),
+			database: t('Importing database'),
+			finalize: t('Finalizing')
 		}
 	};
 
@@ -644,7 +655,7 @@
 	}
 
 	// The server reports "pack_meta" and "files" as separate steps; both map
-	// to the single "แพ็กไฟล์" row.
+	// to the single "Packing files" row.
 	function stepKeyFromPhase(phase) {
 		return (phase === 'pack_meta' || phase === 'files') ? 'pack' : phase;
 	}
@@ -660,7 +671,7 @@
 	 *
 	 * A step runs server-side for a whole time budget before it answers
 	 * (~10s, ISX_Export::STEP_TIME_BUDGET), so the real figures — the phase
-	 * percentage and the "429900/688696 รายการ" counter in the status line —
+	 * percentage and the "429900/688696 items" counter in the status line —
 	 * only change about once every ten seconds. Every poll in between echoes
 	 * the previous numbers back verbatim.
 	 *
@@ -950,6 +961,7 @@
 	}
 
 	window.ISX = {
+		t: t,
 		post: post,
 		poll: poll,
 		cancelJob: cancelJob,
@@ -972,7 +984,7 @@
 	/* ---------------- Export page wiring ---------------- */
 
 	/**
-	 * Format a duration in seconds as a short Thai string, e.g. "2 นาที 15 วินาที".
+	 * Format a duration in seconds as a short localized string, e.g. "2 min 15 sec".
 	 */
 	function formatDuration(seconds) {
 		seconds = Math.max(0, Math.round(seconds || 0));
@@ -980,9 +992,9 @@
 		var m = Math.floor((seconds % 3600) / 60);
 		var s = seconds % 60;
 		if (h > 0) {
-			return h + ' ชั่วโมง ' + m + ' นาที';
+			return t('%1$s hr %2$s min', h, m);
 		}
-		return m > 0 ? m + ' นาที ' + s + ' วินาที' : s + ' วินาที';
+		return m > 0 ? t('%1$s min %2$s sec', m, s) : t('%s sec', s);
 	}
 
 	/**
@@ -991,10 +1003,10 @@
 	 * is nothing countable to animate.
 	 *
 	 * Picking the right number takes a little care, because table names carry
-	 * digits of their own on multisite ("ส่งออกตาราง wp_2_posts (1200/50000 แถว)").
+	 * digits of their own on multisite ("Exporting table wp_2_posts (1200/50000 rows)").
 	 * An "x/y" pair is unambiguous, so that wins; failing that the last run of
 	 * digits is the counter in every message the server produces
-	 * ("ตรวจสอบแพ็กเกจ — 12345 รายการ", "นำเข้าฐานข้อมูล (900 แถว)...").
+	 * ("Verifying package — 12345 entries", "Importing database (900 rows)...").
 	 */
 	function splitCounter(message) {
 		var match = /(\d+)(\s*\/\s*\d+)/.exec(message);
@@ -1076,7 +1088,7 @@
 		setStatusMessage($box, result.message || '');
 
 		if (typeof result.elapsed === 'number') {
-			$box.find('.isx-elapsed').text('ใช้เวลาไปแล้ว ' + formatDuration(result.elapsed));
+			$box.find('.isx-elapsed').text(t('Elapsed: %s', formatDuration(result.elapsed)));
 		}
 	}
 
@@ -1129,12 +1141,12 @@
 			// to go on. Say so, and record it, since reaching this at all means
 			// the page lost track of a job that is still running server-side.
 			$('#isx-export-progress').find('.isx-status').text(
-				'ไม่พบงานที่กำลังทำงานในหน้านี้ — กรุณารีเฟรชหน้าเพื่อดูสถานะล่าสุด'
+				t('No running job found on this page — please refresh to see the latest status')
 			);
-			logToServer('error', 'กดยกเลิกแต่ไม่มี activeJob', {});
+			logToServer('error', t('Cancel clicked but there is no activeJob'), {});
 			return;
 		}
-		if (!window.confirm('ยกเลิกการส่งออก?')) {
+		if (!window.confirm(t('Cancel the export?'))) {
 			return;
 		}
 		var $btn = $(this).prop('disabled', true);
@@ -1143,7 +1155,7 @@
 			$btn.prop('disabled', false);
 			$('#isx-export-progress').hide();
 			var $msg = $('#isx-export-done-msg');
-			$msg.text(res.message || 'ยกเลิกแล้ว');
+			$msg.text(res.message || t('Cancelled'));
 			$msg.toggleClass('isx-ok', !res.error).toggleClass('isx-error-msg', !!res.error);
 			$('#isx-export-download').hide();
 			$('#isx-export-done').show();
@@ -1154,10 +1166,10 @@
 
 	function runImportUpload(file) {
 		if (!file || !/\.wpress$/i.test(file.name)) {
-			window.alert('กรุณาเลือกไฟล์ .wpress');
+			window.alert(t('Please choose a .wpress file'));
 			return;
 		}
-		if (!window.confirm('การนำเข้าจะเขียนทับเว็บปัจจุบันทั้งหมด ยืนยันหรือไม่?')) {
+		if (!window.confirm(t('Importing will overwrite the entire current site. Continue?'))) {
 			return;
 		}
 		$('#isx-import-idle').hide();
@@ -1170,7 +1182,7 @@
 			'isx_import_create',
 			{},
 			function (message, attempt, maxAttempts) {
-				status.text(message + ' — ลองใหม่ (' + attempt + '/' + maxAttempts + ')...');
+				status.text(t('%1$s — retrying (%2$s/%3$s)...', message, attempt, maxAttempts));
 			},
 			function (job, secret) {
 				uploadChunks(
@@ -1179,7 +1191,7 @@
 					function (p) {
 						if (typeof p.percent === 'number') {
 							// Server doesn't drive this phase (it's a plain chunk upload) —
-							// fake an isx_run-shaped result so it drives the "อัปโหลดไฟล์"
+							// fake an isx_run-shaped result so it drives the "Uploading file"
 							// step row the same way every other phase does.
 							updateSteps($box, { phase: 'upload', phase_progress: p.percent });
 						}
@@ -1195,7 +1207,7 @@
 							function (res2) {
 								$('#isx-import-progress').hide();
 								var $msg = $('#isx-import-done-msg');
-								$msg.text(res2.message || (res2.error ? 'เกิดข้อผิดพลาด' : 'เสร็จสิ้น'));
+								$msg.text(res2.message || (res2.error ? t('An error occurred') : t('Done')));
 								$msg.toggleClass('isx-ok', !res2.error).toggleClass('isx-error-msg', !!res2.error);
 								$('#isx-import-done').show();
 							}
@@ -1203,14 +1215,14 @@
 					},
 					function (message) {
 						$('#isx-import-progress').hide();
-						window.alert(message || 'อัปโหลดล้มเหลว กรุณาลองใหม่');
+						window.alert(message || t('Upload failed, please try again'));
 						$('#isx-import-idle').show();
 					}
 				);
 			},
 			function (message) {
 				$('#isx-import-progress').hide();
-				window.alert(message || 'เริ่มไม่สำเร็จ');
+				window.alert(message || t('Could not start'));
 				$('#isx-import-idle').show();
 			}
 		);

@@ -35,7 +35,7 @@ class ISX_Job {
 	 * @return ISX_Job|null null if the job directory/state file couldn't be
 	 *                       written — logged with the actual cause instead of
 	 *                       silently handing back a job that reads as
-	 *                       "ไม่พบงาน" on the first poll.
+	 *                       "Job not found" on the first poll.
 	 */
 	public static function create( $type ) {
 		// Confirms this function was actually entered — under verbose logging
@@ -43,7 +43,7 @@ class ISX_Job {
 		// apart from anything below it, which matters when the real failure
 		// turns out to be further upstream (guard(), WP still booting, ...)
 		// and neither of the two branches below ever runs.
-		ISX_Logger::log_debug( $type, 'เริ่มสร้างงานใหม่', array() );
+		ISX_Logger::log_debug( $type, __( 'Creating a new job', 'insightx-backup' ), array() );
 
 		try {
 			self::gc_done_jobs();
@@ -54,7 +54,7 @@ class ISX_Job {
 			if ( ! wp_mkdir_p( $job->dir ) ) {
 				ISX_Logger::log_error(
 					$type,
-					'สร้างโฟลเดอร์งานไม่สำเร็จ',
+					__( 'Could not create the job folder', 'insightx-backup' ),
 					array(
 						'job'     => $id,
 						'dir'     => $job->dir,
@@ -80,7 +80,7 @@ class ISX_Job {
 			if ( ! $job->save() ) {
 				ISX_Logger::log_error(
 					$type,
-					'เขียนไฟล์ state ของงานไม่สำเร็จ',
+					__( 'Could not write the job state file', 'insightx-backup' ),
 					array(
 						'job'      => $id,
 						'dir'      => $job->dir,
@@ -99,7 +99,7 @@ class ISX_Job {
 			// as an uncaught error — either way, no line in this log to point at.
 			ISX_Logger::log_error(
 				$type,
-				'สร้างงานล้มเหลว: ข้อผิดพลาดที่ไม่คาดคิด',
+				__( 'Job creation failed: unexpected error', 'insightx-backup' ),
 				array(
 					'exception' => get_class( $e ),
 					'message'   => $e->getMessage(),
@@ -128,7 +128,7 @@ class ISX_Job {
 		// configured one: if the storage path changed (or fell back to the
 		// default) while this job was in flight, the job is still perfectly
 		// intact — just no longer where ISX_STORAGE_PATH now points. Reporting
-		// "ไม่พบงาน" for that is what turned a settings hiccup into a dead run.
+		// "Job not found" for that is what turned a settings hiccup into a dead run.
 		$candidates = array( ISX_STORAGE_PATH, untrailingslashit( ISX_PATH . 'storage' ) );
 
 		foreach ( array_unique( $candidates ) as $base ) {
@@ -151,7 +151,7 @@ class ISX_Job {
 	}
 
 	/**
-	 * Where load() looks for a job — quoted back in the "ไม่พบงาน" error so the
+	 * Where load() looks for a job — quoted back in the "Job not found" error so the
 	 * log says which directories were actually searched instead of leaving it a
 	 * guess.
 	 *
@@ -259,7 +259,7 @@ class ISX_Job {
 	 * on every admin_init — and file_put_contents() is not atomic, so any of
 	 * them could catch it half-written. json_decode() then failed, load()
 	 * returned null, and callers read that as "this job does not exist":
-	 * ajax_run() logged "ไม่พบงาน", and worse,
+	 * ajax_run() logged "Job not found", and worse,
 	 * ISX_Export::sweep_orphaned_uploads() concluded the owning job was dead and
 	 * aborted a multipart upload that was still running — the next part came
 	 * back "HTTP 404: The specified multipart upload does not exist".
@@ -292,7 +292,7 @@ class ISX_Job {
 		if ( ! $ok ) {
 			ISX_Logger::log_error(
 				(string) $this->get( 'type', 'system' ),
-				'บันทึกสถานะงานไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม',
+				__( 'Could not save the job state — the server disk may be full', 'insightx-backup' ),
 				array(
 					'job'        => $this->id,
 					'step'       => (string) $this->get( 'step', '' ),
@@ -351,7 +351,7 @@ class ISX_Job {
 	 * scratch files, so a duplicate poll that arrives after this call — the
 	 * browser tab and the WP-Cron driver can race the same job, see
 	 * with_lock() — still finds a loadable job to report "done" for, instead
-	 * of a deleted directory that reads as "ไม่พบงาน" even though the run
+	 * of a deleted directory that reads as "Job not found" even though the run
 	 * actually succeeded. The (now tiny) state.json is swept up later by
 	 * gc_done_jobs().
 	 *

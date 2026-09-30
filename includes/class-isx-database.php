@@ -659,7 +659,7 @@ class ISX_Database {
 			self::$logged_row_errors++;
 			ISX_Logger::log_error(
 				'import',
-				'เขียนแถวลงฐานข้อมูลไม่สำเร็จ — ข้อมูลแถวนี้จะหายไปจากเว็บที่กู้คืน',
+				__( 'Could not write a row to the database — this row will be missing from the restored site', 'insightx-backup' ),
 				array(
 					'table' => $table,
 					'key'   => self::row_label( $row ),
@@ -795,7 +795,7 @@ class ISX_Database {
 
 		ISX_Logger::log_warn(
 			'import',
-			sprintf( 'เขียนข้อมูลเป็นชุดไม่สำเร็จ จึงเขียนใหม่ทีละแถว (%d/%d แถวยังไม่ผ่าน)', $failed, count( $rows ) ),
+			sprintf( __( 'Batch write failed, retrying row by row (%d/%d rows still failing)', 'insightx-backup' ), $failed, count( $rows ) ),
 			array(
 				'table' => $table,
 				'rows'  => count( $rows ),
