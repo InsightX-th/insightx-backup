@@ -2,9 +2,9 @@
 Contributors: insightx
 Tags: backup, migration, export, import, s3
 Requires at least: 3.3
-Tested up to: 7.0.2
+Tested up to: 7.1.2
 Requires PHP: 5.3
-Stable tag: 0.1.26
+Stable tag: 0.1.27
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -45,6 +45,9 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 **ความต้องการของระบบ:** PHP 7.4+, ส่วนขยาย cURL/zlib/openssl
 
 == Changelog ==
+
+= 0.1.27 =
+* ปรับ "Tested up to" เป็น WordPress 7.1.2 (แก้คำเตือน "ไม่ได้ถูกทดสอบกับเวิร์ดเพรสรุ่นปัจจุบัน")
 
 = 0.1.26 =
 * **ความปลอดภัย: คำสั่ง SQL ในแพ็กเกจแตะได้เฉพาะตารางของเว็บนี้** และ `CREATE TABLE` ต้องเป็นนิยามตารางธรรมดาเท่านั้น (ปฏิเสธ `… SELECT`, `FEDERATED`, `DATA DIRECTORY`, comment) — แพ็กเกจที่ถูกแต่งเคยลบ/เขียนตารางอื่นใน database หรือเพิ่มผู้ดูแลเข้าเว็บอื่นที่ใช้ DB เดียวกันได้
