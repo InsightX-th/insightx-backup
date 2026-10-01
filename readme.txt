@@ -4,7 +4,7 @@ Tags: backup, migration, export, import, s3
 Requires at least: 3.3
 Tested up to: 7.0.2
 Requires PHP: 5.3
-Stable tag: 0.1.25
+Stable tag: 0.1.26
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -45,6 +45,14 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 **ความต้องการของระบบ:** PHP 7.4+, ส่วนขยาย cURL/zlib/openssl
 
 == Changelog ==
+
+= 0.1.26 =
+* **ความปลอดภัย: คำสั่ง SQL ในแพ็กเกจแตะได้เฉพาะตารางของเว็บนี้** และ `CREATE TABLE` ต้องเป็นนิยามตารางธรรมดาเท่านั้น (ปฏิเสธ `… SELECT`, `FEDERATED`, `DATA DIRECTORY`, comment) — แพ็กเกจที่ถูกแต่งเคยลบ/เขียนตารางอื่นใน database หรือเพิ่มผู้ดูแลเข้าเว็บอื่นที่ใช้ DB เดียวกันได้
+* ความปลอดภัย: `SET NAMES` รับเฉพาะ charset ที่ปลอดภัย, Storage endpoint รับเฉพาะ http/https และชื่อ bucket ต้องถูกต้อง (กัน SSRF), จำกัดการบันทึก "ไม่พบงาน" จากคำขอที่ไม่ได้ล็อกอิน
+* แก้ Reset Hub "รีเซ็ตฐานข้อมูล" ที่สร้างบัญชีผู้ดูแลใหม่ไม่สำเร็จและปิดปลั๊กอินไปด้วย
+* `wp isx import` นำเข้าแพ็กเกจที่เข้ารหัสได้ (`--password=` หรือพิมพ์ตอนถาม), กดยกเลิกตอนถามรหัสผ่านจะยกเลิกงานทันที
+* retention บน Storage นับเฉพาะไฟล์ของเว็บนี้ (ไม่ลบไฟล์ของเว็บชื่อคล้ายกันใน prefix เดียวกัน)
+* เพิ่มการทดสอบ end-to-end กับ MySQL จริงและชุดทดสอบเป็น 139 เทสต์ — รายละเอียดทั้งหมดใน CHANGELOG.md
 
 = 0.1.25 =
 * **ความปลอดภัย: ปิดช่องโหว่ zip-slip ตอน import** — แพ็กเกจที่ชื่อไฟล์มี `..` เขียนไฟล์ออกนอก wp-content (เช่นทับ wp-config.php) ไม่ได้อีกต่อไป

@@ -73,7 +73,7 @@ msgstr "เชื่อมต่อเซิร์ฟเวอร์ไม่ไ
 msgid "Connection failed %1$s times in a row (HTTP %2$s) — see the Log page"
 msgstr "การเชื่อมต่อล้มเหลว %1$s ครั้งติดกัน (HTTP %2$s) — ดูหน้า Log"
 
-#: includes/class-isx-admin.php:279 includes/class-isx-s3-client.php:216
+#: includes/class-isx-admin.php:279 includes/class-isx-s3-client.php:226
 msgid "Connection failed"
 msgstr "การเชื่อมต่อล้มเหลว"
 
@@ -81,7 +81,7 @@ msgstr "การเชื่อมต่อล้มเหลว"
 msgid "Could not cancel"
 msgstr "ยกเลิกไม่สำเร็จ"
 
-#: includes/class-isx-admin.php:281 includes/class-isx-admin.php:1461
+#: includes/class-isx-admin.php:281 includes/class-isx-admin.php:1469
 msgid "Please enter the password"
 msgstr "กรุณากรอกรหัสผ่าน"
 
@@ -89,7 +89,7 @@ msgstr "กรุณากรอกรหัสผ่าน"
 msgid "Import cancelled"
 msgstr "ยกเลิกการนำเข้า"
 
-#: includes/class-isx-admin.php:283 includes/class-isx-admin.php:2539
+#: includes/class-isx-admin.php:283 includes/class-isx-admin.php:2553
 msgid "Incorrect password"
 msgstr "รหัสผ่านไม่ถูกต้อง"
 
@@ -266,7 +266,7 @@ msgstr "กรุณาเลือกไฟล์ .wpress"
 msgid "Importing will overwrite the entire current site. Continue?"
 msgstr "การนำเข้าจะเขียนทับเว็บปัจจุบันทั้งหมด ยืนยันหรือไม่?"
 
-#: includes/class-isx-admin.php:325 includes/class-isx-admin.php:1004 includes/class-isx-export.php:63 includes/class-isx-import.php:63
+#: includes/class-isx-admin.php:325 includes/class-isx-admin.php:1012 includes/class-isx-export.php:63 includes/class-isx-import.php:63
 msgid "Done"
 msgstr "เสร็จสิ้น"
 
@@ -342,7 +342,7 @@ msgstr "ลบข้อมูลสำรองนี้?"
 msgid "No backups yet"
 msgstr "ยังไม่มีข้อมูลสำรอง"
 
-#: includes/class-isx-admin.php:345 includes/class-isx-admin.php:1705
+#: includes/class-isx-admin.php:345 includes/class-isx-admin.php:1713
 msgid "Could not delete"
 msgstr "ลบไม่สำเร็จ"
 
@@ -486,7 +486,7 @@ msgstr "ใช่ (พบ CF header)"
 msgid "no CF header found"
 msgstr "ไม่พบ CF header"
 
-#: includes/class-isx-admin.php:498 includes/class-isx-admin.php:576 includes/class-isx-admin.php:1724 includes/class-isx-admin.php:2426
+#: includes/class-isx-admin.php:498 includes/class-isx-admin.php:576 includes/class-isx-admin.php:1732 includes/class-isx-admin.php:2440
 msgid "Could not create the job. See the Log page for details"
 msgstr "สร้างงานไม่สำเร็จ ดูสาเหตุได้ที่หน้า Log"
 
@@ -522,303 +522,307 @@ msgstr "ข้อมูลที่อัปโหลดขาดหายไป
 msgid "Could not write the uploaded file — the server disk may be full. Please check free space and try again"
 msgstr "เขียนไฟล์ที่อัปโหลดไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม กรุณาตรวจสอบพื้นที่ว่างแล้วลองใหม่"
 
-#: includes/class-isx-admin.php:682 includes/class-isx-admin.php:688 includes/class-isx-admin.php:741 includes/class-isx-admin.php:1451
+#: includes/class-isx-admin.php:689 includes/class-isx-admin.php:696 includes/class-isx-admin.php:749 includes/class-isx-admin.php:1459
 msgid "Job not found"
 msgstr "ไม่พบงาน"
 
-#: includes/class-isx-admin.php:696 includes/class-isx-admin.php:748 includes/class-isx-admin.php:1456
+#: includes/class-isx-admin.php:704 includes/class-isx-admin.php:756 includes/class-isx-admin.php:1464
 msgid "Invalid secret"
 msgstr "secret ไม่ถูกต้อง"
 
-#: includes/class-isx-admin.php:709
+#: includes/class-isx-admin.php:717
 msgid "Loopback arrived"
 msgstr "loopback มาถึงแล้ว"
 
-#: includes/class-isx-admin.php:751 includes/class-isx-admin.php:957
+#: includes/class-isx-admin.php:759 includes/class-isx-admin.php:965
 msgid "Cancelled by user"
 msgstr "ยกเลิกโดยผู้ใช้"
 
-#: includes/class-isx-admin.php:787
+#: includes/class-isx-admin.php:795
 msgid "Cancel: job is running, waiting for the current step to finish"
 msgstr "ยกเลิก: งานกำลังรันอยู่ รอ step ปัจจุบันจบ"
 
-#: includes/class-isx-admin.php:928
+#: includes/class-isx-admin.php:936
 msgid "failed midway: "
 msgstr "ล้มเหลวกลางคัน: "
 
-#: includes/class-isx-admin.php:934
+#: includes/class-isx-admin.php:942
 #, php-format
 msgid "%sfailed midway: %s (%s) — see the Log page for details"
 msgstr "%sล้มเหลวกลางคัน: %s (%s) — ดูรายละเอียดได้ที่หน้า Log"
 
-#: includes/class-isx-admin.php:966
+#: includes/class-isx-admin.php:974
 msgid "Stopped by cancel request"
 msgstr "หยุดงานตามคำสั่งยกเลิก"
 
-#: includes/class-isx-admin.php:1047
+#: includes/class-isx-admin.php:1055
 msgid "Step finished"
 msgstr "จบ step"
 
-#: includes/class-isx-admin.php:1090
+#: includes/class-isx-admin.php:1098
 msgid "An unknown error occurred"
 msgstr "เกิดข้อผิดพลาดไม่ทราบสาเหตุ"
 
-#: includes/class-isx-admin.php:1139
+#: includes/class-isx-admin.php:1147
 msgid "Skipped step — lock held by another driver"
 msgstr "ข้าม step — lock ถูกถือโดย driver อื่น"
 
-#: includes/class-isx-admin.php:1148
+#: includes/class-isx-admin.php:1156
 msgid "Working..."
 msgstr "กำลังดำเนินการ..."
 
-#: includes/class-isx-admin.php:1167
+#: includes/class-isx-admin.php:1175
 msgid "Job stalled"
 msgstr "งานหยุดค้าง"
 
-#: includes/class-isx-admin.php:1179
+#: includes/class-isx-admin.php:1187
 #, php-format
 msgid "Job stalled (no progress for over %d minutes)"
 msgstr "งานหยุดค้าง (ไม่มีความคืบหน้าเกิน %d นาที)"
 
-#: includes/class-isx-admin.php:1189
+#: includes/class-isx-admin.php:1197
 #, php-format
 msgid " — the backup file was already created and is in the \"Backups\" menu (%s)"
 msgstr " — ไฟล์สำรองถูกสร้างเรียบร้อยแล้วและอยู่ในเมนู \"ข้อมูลสำรอง\" (%s)"
 
-#: includes/class-isx-admin.php:1356
+#: includes/class-isx-admin.php:1364
 msgid "Skipped loopback (throttled)"
 msgstr "ข้ามการยิง loopback (throttle)"
 
-#: includes/class-isx-admin.php:1362
+#: includes/class-isx-admin.php:1370
 msgid "Firing loopback"
 msgstr "ยิง loopback"
 
-#: includes/class-isx-admin.php:1394
+#: includes/class-isx-admin.php:1402
 msgid "Loopback rejected because TLS certificate verification failed — resending without certificate verification (SSL verify off)"
 msgstr "loopback ถูกปฏิเสธเพราะตรวจสอบใบรับรอง TLS ไม่ผ่าน — ส่งใหม่โดยไม่ตรวจสอบใบรับรอง (SSL verify off)"
 
-#: includes/class-isx-admin.php:1407
+#: includes/class-isx-admin.php:1415
 msgid "Loopback request failed: "
 msgstr "ยิง loopback ไม่สำเร็จ: "
 
-#: includes/class-isx-admin.php:1483
+#: includes/class-isx-admin.php:1491
 msgid "Could not move the decrypted file"
 msgstr "ย้ายไฟล์ที่ถอดรหัสแล้วไม่สำเร็จ"
 
-#: includes/class-isx-admin.php:1486
+#: includes/class-isx-admin.php:1494
 msgid "Decryption succeeded but the file could not be saved — the disk may be full"
 msgstr "ถอดรหัสสำเร็จแต่บันทึกไฟล์ไม่ได้ — พื้นที่ดิสก์อาจเต็ม"
 
-#: includes/class-isx-admin.php:1533
+#: includes/class-isx-admin.php:1541
 msgid "File not found"
 msgstr "ไม่พบไฟล์"
 
-#: includes/class-isx-admin.php:1593
+#: includes/class-isx-admin.php:1601
 msgid "Could not open the file"
 msgstr "เปิดไฟล์ไม่สำเร็จ"
 
-#: includes/class-isx-admin.php:1718
+#: includes/class-isx-admin.php:1726
 msgid "Backup file not found (restore)"
 msgstr "ไม่พบไฟล์ข้อมูลสำรอง (กู้คืน)"
 
-#: includes/class-isx-admin.php:1719 includes/class-isx-admin.php:1778 includes/class-isx-admin.php:1996
+#: includes/class-isx-admin.php:1727 includes/class-isx-admin.php:1786 includes/class-isx-admin.php:2004
 msgid "Backup file not found"
 msgstr "ไม่พบไฟล์ข้อมูลสำรอง"
 
-#: includes/class-isx-admin.php:1734
+#: includes/class-isx-admin.php:1742
 msgid "Could not copy the backup file for restore"
 msgstr "คัดลอกไฟล์ข้อมูลสำรองเพื่อกู้คืนไม่สำเร็จ"
 
-#: includes/class-isx-admin.php:1737
+#: includes/class-isx-admin.php:1745
 msgid "Could not prepare the file for restore — the server disk may be full"
 msgstr "เตรียมไฟล์เพื่อกู้คืนไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม"
 
-#: includes/class-isx-admin.php:1772
+#: includes/class-isx-admin.php:1780
 msgid "Reading backup contents"
 msgstr "การอ่านรายการในข้อมูลสำรอง"
 
-#: includes/class-isx-admin.php:1782
+#: includes/class-isx-admin.php:1790
 msgid "This file is password-encrypted, so its contents cannot be listed — it can be restored directly"
 msgstr "ไฟล์นี้เข้ารหัสด้วยรหัสผ่าน จึงแสดงรายการไม่ได้ — กู้คืนได้โดยตรง"
 
-#: includes/class-isx-admin.php:1853
+#: includes/class-isx-admin.php:1861
 msgid "Invalid package file"
 msgstr "ไฟล์แพ็กเกจไม่ถูกต้อง"
 
-#: includes/class-isx-admin.php:1966
+#: includes/class-isx-admin.php:1974
 msgid "Listing the package contents is using nearly all of the memory limit"
 msgstr "แสดงรายการในแพ็กเกจใช้หน่วยความจำเกือบเต็มขีดจำกัด"
 
-#: includes/class-isx-admin.php:1990
+#: includes/class-isx-admin.php:1998
 msgid "Backup verification"
 msgstr "การตรวจสอบข้อมูลสำรอง"
 
-#: includes/class-isx-admin.php:2002
+#: includes/class-isx-admin.php:2010
 msgid "This file is password-encrypted, so its contents cannot be verified"
 msgstr "ไฟล์นี้เข้ารหัสด้วยรหัสผ่าน จึงตรวจสอบเนื้อหาข้างในไม่ได้"
 
-#: includes/class-isx-admin.php:2005
+#: includes/class-isx-admin.php:2013
 msgid "This file is GZip-compressed, so its contents cannot be verified"
 msgstr "ไฟล์นี้บีบอัดด้วย GZip จึงตรวจสอบเนื้อหาข้างในไม่ได้"
 
-#: includes/class-isx-admin.php:2009
+#: includes/class-isx-admin.php:2017
 msgid "Not an InsightX Backup package (or the file is corrupted from the start)"
 msgstr "ไม่ใช่ไฟล์แพ็กเกจของ InsightX Backup (หรือไฟล์เสียหายตั้งแต่ต้นไฟล์)"
 
-#: includes/class-isx-admin.php:2025
+#: includes/class-isx-admin.php:2033
 msgid "Backup verification failed: "
 msgstr "ตรวจสอบข้อมูลสำรองไม่ผ่าน: "
 
-#: includes/class-isx-admin.php:2056
+#: includes/class-isx-admin.php:2064
 #, php-format
 msgid "File is intact — %s entries checked"
 msgstr "ไฟล์สมบูรณ์ ตรวจแล้ว %s รายการ"
 
-#: includes/class-isx-admin.php:2107
+#: includes/class-isx-admin.php:2115
 #, php-format
 msgid "Cleaned up %d stale uploads"
 msgstr "ล้าง upload ที่ค้างแล้ว %d รายการ"
 
-#: includes/class-isx-admin.php:2110
+#: includes/class-isx-admin.php:2118
 msgid "No stale uploads found"
 msgstr "ไม่พบ upload ที่ค้างอยู่"
 
-#: includes/class-isx-admin.php:2120
+#: includes/class-isx-admin.php:2128
 #, php-format
 msgid " — some providers could not be checked (%s)"
 msgstr " — ตรวจสอบไม่ได้บาง provider (%s)"
 
-#: includes/class-isx-admin.php:2142
+#: includes/class-isx-admin.php:2150
 msgid "Reset to default"
 msgstr "รีเซ็ตกลับค่าเริ่มต้นแล้ว"
 
-#: includes/class-isx-admin.php:2155
+#: includes/class-isx-admin.php:2163
 msgid "Invalid path — \"..\" is not allowed in the path"
 msgstr "เส้นทางไม่ถูกต้อง — ห้ามใช้ .. ในเส้นทาง"
 
-#: includes/class-isx-admin.php:2159
+#: includes/class-isx-admin.php:2167
 msgid "The path must be absolute, e.g. /var/www/backups"
 msgstr "เส้นทางต้องเป็น absolute path เช่น /var/www/backups"
 
-#: includes/class-isx-admin.php:2162
+#: includes/class-isx-admin.php:2170
 msgid "The filesystem root cannot be used as the storage folder"
 msgstr "ไม่สามารถใช้รากของระบบไฟล์เป็นโฟลเดอร์เก็บข้อมูลได้"
 
-#: includes/class-isx-admin.php:2170
+#: includes/class-isx-admin.php:2178
 #, php-format
 msgid "This folder would contain the WordPress directory %s — choose a dedicated folder for backups instead (e.g. wp-content/insightx-backup)"
 msgstr "โฟลเดอร์นี้จะครอบโฟลเดอร์ของ WordPress (%s) — เลือกโฟลเดอร์แยกสำหรับเก็บ backup แทน (เช่น wp-content/insightx-backup)"
 
-#: includes/class-isx-admin.php:2177
+#: includes/class-isx-admin.php:2185
 msgid "Parent folder not found or not writable: "
 msgstr "ไม่พบโฟลเดอร์ต้นทาง หรือเขียนไม่ได้: "
 
-#: includes/class-isx-admin.php:2181
+#: includes/class-isx-admin.php:2189
 msgid "Could not create the folder"
 msgstr "สร้างโฟลเดอร์ไม่สำเร็จ"
 
-#: includes/class-isx-admin.php:2184
+#: includes/class-isx-admin.php:2192
 msgid "This folder is not writable"
 msgstr "โฟลเดอร์นี้เขียนไม่ได้"
 
-#: includes/class-isx-admin.php:2202
+#: includes/class-isx-admin.php:2210
 msgid "Saved — takes effect on the next page load (old backups in the previous folder must be moved manually)"
 msgstr "บันทึกแล้ว — มีผลตั้งแต่โหลดหน้านี้ใหม่ (backup เก่าที่โฟลเดอร์เดิมต้องย้ายเอง)"
 
-#: includes/class-isx-admin.php:2243
+#: includes/class-isx-admin.php:2251
 msgid "Saved — automatic backup enabled"
 msgstr "บันทึกแล้ว — เปิดใช้งาน backup อัตโนมัติ"
 
-#: includes/class-isx-admin.php:2243
+#: includes/class-isx-admin.php:2251
 msgid "Saved — automatic backup disabled"
 msgstr "บันทึกแล้ว — ปิด backup อัตโนมัติ"
 
-#: includes/class-isx-admin.php:2282
+#: includes/class-isx-admin.php:2290
 msgid "Automatic backup failed: "
 msgstr "Backup อัตโนมัติล้มเหลว: "
 
-#: includes/class-isx-admin.php:2282 includes/class-isx-s3-client.php:1060
+#: includes/class-isx-admin.php:2290 includes/class-isx-s3-client.php:1071
 msgid "Unknown reason"
 msgstr "ไม่ทราบสาเหตุ"
 
-#: includes/class-isx-admin.php:2305 includes/class-isx-admin.php:2371 includes/class-isx-admin.php:2410
+#: includes/class-isx-admin.php:2313 includes/class-isx-admin.php:2385 includes/class-isx-admin.php:2424
 msgid "Invalid destination"
 msgstr "ปลายทางไม่ถูกต้อง"
 
-#: includes/class-isx-admin.php:2339
+#: includes/class-isx-admin.php:2340
+msgid "The bucket name may only contain letters, digits, \".\", \"-\" and \"_\" (and \"/\" for path-style URLs)"
+msgstr "ชื่อ bucket ใช้ได้เฉพาะตัวอักษร ตัวเลข \".\" \"-\" และ \"_\" (และ \"/\" เมื่อใช้ URL แบบ path-style)"
+
+#: includes/class-isx-admin.php:2353
 msgid "Saved — some fields are still missing"
 msgstr "บันทึกแล้ว — ยังกรอกไม่ครบ"
 
-#: includes/class-isx-admin.php:2348
+#: includes/class-isx-admin.php:2362
 msgid "Connection failed: "
 msgstr "เชื่อมต่อไม่สำเร็จ: "
 
-#: includes/class-isx-admin.php:2351 views/connections.php:33
+#: includes/class-isx-admin.php:2365 views/connections.php:33
 msgid "Connected successfully"
 msgstr "เชื่อมต่อสำเร็จ"
 
-#: includes/class-isx-admin.php:2374
+#: includes/class-isx-admin.php:2388
 msgid "This provider is not configured yet — go to the \"Storage Settings\" menu first"
 msgstr "ยังไม่ได้ตั้งค่า provider นี้ — ไปที่เมนู \"ตั้งค่า Storage\" ก่อน"
 
-#: includes/class-isx-admin.php:2413 includes/class-isx-cli.php:184
+#: includes/class-isx-admin.php:2427 includes/class-isx-cli.php:214
 msgid "This provider is not configured yet"
 msgstr "ยังไม่ได้ตั้งค่า provider นี้"
 
-#: includes/class-isx-admin.php:2418
+#: includes/class-isx-admin.php:2432
 msgid "Invalid file name"
 msgstr "ชื่อไฟล์ไม่ถูกต้อง"
 
-#: includes/class-isx-admin.php:2434
+#: includes/class-isx-admin.php:2448
 msgid "Download from Storage failed: "
 msgstr "ดาวน์โหลดจาก Storage ไม่สำเร็จ: "
 
-#: includes/class-isx-admin.php:2466
+#: includes/class-isx-admin.php:2480
 msgid "Unknown tool"
 msgstr "ไม่รู้จักเครื่องมือนี้"
 
-#: includes/class-isx-admin.php:2469
+#: includes/class-isx-admin.php:2483
 #, php-format
 msgid "Reset Hub tool started: %s"
 msgstr "เริ่มใช้งาน Reset Hub: %s"
 
-#: includes/class-isx-admin.php:2493 includes/class-isx-admin.php:2562
+#: includes/class-isx-admin.php:2507 includes/class-isx-admin.php:2576
 msgid "Permission denied"
 msgstr "ไม่มีสิทธิ์"
 
-#: includes/class-isx-admin.php:2498
+#: includes/class-isx-admin.php:2512
 msgid "Invalid token"
 msgstr "โทเค็นไม่ถูกต้อง"
 
-#: includes/class-isx-admin.php:2509
+#: includes/class-isx-admin.php:2523
 msgid "Token expired or already used — reset the password from the login screen (Lost your password) or WP-CLI"
 msgstr "โทเค็นหมดอายุหรือถูกใช้ไปแล้ว — รีเซ็ตรหัสผ่านได้ทางหน้าจอเข้าสู่ระบบ (ลืมรหัสผ่าน) หรือ WP-CLI"
 
-#: includes/class-isx-admin.php:2518
+#: includes/class-isx-admin.php:2532
 msgid "Could not read the password — reset it from the login screen (Lost your password) or WP-CLI"
 msgstr "อ่านรหัสผ่านไม่สำเร็จ — รีเซ็ตผ่านหน้าจอเข้าสู่ระบบ (ลืมรหัสผ่าน) หรือ WP-CLI"
 
-#: includes/class-isx-admin.php:2534
+#: includes/class-isx-admin.php:2548
 msgid "Please enter your password to confirm"
 msgstr "กรุณากรอกรหัสผ่านเพื่อยืนยัน"
 
-#: includes/class-isx-admin.php:2561
+#: includes/class-isx-admin.php:2575
 msgid "AJAX request rejected: permission denied"
 msgstr "ปฏิเสธคำขอ AJAX: ไม่มีสิทธิ์"
 
-#: includes/class-isx-admin.php:2567
+#: includes/class-isx-admin.php:2581
 msgid "AJAX request rejected: file modifications are disabled (DISALLOW_FILE_MODS)"
 msgstr "ปฏิเสธคำขอ AJAX: เว็บนี้ปิดการแก้ไขไฟล์ไว้ (DISALLOW_FILE_MODS)"
 
-#: includes/class-isx-admin.php:2568
+#: includes/class-isx-admin.php:2582
 msgid "File modifications are disabled on this site (DISALLOW_FILE_MODS), so import and reset are not available"
 msgstr "เว็บนี้ปิดการแก้ไขไฟล์ไว้ (DISALLOW_FILE_MODS) จึงใช้การนำเข้าและการรีเซ็ตไม่ได้"
 
-#: includes/class-isx-admin.php:2571
+#: includes/class-isx-admin.php:2585
 msgid "AJAX request rejected: invalid or expired nonce"
 msgstr "ปฏิเสธคำขอ AJAX: nonce ไม่ถูกต้องหรือหมดอายุ"
 
-#: includes/class-isx-admin.php:2572
+#: includes/class-isx-admin.php:2586
 msgid "Invalid or expired nonce. Please refresh this page"
 msgstr "nonce ไม่ถูกต้องหรือหมดอายุ กรุณารีเฟรชหน้านี้"
 
@@ -858,11 +862,11 @@ msgstr "ไฟล์แพ็กเกจเสียหาย (ข้อมู�
 msgid "The package file is corrupted (data for \"%s\" does not match its checksum)"
 msgstr "ไฟล์แพ็กเกจเสียหาย (ข้อมูลของ \"%s\" ไม่ตรงกับค่าตรวจสอบ)"
 
-#: includes/class-isx-backups.php:296
+#: includes/class-isx-backups.php:309
 msgid "Could not delete old backup on Storage: "
 msgstr "ลบข้อมูลสำรองเก่าบน Storage ไม่สำเร็จ: "
 
-#: includes/class-isx-backups.php:307
+#: includes/class-isx-backups.php:320
 #, php-format
 msgid "Deleted %d old backups on Storage (keeping the latest %d)"
 msgstr "ลบข้อมูลสำรองเก่าบน Storage %d ไฟล์ (เก็บไว้ %d ล่าสุด)"
@@ -897,68 +901,72 @@ msgstr "ไฟล์: "
 msgid "Size: "
 msgstr "ขนาด: "
 
-#: includes/class-isx-cli.php:99
+#: includes/class-isx-cli.php:105
 msgid "File not found: "
 msgstr "ไม่พบไฟล์: "
 
-#: includes/class-isx-cli.php:102
+#: includes/class-isx-cli.php:108
 msgid "Must be a .wpress file"
 msgstr "ต้องเป็นไฟล์ .wpress"
 
-#: includes/class-isx-cli.php:105
+#: includes/class-isx-cli.php:111
 msgid "Importing will overwrite the entire current site (files + database). Continue?"
 msgstr "การนำเข้าจะเขียนทับเว็บปัจจุบันทั้งหมด (ไฟล์ + ฐานข้อมูล) ยืนยันหรือไม่?"
 
-#: includes/class-isx-cli.php:109
+#: includes/class-isx-cli.php:120 includes/class-isx-cli.php:157
+msgid "This package is password-encrypted — pass --password=<password>"
+msgstr "แพ็กเกจนี้เข้ารหัสด้วยรหัสผ่าน — ระบุ --password=<รหัสผ่าน>"
+
+#: includes/class-isx-cli.php:122 includes/class-isx-import.php:75
+msgid "This file is password-encrypted. Please enter the password"
+msgstr "ไฟล์นี้เข้ารหัสด้วยรหัสผ่าน กรุณากรอกรหัสผ่าน"
+
+#: includes/class-isx-cli.php:137
 msgid "Could not copy the file into the job"
 msgstr "คัดลอกไฟล์เข้า job ไม่สำเร็จ"
 
-#: includes/class-isx-cli.php:112
+#: includes/class-isx-cli.php:140
 msgid "Importing"
 msgstr "กำลังนำเข้า"
 
-#: includes/class-isx-cli.php:127
-msgid "This package is password-encrypted, which WP-CLI import does not support — import it from the dashboard instead"
-msgstr "แพ็กเกจนี้เข้ารหัสด้วยรหัสผ่าน ซึ่งการนำเข้าผ่าน WP-CLI ยังไม่รองรับ — กรุณานำเข้าจากหน้าผู้ดูแลแทน"
-
-#: includes/class-isx-cli.php:130
+#: includes/class-isx-cli.php:160
 msgid "Import failed"
 msgstr "นำเข้าไม่สำเร็จ"
 
-#: includes/class-isx-cli.php:133 includes/class-isx-import.php:582
+#: includes/class-isx-cli.php:163 includes/class-isx-import.php:582
 msgid "Import complete — please log in again"
 msgstr "นำเข้าเสร็จสิ้น — โปรดล็อกอินใหม่"
 
-#: includes/class-isx-cli.php:184
+#: includes/class-isx-cli.php:214
 msgid "No provider has been configured yet"
 msgstr "ยังไม่ได้ตั้งค่า provider ใดเลย"
 
-#: includes/class-isx-cli.php:202
+#: includes/class-isx-cli.php:232
 #, php-format
 msgid "%s: no stale uploads"
 msgstr "%s: ไม่มี upload ที่ค้าง"
 
-#: includes/class-isx-cli.php:208
+#: includes/class-isx-cli.php:238
 #, php-format
 msgid "%s: %s (started %s)"
 msgstr "%s: %s (เริ่ม %s)"
 
-#: includes/class-isx-cli.php:218
+#: includes/class-isx-cli.php:248
 #, php-format
 msgid "  Cleanup failed: %s"
 msgstr "  ล้างไม่สำเร็จ: %s"
 
-#: includes/class-isx-cli.php:227
+#: includes/class-isx-cli.php:257
 #, php-format
 msgid "Found %d stale uploads (dry-run — nothing cleaned)"
 msgstr "พบ %d รายการที่ค้าง (dry-run — ไม่ได้ล้าง)"
 
-#: includes/class-isx-cli.php:231
+#: includes/class-isx-cli.php:261
 #, php-format
 msgid "Cleaned %d, failed %d"
 msgstr "ล้างแล้ว %d รายการ, ไม่สำเร็จ %d รายการ"
 
-#: includes/class-isx-cli.php:233
+#: includes/class-isx-cli.php:263
 #, php-format
 msgid "Cleaned %d"
 msgstr "ล้างแล้ว %d รายการ"
@@ -1003,11 +1011,15 @@ msgstr "รหัสผ่านไม่ถูกต้อง หรือไ�
 msgid "Could not write the decrypted file — the server disk may be full"
 msgstr "เขียนไฟล์ที่ถอดรหัสไม่สำเร็จ — พื้นที่ดิสก์ของเซิร์ฟเวอร์อาจเต็ม"
 
-#: includes/class-isx-database.php:702
+#: includes/class-isx-database.php:675
+msgid "Skipped a database statement in the package that targets another table or is not a plain table definition"
+msgstr "ข้ามคำสั่งฐานข้อมูลในแพ็กเกจที่ไปแตะตารางอื่น หรือไม่ใช่คำสั่งสร้างตารางธรรมดา"
+
+#: includes/class-isx-database.php:860
 msgid "Could not write a row to the database — this row will be missing from the restored site"
 msgstr "เขียนแถวลงฐานข้อมูลไม่สำเร็จ — ข้อมูลแถวนี้จะหายไปจากเว็บที่กู้คืน"
 
-#: includes/class-isx-database.php:838
+#: includes/class-isx-database.php:996
 #, php-format
 msgid "Batch write failed, retrying row by row (%d/%d rows still failing)"
 msgstr "เขียนข้อมูลเป็นชุดไม่สำเร็จ จึงเขียนใหม่ทีละแถว (%d/%d แถวยังไม่ผ่าน)"
@@ -1141,7 +1153,7 @@ msgstr "อัปโหลดส่วนที่ %d ไม่สำเร็�
 msgid "Retrying (%d/%d)"
 msgstr "กำลังลองใหม่ (%d/%d)"
 
-#: includes/class-isx-export.php:631 includes/class-isx-s3-client.php:391
+#: includes/class-isx-export.php:631 includes/class-isx-s3-client.php:401
 msgid "Multipart upload completed"
 msgstr "อัปโหลด multipart สำเร็จ"
 
@@ -1211,10 +1223,6 @@ msgstr "ยกเลิกการอัปโหลดที่ค้างบ
 #: includes/class-isx-files.php:799
 msgid "Skipped an unsafe path in the package"
 msgstr "ข้ามไฟล์ที่ path ไม่ปลอดภัยในแพ็กเกจ"
-
-#: includes/class-isx-import.php:75
-msgid "This file is password-encrypted. Please enter the password"
-msgstr "ไฟล์นี้เข้ารหัสด้วยรหัสผ่าน กรุณากรอกรหัสผ่าน"
 
 #: includes/class-isx-import.php:100
 msgid "Decompression succeeded but the file could not be saved — the server disk may be full"
@@ -1367,118 +1375,118 @@ msgstr "รีเซ็ตธีมสำเร็จ ลบไป %d ราย�
 msgid "Media library cleared, removed %d items"
 msgstr "ล้างคลังสื่อสำเร็จ ลบไป %d รายการ"
 
-#: includes/class-isx-reset.php:223
+#: includes/class-isx-reset.php:255
 #, php-format
 msgid "Database reset succeeded, but creating the new admin account failed: %s — please create a new user via wp-admin/user-new.php or WP-CLI"
 msgstr "รีเซ็ตฐานข้อมูลสำเร็จ แต่สร้างบัญชีผู้ดูแลใหม่ไม่สำเร็จ: %s — กรุณาสร้างผู้ใช้ใหม่ผ่าน wp-admin/user-new.php หรือ WP-CLI"
 
-#: includes/class-isx-reset.php:250
+#: includes/class-isx-reset.php:282
 msgid "Database reset complete"
 msgstr "รีเซ็ตฐานข้อมูลสำเร็จ"
 
-#: includes/class-isx-reset.php:273
+#: includes/class-isx-reset.php:305
 msgid "Stopped at the plugin cleanup step: "
 msgstr "หยุดที่ขั้นตอนล้างปลั๊กอิน: "
 
-#: includes/class-isx-reset.php:279
+#: includes/class-isx-reset.php:311
 msgid "Stopped at the theme reset step: "
 msgstr "หยุดที่ขั้นตอนรีเซ็ตธีม: "
 
-#: includes/class-isx-reset.php:285
+#: includes/class-isx-reset.php:317
 msgid "Stopped at the media cleanup step: "
 msgstr "หยุดที่ขั้นตอนล้างคลังสื่อ: "
 
-#: includes/class-isx-reset.php:291
+#: includes/class-isx-reset.php:323
 msgid "Stopped at the database reset step: "
 msgstr "หยุดที่ขั้นตอนรีเซ็ตฐานข้อมูล: "
 
-#: includes/class-isx-reset.php:296
+#: includes/class-isx-reset.php:328
 msgid "Full site reset complete"
 msgstr "รีเซ็ตทั้งเว็บไซต์สำเร็จ"
 
-#: includes/class-isx-s3-client.php:179
+#: includes/class-isx-s3-client.php:189
 msgid "S3 request succeeded"
 msgstr "S3 request สำเร็จ"
 
-#: includes/class-isx-s3-client.php:187
+#: includes/class-isx-s3-client.php:197
 #, php-format
 msgid "S3 transport failed (cURL %d: %s)"
 msgstr "S3 transport ล้มเหลว (cURL %d: %s)"
 
-#: includes/class-isx-s3-client.php:188
+#: includes/class-isx-s3-client.php:198
 #, php-format
 msgid "S3 responded HTTP %d"
 msgstr "S3 ตอบกลับ HTTP %d"
 
-#: includes/class-isx-s3-client.php:215
+#: includes/class-isx-s3-client.php:225
 #, php-format
 msgid "Connection failed (cURL %1$d: %2$s)"
 msgstr "การเชื่อมต่อล้มเหลว (cURL %1$d: %2$s)"
 
-#: includes/class-isx-s3-client.php:222
+#: includes/class-isx-s3-client.php:232
 #, php-format
 msgid "Server responded HTTP %1$d: %2$s"
 msgstr "เซิร์ฟเวอร์ตอบกลับ HTTP %1$d: %2$s"
 
-#: includes/class-isx-s3-client.php:272
+#: includes/class-isx-s3-client.php:282
 msgid "The PHP cURL extension is required to upload to S3"
 msgstr "ต้องมีส่วนขยาย PHP cURL เพื่ออัปโหลดไปยัง S3"
 
-#: includes/class-isx-s3-client.php:275 includes/class-isx-s3-client.php:380
+#: includes/class-isx-s3-client.php:285 includes/class-isx-s3-client.php:390
 msgid "File to upload not found"
 msgstr "ไม่พบไฟล์ที่จะอัปโหลด"
 
-#: includes/class-isx-s3-client.php:286
+#: includes/class-isx-s3-client.php:296
 msgid "Starting upload to Storage"
 msgstr "เริ่มอัปโหลดไปยัง Storage"
 
-#: includes/class-isx-s3-client.php:308 includes/class-isx-s3-client.php:459
+#: includes/class-isx-s3-client.php:318 includes/class-isx-s3-client.php:469
 msgid "Could not open the file for upload"
 msgstr "เปิดไฟล์เพื่ออัปโหลดไม่สำเร็จ"
 
-#: includes/class-isx-s3-client.php:438
+#: includes/class-isx-s3-client.php:448
 msgid "Could not start multipart upload — no UploadId returned"
 msgstr "เริ่ม multipart upload ไม่สำเร็จ — ไม่พบ UploadId"
 
-#: includes/class-isx-s3-client.php:463
+#: includes/class-isx-s3-client.php:473
 msgid "Could not seek the file for upload"
 msgstr "เลื่อนตำแหน่งไฟล์เพื่ออัปโหลดไม่สำเร็จ"
 
-#: includes/class-isx-s3-client.php:524
+#: includes/class-isx-s3-client.php:534
 msgid "Part uploaded but the response had no ETag"
 msgstr "อัปโหลดส่วนไฟล์สำเร็จแต่ไม่มี ETag ในคำตอบ"
 
-#: includes/class-isx-s3-client.php:525
+#: includes/class-isx-s3-client.php:535
 msgid "Part upload failed — no ETag found"
 msgstr "อัปโหลดส่วนไฟล์ไม่สำเร็จ — ไม่พบ ETag"
 
-#: includes/class-isx-s3-client.php:587
+#: includes/class-isx-s3-client.php:597
 #, php-format
 msgid "Could not complete the multipart upload (%1$s): %2$s"
 msgstr "รวมไฟล์ที่อัปโหลดไม่สำเร็จ (%1$s): %2$s"
 
-#: includes/class-isx-s3-client.php:602
+#: includes/class-isx-s3-client.php:612
 msgid "The server returned an incomplete response while completing the upload — check whether the file actually reached Storage before retrying"
 msgstr "เซิร์ฟเวอร์ตอบกลับไม่ครบระหว่างรวมไฟล์ที่อัปโหลด — ตรวจสอบว่าไฟล์ขึ้นถึง Storage จริงหรือไม่ก่อนลองใหม่"
 
-#: includes/class-isx-s3-client.php:620 includes/class-isx-s3-client.php:667 includes/class-isx-s3-client.php:849 includes/class-isx-s3-client.php:934
+#: includes/class-isx-s3-client.php:630 includes/class-isx-s3-client.php:677 includes/class-isx-s3-client.php:859 includes/class-isx-s3-client.php:944
 msgid "The PHP cURL extension is required to access S3"
 msgstr "ต้องมีส่วนขยาย PHP cURL เพื่อเข้าถึง S3"
 
-#: includes/class-isx-s3-client.php:761
+#: includes/class-isx-s3-client.php:771
 msgid "The PHP cURL extension is required to download from S3"
 msgstr "ต้องมีส่วนขยาย PHP cURL เพื่อดาวน์โหลดจาก S3"
 
-#: includes/class-isx-s3-client.php:774
+#: includes/class-isx-s3-client.php:784
 msgid "Could not open the destination file for writing"
 msgstr "เปิดไฟล์ปลายทางเพื่อเขียนไม่สำเร็จ"
 
-#: includes/class-isx-s3-client.php:823
+#: includes/class-isx-s3-client.php:833
 #, php-format
 msgid "Incomplete download (got %1$s of %2$s) — the connection may have dropped or the disk may be full"
 msgstr "ดาวน์โหลดไม่ครบ (ได้ %1$s จาก %2$s) — อาจเน็ตหลุดกลางทางหรือพื้นที่ดิสก์ไม่พอ"
 
-#: includes/class-isx-s3-client.php:977
+#: includes/class-isx-s3-client.php:987
 msgid "The PHP cURL extension is required to connect to S3"
 msgstr "ต้องมีส่วนขยาย PHP cURL เพื่อเชื่อมต่อ S3"
 

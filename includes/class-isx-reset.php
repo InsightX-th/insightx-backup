@@ -155,6 +155,36 @@ class ISX_Reset {
 	 *
 	 * @return array { ok, message, stats }
 	 */
+	/**
+	 * Drop what the object cache knows about the database that was just
+	 * wiped. Without it the cache still "knew" the old admin
+	 * (wp_insert_user() failed with "username already exists") and the old
+	 * active_plugins value (update_option() saw no change and never wrote
+	 * it, deactivating this plugin).
+	 *
+	 * Scoped as tightly as the cache allows: a shared Redis/Memcached serving
+	 * other sites is only flushed wholesale when it cannot flush by group —
+	 * stale data for a database that no longer exists is worse.
+	 *
+	 * @return void
+	 */
+	private static function forget_cached_database() {
+		if ( ! wp_using_ext_object_cache() ) {
+			wp_cache_flush(); // Runtime cache of this request only.
+			return;
+		}
+		if ( function_exists( 'wp_cache_supports' ) && wp_cache_supports( 'flush_group' ) ) {
+			foreach ( array( 'options', 'site-options', 'users', 'userlogins', 'useremail', 'userslugs', 'user_meta', 'posts', 'post_meta', 'terms', 'term_meta', 'comment', 'comment_meta', 'counts', 'transient', 'site-transient' ) as $group ) {
+				wp_cache_flush_group( $group );
+			}
+			if ( function_exists( 'wp_cache_flush_runtime' ) ) {
+				wp_cache_flush_runtime();
+			}
+			return;
+		}
+		wp_cache_flush();
+	}
+
 	public static function reset_database() {
 		global $wpdb;
 
@@ -188,6 +218,8 @@ class ISX_Reset {
 		foreach ( $tables as $table ) {
 			$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- $table comes from SHOW TABLES, not user input.
 		}
+
+		self::forget_cached_database();
 
 		dbDelta( wp_get_db_schema( 'all' ) );
 

@@ -217,6 +217,23 @@ class ISX_Backups {
 	}
 
 	/**
+	 * Whether a backup file name was made by store() on THIS site.
+	 *
+	 * The whole name is matched, not just "<host>-" as a prefix: sites
+	 * sharing a bucket prefix whose hosts merely start the same way
+	 * ("shop" and "shop-2") would otherwise each count — and delete — the
+	 * other's backups as their own when enforcing retention.
+	 *
+	 * @param string $name
+	 * @param string $host This site's host ('' → "backup").
+	 * @return bool
+	 */
+	public static function is_own_backup_name( $name, $host ) {
+		$base = $host !== '' ? $host : 'backup';
+		return (bool) preg_match( '/^' . preg_quote( $base, '/' ) . '-\d{8}-[A-Za-z0-9]{16}\.wpress$/', (string) $name );
+	}
+
+	/**
 	 * Trim a Storage provider's copies down to the newest $retain backups.
 	 *
 	 * The scheduled-backup retention only ever pruned this machine's disk (see
@@ -248,7 +265,6 @@ class ISX_Backups {
 		// Same leading component store() builds names from, so "this site's
 		// backups" is decided the same way going out as coming back.
 		$host = wp_parse_url( home_url(), PHP_URL_HOST );
-		$mine = ( $host ? $host : 'backup' ) . '-';
 
 		$prefix  = ISX_Destinations::prefix( $slug );
 		$client  = new ISX_S3_Client( ISX_Destinations::get( $slug ) );
@@ -263,10 +279,7 @@ class ISX_Backups {
 			if ( $name === false || $name === '' || strpos( $name, '/' ) !== false ) {
 				continue; // Nested deeper than our own flat layout — not ours.
 			}
-			if ( self::sanitize_name( $name ) === '' ) {
-				continue;
-			}
-			if ( strpos( $name, $mine ) !== 0 ) {
+			if ( ! self::is_own_backup_name( $name, (string) $host ) ) {
 				continue; // Another site's backup sharing this prefix.
 			}
 			$ours[] = array(

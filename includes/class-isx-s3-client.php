@@ -77,15 +77,18 @@ class ISX_S3_Client {
 
 	public function __construct( array $args ) {
 		$this->region     = ! empty( $args['region'] ) ? $args['region'] : 'us-east-1';
-		$this->bucket     = isset( $args['bucket'] ) ? $args['bucket'] : '';
 		$this->access_key = isset( $args['access_key'] ) ? $args['access_key'] : '';
 		$this->secret_key = isset( $args['secret_key'] ) ? $args['secret_key'] : '';
 		$this->path_style = ! empty( $args['path_style'] );
+		// Same rule as on save (see ISX_Destinations::sanitize_bucket()), so a
+		// value stored before that check can't steer the request host either.
+		$this->bucket = isset( $args['bucket'] ) ? ISX_Destinations::sanitize_bucket( $args['bucket'], $this->path_style ) : '';
 
 		$endpoint = isset( $args['endpoint'] ) ? trim( $args['endpoint'] ) : '';
 		if ( $endpoint !== '' ) {
 			$parsed       = wp_parse_url( $endpoint );
-			$this->scheme = ! empty( $parsed['scheme'] ) ? $parsed['scheme'] : 'https';
+			// Never anything but http(s), whatever older saved settings hold.
+			$this->scheme = ( ! empty( $parsed['scheme'] ) && strtolower( $parsed['scheme'] ) === 'http' ) ? 'http' : 'https';
 			$this->host   = ! empty( $parsed['host'] ) ? $parsed['host'] : preg_replace( '#^https?://#', '', untrailingslashit( $endpoint ) );
 			if ( ! empty( $parsed['port'] ) ) {
 				$this->host .= ':' . $parsed['port'];
@@ -94,6 +97,7 @@ class ISX_S3_Client {
 			$this->scheme     = 'https';
 			$this->host       = 's3.' . $this->region . '.amazonaws.com';
 			$this->path_style = false;
+			$this->bucket     = ISX_Destinations::sanitize_bucket( $this->bucket, false );
 		}
 	}
 
@@ -123,6 +127,12 @@ class ISX_S3_Client {
 	 * }
 	 */
 	private function exec_curl( $ch, array $context ) {
+		// Belt and braces for the scheme check in the constructor: cURL must
+		// never follow the request (or a redirect) onto another protocol.
+		curl_setopt( $ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS );
+		if ( defined( 'CURLOPT_REDIR_PROTOCOLS' ) ) {
+			curl_setopt( $ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS );
+		}
 		$headers = array();
 		curl_setopt(
 			$ch,
@@ -1006,9 +1016,10 @@ class ISX_S3_Client {
 		return true;
 	}
 
-	private function signed_headers( $method, $host, $uri, $canonical_query, $payload_hash ) {
-		$now  = gmdate( 'Ymd\THis\Z' );
-		$date = gmdate( 'Ymd' );
+	private function signed_headers( $method, $host, $uri, $canonical_query, $payload_hash, $time = null ) {
+		$time = $time === null ? time() : (int) $time; // Fixed only by tests (AWS reference vectors).
+		$now  = gmdate( 'Ymd\THis\Z', $time );
+		$date = gmdate( 'Ymd', $time );
 
 		$canonical_headers = 'host:' . $host . "\n"
 			. 'x-amz-content-sha256:' . $payload_hash . "\n"

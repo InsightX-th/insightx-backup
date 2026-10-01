@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+## [0.1.26] - 2026-10-01
+
+### ความปลอดภัย
+- **คำสั่ง SQL ในแพ็กเกจแตะได้เฉพาะตารางของเว็บนี้** — เดิมแพ็กเกจที่ถูกแต่งมา (เช่นจาก bucket ที่ใช้ร่วมกัน) สั่ง `DROP`/`CREATE`/`INSERT` ตารางไหนใน database ก็ได้ รวมถึงเพิ่มผู้ดูแลเข้าไปในเว็บ WordPress อื่นที่ใช้ database เดียวกัน
+- **`CREATE TABLE` จากแพ็กเกจต้องเป็นนิยามตารางธรรมดา** — ปฏิเสธ `… AS SELECT` (คัดลอกข้อมูลจาก database อื่น), engine `FEDERATED`/`CONNECT`/`SPIDER`/`MERGE` และ `DATA/INDEX DIRECTORY`
+- **`SET NAMES` รับเฉพาะ charset ที่ปลอดภัยและไม่มีคำสั่งต่อท้าย** — charset แบบ GBK/SJIS ทำให้การ escape ค่าใน INSERT ถูกหลบได้
+- Storage connection: endpoint รับเฉพาะ http/https, ชื่อ bucket รับเฉพาะตัวอักษรที่ S3 อนุญาต (ใส่ `/` ได้เฉพาะแบบ path-style เพื่อให้ค่าตั้งเดิมอย่าง `backups/site1` ยังใช้ได้ และบันทึกค่าที่ไม่ถูกต้องจะแจ้ง error แทนการตัดทิ้งเงียบๆ) และ cURL ไม่ยอมสลับไป protocol อื่น (กัน SSRF)
+- การบันทึก "ไม่พบงาน" จาก request ที่ไม่ได้ล็อกอินจำกัดไว้นาทีละครั้ง กันการยิงซ้ำๆ เพื่อดันรายการจริงออกจาก Log
+
+### แก้บั๊ก
+- **Reset Hub "รีเซ็ตฐานข้อมูล" ใช้งานไม่ได้** — object cache ยังจำผู้ใช้และค่าตั้งก่อนรีเซ็ต จึงสร้างบัญชีผู้ดูแลใหม่ไม่สำเร็จ ("username already exists") และปลั๊กอินถูกปิดไปด้วย (เจอจากการทดสอบ end-to-end)
+- `wp isx import` นำเข้าแพ็กเกจที่เข้ารหัสได้แล้ว — ใช้ `--password=` หรือพิมพ์รหัสผ่านตอนที่ถาม (ไม่แสดงบนหน้าจอ)
+- กดยกเลิกตอนถามรหัสผ่านในหน้านำเข้า จะยกเลิกงานฝั่งเซิร์ฟเวอร์ทันที (เดิมงานค้างจนระบบเก็บกวาดเอง)
+- การลบ backup เก่าบน Storage ตาม retention นับเฉพาะไฟล์ที่ชื่อตรงรูปแบบของเว็บนี้ทั้งชื่อ (เดิมเว็บ `shop` นับไฟล์ของ `shop-2` ใน prefix เดียวกันเป็นของตัวเองและลบทิ้งได้)
+- เพิ่มการทดสอบ end-to-end กับ MySQL จริง (`bash tests/e2e/run.sh`): export → import ข้ามโดเมน/scheme/prefix ทั้งแบบปกติและเข้ารหัส (ผ่าน `wp isx import --password`) และ Reset Hub — รันใน CI ทุก push ด้วย
+- ชุดทดสอบเพิ่มเป็น 135 เทสต์: การเข้ารหัส backup (v1/v2, ไฟล์ถูกแก้/ถูกตัด), CRC/verify ของแพ็กเกจ, ชื่อไฟล์ backup, ลายเซ็น SigV4 เทียบกับตัวอย่างของ AWS และความปลอดภัยของ SQL ในแพ็กเกจ
+
 ## [0.1.25] - 2026-10-01
 
 ### ความปลอดภัย
@@ -211,7 +228,8 @@
 - ศูนย์รีเซ็ต (Reset Hub) — ล้างปลั๊กอิน / รีเซ็ตธีม / ล้างคลังสื่อ / รีเซ็ตฐานข้อมูล / รีเซ็ตทั้งเว็บไซต์ พร้อมยืนยันด้วยรหัสผ่านก่อนทำรายการทุกครั้ง
 - รองรับ WP-CLI: `wp isx export` / `wp isx import <file>` / `wp isx providers`
 
-[Unreleased]: https://github.com/InsightX-th/insightx-backup/compare/v0.1.25...HEAD
+[Unreleased]: https://github.com/InsightX-th/insightx-backup/compare/v0.1.26...HEAD
+[0.1.26]: https://github.com/InsightX-th/insightx-backup/compare/v0.1.25...v0.1.26
 [0.1.25]: https://github.com/InsightX-th/insightx-backup/compare/v0.1.24...v0.1.25
 [0.1.24]: https://github.com/InsightX-th/insightx-backup/compare/v0.1.23...v0.1.24
 [0.1.23]: https://github.com/InsightX-th/insightx-backup/compare/v0.1.22...v0.1.23

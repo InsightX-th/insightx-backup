@@ -476,7 +476,13 @@ class ISX_Database {
 		// line — apply it to the import connection so rows replay under the
 		// same charset they were dumped with (protects non-ASCII text).
 		if ( strpos( $line, '/*!40101 SET NAMES ' ) === 0 || strpos( $line, 'SET NAMES ' ) === 0 ) {
-			$wpdb->query( $line ); // phpcs:ignore WordPress.DB.PreparedSQL
+			// Exactly the statement our exporter writes, nothing appended: a
+			// multibyte charset such as GBK/SJIS here would desync the
+			// server from mysqli_real_escape_string() (classic escaping
+			// bypass), and a trailing ", @x = (…)" runs arbitrary SQL.
+			if ( preg_match( '#^(?:/\*!40101 )?SET NAMES (utf8mb4|utf8mb3|utf8|latin1|ascii|binary)(?: COLLATE [A-Za-z0-9_]+)?\s*(?:\*/)?\s*;?$#i', $line ) ) {
+				$wpdb->query( $line ); // phpcs:ignore WordPress.DB.PreparedSQL
+			}
 			return;
 		}
 
@@ -492,7 +498,11 @@ class ISX_Database {
 			if ( ! preg_match( '/^CREATE TABLE `([^`]+)`/', $line, $m ) ) {
 				return;
 			}
-			$table  = self::retarget_prefix( $m[1], $old_prefix, $new_prefix );
+			$table = self::retarget_prefix( $m[1], $old_prefix, $new_prefix );
+			if ( ! self::is_own_table( $table, $new_prefix ) || ! self::is_safe_create( $line ) ) {
+				self::log_refused( $table, $line );
+				return;
+			}
 			$create = rtrim( self::rewrite_create_table( $line, $table ), ';' );
 			$wpdb->query( 'DROP TABLE IF EXISTS `' . self::ident( $table ) . '`' );
 			$wpdb->query( $create ); // phpcs:ignore WordPress.DB.PreparedSQL
@@ -506,6 +516,10 @@ class ISX_Database {
 			}
 			list( $table, $columns, $rows ) = $parsed;
 			$table    = self::retarget_prefix( $table, $old_prefix, $new_prefix );
+			if ( ! self::is_own_table( $table, $new_prefix ) ) {
+				self::log_refused( $table, $line );
+				return;
+			}
 			$out_rows = array();
 			foreach ( $rows as $values ) {
 				$row = @array_combine( $columns, $values ); // phpcs:ignore
@@ -529,6 +543,141 @@ class ISX_Database {
 	}
 
 	/**
+	 * Whether a package may create/drop/write this table: it must belong to
+	 * this site (its prefix) and not to another install sharing the database
+	 * whose prefix merely starts with ours (see foreign_prefixes()).
+	 *
+	 * Our exporter only ever writes the site's own prefixed tables, so this
+	 * costs a real package nothing — but a crafted one could otherwise drop
+	 * any table in the database, or insert an administrator into another
+	 * WordPress install that shares it.
+	 *
+	 * @param string $table      Target table name (after prefix retargeting).
+	 * @param string $new_prefix This site's prefix.
+	 * @return bool
+	 */
+	private static function is_own_table( $table, $new_prefix ) {
+		global $wpdb;
+		static $foreign = null;
+		// Case-insensitively: MySQL on macOS/Windows (lower_case_table_names
+		// 1/2) treats wp_STAGING_users and wp_staging_users as one table.
+		$table      = strtolower( $table );
+		$new_prefix = strtolower( $new_prefix );
+		if ( $new_prefix === '' || strpos( $table, $new_prefix ) !== 0 ) {
+			return false;
+		}
+		if ( $foreign === null ) {
+			$all     = $wpdb->get_col( 'SHOW TABLES' );
+			$foreign = self::foreign_prefixes( is_array( $all ) ? $all : array(), $new_prefix );
+		}
+		foreach ( $foreign as $other ) {
+			if ( strpos( $table, strtolower( $other ) ) === 0 ) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Whether a CREATE TABLE statement from a package is a plain table
+	 * definition. The statement runs as-is, so refuse the forms that do more
+	 * than define columns: "… AS SELECT" (copies data from any database the
+	 * DB user can read), FEDERATED/CONNECT/SPIDER/MERGE engines and
+	 * CONNECTION= (outbound connections / other tables), and DATA/INDEX
+	 * DIRECTORY (files written elsewhere on the server). Quoted strings
+	 * (comments, defaults) are ignored so a DEFAULT 'select' stays fine.
+	 *
+	 * @param string $sql
+	 * @return bool
+	 */
+	private static function is_safe_create( $sql ) {
+		$sql = rtrim( trim( (string) $sql ), ';' );
+		if ( ! preg_match( '/^CREATE TABLE `[^`]+`\s*\(/', $sql ) ) {
+			return false;
+		}
+
+		// One left-to-right pass: string literals and identifiers become
+		// placeholders, any comment rejects outright. (A regex per quote kind
+		// could be fooled by one kind inside the other — `a'` … '…' — and
+		// MySQL's /*! … */ comments are executable.)
+		$bare = '';
+		$len  = strlen( $sql );
+		for ( $i = 0; $i < $len; $i++ ) {
+			$ch = $sql[ $i ];
+			if ( $ch === "'" || $ch === '"' || $ch === '`' ) {
+				$j = $i + 1;
+				while ( $j < $len ) {
+					if ( $ch !== '`' && $sql[ $j ] === '\\' ) {
+						$j += 2;
+						continue;
+					}
+					if ( $sql[ $j ] === $ch ) {
+						if ( $j + 1 < $len && $sql[ $j + 1 ] === $ch ) {
+							$j += 2; // Doubled quote inside the literal.
+							continue;
+						}
+						break;
+					}
+					$j++;
+				}
+				if ( $j >= $len ) {
+					return false; // Unterminated.
+				}
+				$bare .= ( $ch === '`' ) ? '`x`' : "'s'";
+				$i     = $j;
+				continue;
+			}
+			if ( $ch === '#' || ( $ch === '/' && substr( $sql, $i, 2 ) === '/*' ) || ( $ch === '-' && substr( $sql, $i, 2 ) === '--' ) ) {
+				return false;
+			}
+			$bare .= $ch;
+		}
+
+		// The column list is the first balanced (…) group; everything after it
+		// must be table options from the allow-list below.
+		$open  = strpos( $bare, '(' );
+		$depth = 0;
+		$close = false;
+		for ( $i = $open, $n = strlen( $bare ); $i < $n; $i++ ) {
+			if ( $bare[ $i ] === '(' ) {
+				$depth++;
+			} elseif ( $bare[ $i ] === ')' && --$depth === 0 ) {
+				$close = $i;
+				break;
+			}
+		}
+		if ( $close === false ) {
+			return false;
+		}
+		$body    = substr( $bare, $open + 1, $close - $open - 1 );
+		$options = trim( substr( $bare, $close + 1 ) );
+
+		if ( preg_match( '/\b(SELECT|TABLE|UNION|CONNECTION|DIRECTORY)\b/i', $body ) ) {
+			return false;
+		}
+
+		$option = '(?:ENGINE\s*=?\s*(?:InnoDB|MyISAM|Aria|MEMORY)'
+			. '|(?:DEFAULT\s+)?(?:CHARSET|CHARACTER\s+SET|COLLATE)\s*=?\s*\w+'
+			. '|(?:AUTO_INCREMENT|AVG_ROW_LENGTH|KEY_BLOCK_SIZE|MAX_ROWS|MIN_ROWS|STATS_SAMPLE_PAGES)\s*=?\s*\d+'
+			. '|(?:ROW_FORMAT|PACK_KEYS|CHECKSUM|DELAY_KEY_WRITE|STATS_PERSISTENT|STATS_AUTO_RECALC|PAGE_CHECKSUM|TRANSACTIONAL)\s*=?\s*\w+'
+			. "|COMMENT\\s*=?\\s*'s')";
+		return (bool) preg_match( '/^(?:' . $option . '(?:\s*,?\s*' . $option . ')*)?$/i', $options );
+	}
+
+	/**
+	 * @param string $table
+	 * @param string $what
+	 * @return void
+	 */
+	private static function log_refused( $table, $what ) {
+		ISX_Logger::log_warn(
+			'import',
+			__( 'Skipped a database statement in the package that targets another table or is not a plain table definition', 'insightx-backup' ),
+			array( 'table' => $table, 'statement' => substr( (string) $what, 0, 200 ) )
+		);
+	}
+
+	/**
 	 * The pre-format-change "T\t"/"R\t" line reader — unchanged from before,
 	 * kept only so backups made by older versions of this plugin still import.
 	 *
@@ -549,8 +698,17 @@ class ISX_Database {
 		list( $type, $table, $payload ) = $parts;
 		$table = self::retarget_prefix( $table, $old_prefix, $new_prefix );
 
+		if ( ! self::is_own_table( $table, $new_prefix ) ) {
+			self::log_refused( $table, $type );
+			return;
+		}
+
 		if ( $type === 'T' ) {
 			$create = base64_decode( $payload ); // phpcs:ignore
+			if ( ! self::is_safe_create( (string) $create ) ) {
+				self::log_refused( $table, (string) $create );
+				return;
+			}
 			$create = self::rewrite_create_table( $create, $table );
 			$wpdb->query( 'DROP TABLE IF EXISTS `' . self::ident( $table ) . '`' );
 			$wpdb->query( $create ); // phpcs:ignore WordPress.DB.PreparedSQL

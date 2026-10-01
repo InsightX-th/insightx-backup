@@ -232,14 +232,33 @@ class ISX_Destinations {
 	 * @param array $destinations slug => config
 	 * @return void
 	 */
+	/**
+	 * Characters a bucket name may hold.
+	 *
+	 * Virtual-hosted requests put the bucket into the HOST name, so it must
+	 * be a DNS label — "evil.example/?" would send every request (and its
+	 * signed headers) to another server. Path-style requests put it in the
+	 * path, where existing setups legitimately use "bucket/folder".
+	 *
+	 * @param string $bucket
+	 * @param bool   $path_style
+	 * @return string
+	 */
+	public static function sanitize_bucket( $bucket, $path_style ) {
+		$pattern = $path_style ? '#[^A-Za-z0-9._\-/]#' : '#[^A-Za-z0-9._\-]#';
+		return trim( (string) preg_replace( $pattern, '', (string) $bucket ), '/' );
+	}
+
 	public static function save( array $destinations ) {
 		$clean = array();
 		foreach ( self::providers() as $slug => $meta ) {
 			$config         = isset( $destinations[ $slug ] ) && is_array( $destinations[ $slug ] ) ? $destinations[ $slug ] : array();
 			$clean[ $slug ] = array(
-				'endpoint'   => isset( $config['endpoint'] ) ? esc_url_raw( trim( $config['endpoint'] ) ) : '',
+				// http(s) only: the endpoint is requested server-side, so
+				// gopher://, file:// or ftp:// would point it at internal services.
+				'endpoint'   => isset( $config['endpoint'] ) ? esc_url_raw( trim( $config['endpoint'] ), array( 'http', 'https' ) ) : '',
 				'region'     => isset( $config['region'] ) ? sanitize_text_field( $config['region'] ) : '',
-				'bucket'     => isset( $config['bucket'] ) ? sanitize_text_field( $config['bucket'] ) : '',
+				'bucket'     => isset( $config['bucket'] ) ? self::sanitize_bucket( $config['bucket'], ! empty( $config['path_style'] ) ) : '',
 				'prefix'     => isset( $config['prefix'] ) ? self::sanitize_prefix( $config['prefix'] ) : '',
 				'access_key' => isset( $config['access_key'] ) ? sanitize_text_field( $config['access_key'] ) : '',
 				'secret_key' => self::maybe_encrypt( isset( $config['secret_key'] ) ? trim( $config['secret_key'] ) : '' ),

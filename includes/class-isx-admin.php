@@ -677,14 +677,22 @@ class ISX_Admin {
 			// practice: disk full, PHP-FPM/host killed the process while
 			// state.json was mid-write, or someone changed the storage path
 			// (Settings → Storage Settings) while a job was still in flight.
-			ISX_Logger::log_error(
-				'system',
-				__( 'Job not found', 'insightx-backup' ),
-				array(
-					'job'      => $job_id,
-					'searched' => implode( ', ', ISX_Job::search_paths() ),
-				)
-			);
+			//
+			// This endpoint is open to logged-out requests (the loopback
+			// runner), so anyone can hit it with made-up ids. At most one
+			// entry a minute: still enough to diagnose a lost job, without
+			// letting a flood push every real entry out of the capped log.
+			if ( ! get_transient( 'isx_job_missing_logged' ) ) {
+				set_transient( 'isx_job_missing_logged', 1, MINUTE_IN_SECONDS );
+				ISX_Logger::log_error(
+					'system',
+					__( 'Job not found', 'insightx-backup' ),
+					array(
+						'job'      => $job_id,
+						'searched' => implode( ', ', ISX_Job::search_paths() ),
+					)
+				);
+			}
 			wp_send_json_error( array( 'message' => __( 'Job not found', 'insightx-backup' ) ) );
 		}
 
@@ -2324,6 +2332,12 @@ class ISX_Admin {
 			if ( ! isset( $posted[ $field ] ) && isset( $current[ $slug ][ $field ] ) ) {
 				$posted[ $field ] = $current[ $slug ][ $field ];
 			}
+		}
+
+		// Refuse rather than silently strip: a bucket name that changes on
+		// save would quietly point backups somewhere the admin never chose.
+		if ( isset( $posted['bucket'] ) && (string) $posted['bucket'] !== ISX_Destinations::sanitize_bucket( $posted['bucket'], ! empty( $posted['path_style'] ) ) ) {
+			wp_send_json_error( array( 'message' => __( 'The bucket name may only contain letters, digits, ".", "-" and "_" (and "/" for path-style URLs)', 'insightx-backup' ) ) );
 		}
 
 		$all          = ISX_Destinations::all();

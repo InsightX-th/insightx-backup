@@ -3,7 +3,7 @@
  * Plugin Name: InsightX Backup
  * Plugin URI: https://insightx.in.th/
  * Description: Migrate or back up an entire WordPress site (database + files) as a single package, then import it back or send it to S3 — written from scratch by InsightX.
- * Version: 0.1.25
+ * Version: 0.1.26
  * Author: InsightX
  * Author URI: https://insightx.in.th/
  * Text Domain: insightx-backup
@@ -21,7 +21,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ISX_VERSION', '0.1.25' );
+define( 'ISX_VERSION', '0.1.26' );
 define( 'ISX_FILE', __FILE__ );
 define( 'ISX_PATH', plugin_dir_path( __FILE__ ) );
 define( 'ISX_URL', plugin_dir_url( __FILE__ ) );

@@ -262,6 +262,22 @@ storage/                       job scratch data + backups/ (gitignored, สร�
 
 **โครงสร้างไฟล์ .wpress:** `package.json` (metadata: siteurl, table_prefix, total_files ฯลฯ) + `database.sql` (SQL statements ตรงๆ อ่านด้วยตาได้) + เนื้อหาเว็บ namespace ใต้ `wpcontent/` — แพ็กเกจเก่าที่ export ก่อนอัปเดตนี้ (`manifest.json`/`database.isxdb`) ยัง import ได้ปกติ
 
+## การทดสอบ
+
+**Unit tests** — ไม่ต้องมี WordPress หรือ database (CI รันให้ทุก push/PR บน PHP 7.4–8.3):
+
+```bash
+php tests/run.php
+```
+
+**End-to-end กับ MySQL จริง** — สร้าง WordPress ชั่วคราว 2 ตัวใน database แยก (`isx_e2e_src` / `isx_e2e_dst`, ไม่แตะ database ของเว็บ) แล้ว export จากเว็บต้นทาง (`http://source.test`, prefix `wp_`) และ import เข้าเว็บปลายทาง (`https://dest.test`, prefix `dst_`) ทั้งแบบปกติและแบบเข้ารหัส จากนั้นตรวจ URL ทุกรูปแบบ, ค่า serialize/JSON/stdClass, ภาษาไทย/emoji, ไฟล์ใน uploads/ธีม, รหัสผ่านแอดมิน และว่าตารางของเว็บอื่นใน database เดียวกันไม่ถูกแตะ — ลบทุกอย่างทิ้งเมื่อจบ (`KEEP=1` เพื่อเก็บไว้ดู):
+
+```bash
+bash tests/e2e/run.sh
+```
+
+ค่าเริ่มต้นใช้ MySQL/WP-CLI ของ Local (ต้องเปิดเว็บใน Local ไว้) — ใช้กับ MySQL อื่นได้ผ่าน env `MYSQL_BIN`, `MYSQL_SOCKET`, `DB_USER`, `DB_PASS`, `WP_CORE`, `WP_CLI`
+
 ## ความปลอดภัย
 
 - โฟลเดอร์ `storage/` ระดับบนสุด (job scratch data ระหว่าง export/import + logs) ถูกกัน HTTP access โดยตรงด้วย `.htaccess` (`Require all denied`, รองรับทั้ง Apache 2.4 และ 2.2 ผ่าน `<IfModule>`) + `index.php` ว่างเปล่า

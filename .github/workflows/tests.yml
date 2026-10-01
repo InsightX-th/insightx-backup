@@ -27,3 +27,37 @@ jobs:
 
       - name: Run test suite
         run: php tests/run.php
+
+  # Real WordPress + MySQL end to end (tests/e2e/run.sh). One PHP version is
+  # enough here — the matrix above already covers the language versions.
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mysqli, gd, zlib, curl
+          tools: wp-cli
+
+      - name: WordPress core
+        run: wp core download --path=/tmp/wpcore --quiet
+
+      - name: End-to-end
+        env:
+          DB_HOST: 127.0.0.1:3306
+          DB_USER: root
+          DB_PASS: root
+          WP_CORE: /tmp/wpcore
+        run: WP_CLI="$(command -v wp)" bash tests/e2e/run.sh

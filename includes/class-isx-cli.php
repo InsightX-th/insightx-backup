@@ -85,10 +85,16 @@ class ISX_CLI_Command {
 	 * [--yes]
 	 * : Skip the confirmation prompt.
 	 *
+	 * [--password=<password>]
+	 * : Password of an encrypted package. Asked for (hidden) when the package
+	 * is encrypted and this is omitted — prefer that over typing it here,
+	 * where it lands in shell history and the process list.
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp isx import /tmp/site-backup.wpress
 	 *     wp isx import /tmp/site-backup.wpress --yes
+	 *     wp isx import /tmp/encrypted.wpress --yes
 	 *
 	 * @param array $args
 	 * @param array $assoc_args
@@ -104,8 +110,30 @@ class ISX_CLI_Command {
 
 		WP_CLI::confirm( __( 'Importing will overwrite the entire current site (files + database). Continue?', 'insightx-backup' ), $assoc_args );
 
+		$encrypted = ISX_Crypto::is_encrypted_file( $file );
+		$password  = isset( $assoc_args['password'] ) ? (string) $assoc_args['password'] : '';
+		if ( $encrypted && $password === '' ) {
+			// Only ask on a real terminal: from cron/CI a hidden prompt either
+			// throws on EOF or waits forever on an idle stdin.
+			$interactive = function_exists( 'stream_isatty' ) ? @stream_isatty( STDIN ) : ( function_exists( 'posix_isatty' ) && @posix_isatty( STDIN ) ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			if ( ! $interactive ) {
+				WP_CLI::error( __( 'This package is password-encrypted — pass --password=<password>', 'insightx-backup' ) );
+			}
+			$password = (string) \cli\prompt( __( 'This file is password-encrypted. Please enter the password', 'insightx-backup' ), false, ': ', true );
+		}
+
 		$job = ISX_Job::create( 'import' );
-		if ( ! copy( $file, $job->archive() ) ) {
+		if ( $encrypted ) {
+			// Decrypted straight into the job — the same end state the
+			// dashboard reaches through isx_import_decrypt.
+			$decrypted = ISX_Crypto::decrypt_file( $password, $file, $job->archive() );
+			if ( is_wp_error( $decrypted ) ) {
+				$job->cleanup();
+				WP_CLI::error( $decrypted->get_error_message() );
+			}
+			$job->set( 'decrypted', true );
+			$job->save();
+		} elseif ( ! copy( $file, $job->archive() ) ) {
 			WP_CLI::error( __( 'Could not copy the file into the job', 'insightx-backup' ) );
 		}
 
@@ -123,8 +151,10 @@ class ISX_CLI_Command {
 		$progress->finish();
 
 		if ( ! empty( $result['needs_password'] ) ) {
+			// Only reachable if the package is encrypted in a way detected
+			// later than is_encrypted_file() (e.g. inside a gzip) — never loop.
 			$job->cleanup();
-			WP_CLI::error( __( 'This package is password-encrypted, which WP-CLI import does not support — import it from the dashboard instead', 'insightx-backup' ) );
+			WP_CLI::error( __( 'This package is password-encrypted — pass --password=<password>', 'insightx-backup' ) );
 		}
 		if ( ! empty( $result['error'] ) ) {
 			WP_CLI::error( isset( $result['message'] ) ? $result['message'] : __( 'Import failed', 'insightx-backup' ) );
