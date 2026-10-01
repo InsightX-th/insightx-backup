@@ -4,7 +4,7 @@ Tags: backup, migration, export, import, s3
 Requires at least: 3.3
 Tested up to: 7.1.2
 Requires PHP: 7.4
-Stable tag: 0.1.29
+Stable tag: 0.1.30
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
