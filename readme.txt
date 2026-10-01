@@ -3,8 +3,8 @@ Contributors: insightx
 Tags: backup, migration, export, import, s3
 Requires at least: 3.3
 Tested up to: 7.1.2
-Requires PHP: 5.3
-Stable tag: 0.1.27
+Requires PHP: 7.4
+Stable tag: 0.1.28
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -29,22 +29,68 @@ InsightX Backup เขียนขึ้นใหม่ทั้งหมดโ�
 
 == Installation ==
 
-**ดาวน์โหลด zip จาก GitHub**
+= ติดตั้งครั้งแรก =
 
-1. เข้า `https://github.com/InsightX-th/insightx-backup`
-2. เมนู Releases เลือกเวอร์ชันล่าสุด ดาวน์โหลด `insightx-backup-vX.X.X.zip` จากส่วน Assets
-3. ไปที่เว็บ WordPress ปลายทาง → Plugins → Add New → Upload Plugin
-4. เลือกไฟล์ zip → Install Now → Activate Plugin
+1. ดาวน์โหลดไฟล์ `insightx-backup-vX.X.X.zip` จากหัวข้อ Assets ของ GitHub Releases: https://github.com/InsightX-th/insightx-backup/releases (ใช้ไฟล์นี้ ไม่ใช่ "Source code")
+2. ในหลังบ้าน WordPress ไปที่ ปลั๊กอิน → เพิ่มปลั๊กอินใหม่ → อัปโหลดปลั๊กอิน เลือกไฟล์ ZIP แล้วกด ติดตั้งเดี๋ยวนี้
+3. กด เปิดใช้งาน แล้วเมนู InsightX Backup จะขึ้นที่ sidebar ของหลังบ้าน
+4. (ถ้าจะส่ง backup ขึ้น Storage) ไปที่ InsightX Backup → การเชื่อมต่อ เลือกผู้ให้บริการ กรอก endpoint, bucket และ key แล้วทดสอบการเชื่อมต่อ
+5. ไปที่ InsightX Backup → ส่งออก กด ส่งออกเป็นไฟล์ เพื่อทดลองสำรองครั้งแรก ไฟล์จะถูกเก็บไว้ในเมนู ข้อมูลสำรอง ด้วย
+6. (ไม่บังคับ) เปิด Backup อัตโนมัติ ได้ที่ InsightX Backup → ตั้งค่า Storage เลือกความถี่ ปลายทาง และจำนวน backup ที่จะเก็บไว้
 
-**ติดตั้งตรงจากโฟลเดอร์ (dev/local)**
+= ย้ายเว็บไปเครื่องใหม่ =
 
-1. วางโฟลเดอร์ `insightx-backup` ไว้ที่ `wp-content/plugins/`
-2. เปิดใช้งานปลั๊กอินจากเมนู Plugins
-3. เมนู InsightX Backup จะปรากฏใน sidebar ของ wp-admin
+1. ที่เว็บต้นทาง: ส่งออกเป็นไฟล์ `.wpress` (หรือส่งขึ้น Storage)
+2. ที่เว็บปลายทาง: ติดตั้ง WordPress เปล่าและปลั๊กอินนี้
+3. ไปที่ InsightX Backup → นำเข้า แล้วอัปโหลดไฟล์ `.wpress` หรือเลือกไฟล์จาก Storage
+4. ระบบจะแทนที่ URL และ path ให้ตรงกับเว็บปลายทางอัตโนมัติ เสร็จแล้วต้องล็อกอินใหม่ด้วยบัญชีจากเว็บต้นทาง
 
-**ความต้องการของระบบ:** PHP 7.4+, ส่วนขยาย cURL/zlib/openssl
+= ติดตั้งตรงจากโฟลเดอร์ (dev/local) =
+
+วางโฟลเดอร์ `insightx-backup` ไว้ที่ `wp-content/plugins/` แล้วเปิดใช้งานจากเมนู ปลั๊กอิน
+
+= ความต้องการของระบบ =
+
+* PHP 7.4 ขึ้นไป
+* ส่วนขยาย cURL (สำหรับ Storage), zlib (สำหรับบีบอัด GZip) และ openssl (สำหรับเข้ารหัสด้วยรหัสผ่าน)
+* พื้นที่ดิสก์ว่างประมาณขนาดฐานข้อมูล + ขนาด wp-content
+
+== Frequently Asked Questions ==
+
+= ใช้ไฟล์ .wpress ของ All-in-One WP Migration ได้ไหม? =
+
+ไม่ได้ ไฟล์ `.wpress` ของปลั๊กอินนี้เป็นฟอร์แมตของ InsightX เอง แม้ใช้นามสกุลเดียวกันก็เปิดข้ามกันไม่ได้
+
+= นำเข้าแล้วข้อมูลเดิมของเว็บปลายทางหายไหม? =
+
+หาย การนำเข้าจะแทนที่เว็บปัจจุบันทั้งหมด (ฐานข้อมูลและไฟล์ใน wp-content) ด้วยเนื้อหาในแพ็กเกจ ควรสำรองเว็บปลายทางก่อนเสมอ ระบบจะตรวจว่าแพ็กเกจสมบูรณ์ก่อนเริ่มลบอะไร
+
+= ไฟล์ backup เก็บไว้ที่ไหน? =
+
+ค่าเริ่มต้นคือ `wp-content/insightx-backup/` เปลี่ยนได้ที่ InsightX Backup → ตั้งค่า Storage (การเปลี่ยน path ไม่ย้ายไฟล์เก่าให้)
+
+= ลืมรหัสผ่านที่ใช้เข้ารหัส backup ทำอย่างไร? =
+
+กู้คืนไม่ได้ ระบบไม่เก็บรหัสผ่านไว้ ต้องจดเก็บเองทุกครั้งที่เปิดตัวเลือกเข้ารหัส
+
+= ขึ้นว่า "พื้นที่ดิสก์ไม่พอ เขียนไฟล์ไม่สำเร็จ" =
+
+ดู path ที่ระบุในข้อความ ไม่ใช่พื้นที่รวมของเครื่อง บนโฮสต์ที่แบ่งดิสก์หลายก้อน ก้อนที่เต็มมักไม่ใช่ก้อนที่ติดตั้ง WordPress ต้องมีที่ว่างประมาณขนาดฐานข้อมูล + ขนาด wp-content
+
+= สั่งงานผ่าน command line ได้ไหม? =
+
+ได้ ผ่าน WP-CLI: `wp isx export`, `wp isx import <ไฟล์>`, `wp isx providers` และ `wp isx cleanup-uploads`
+
+= อัปเดตปลั๊กอินอย่างไร? =
+
+ปลั๊กอินตรวจ GitHub Releases ให้เอง เมื่อมีเวอร์ชันใหม่จะแจ้งในหน้า ปลั๊กอิน ให้กด อัปเดตเดี๋ยวนี้
 
 == Changelog ==
+
+= 0.1.28 =
+* หน้า "ดูรายละเอียด" มีวิธีติดตั้งแบบทีละขั้น (ติดตั้งครั้งแรก, ย้ายเว็บไปเครื่องใหม่) และหัวข้อคำถามที่พบบ่อย
+* แก้ "Requires PHP" ใน readme.txt จาก 5.3 เป็น 7.4 ให้ตรงกับเวอร์ชันที่รองรับจริง
+* CI แบ่งเป็น Lint / Unit tests / Integration และเพิ่มการตรวจว่าโค้ดรันบน PHP 7.4 ขึ้นไปได้
 
 = 0.1.27 =
 * ปรับ "Tested up to" เป็น WordPress 7.1.2 (แก้คำเตือน "ไม่ได้ถูกทดสอบกับเวิร์ดเพรสรุ่นปัจจุบัน")
