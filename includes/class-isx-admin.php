@@ -138,18 +138,33 @@ class ISX_Admin {
 		return $schedules;
 	}
 
+	/**
+	 * The capability a screen/action really needs.
+	 *
+	 * On multisite, 'export'/'import'/'manage_options' belong to every
+	 * sub-site admin, but an import writes PHP into the network-shared
+	 * plugins/themes dirs and replaces shared tables, and Reset Hub deletes
+	 * every network plugin — so everything here is super-admin only there.
+	 *
+	 * @param string $cap Capability on a single site.
+	 * @return string
+	 */
+	private static function cap( $cap ) {
+		return is_multisite() ? 'manage_network_options' : $cap;
+	}
+
 	public static function menu() {
 		add_menu_page(
 			'InsightX Backup',
 			'InsightX Backup',
-			'export',
+			self::cap( 'export' ),
 			'isx_export',
 			array( __CLASS__, 'page_export' ),
 			'dashicons-database-export',
 			76
 		);
-		add_submenu_page( 'isx_export', __( 'Export', 'insightx-backup' ), __( 'Export', 'insightx-backup' ), 'export', 'isx_export', array( __CLASS__, 'page_export' ) );
-		add_submenu_page( 'isx_export', __( 'Import', 'insightx-backup' ), __( 'Import', 'insightx-backup' ), 'import', 'isx_import', array( __CLASS__, 'page_import' ) );
+		add_submenu_page( 'isx_export', __( 'Export', 'insightx-backup' ), __( 'Export', 'insightx-backup' ), self::cap( 'export' ), 'isx_export', array( __CLASS__, 'page_export' ) );
+		add_submenu_page( 'isx_export', __( 'Import', 'insightx-backup' ), __( 'Import', 'insightx-backup' ), self::cap( 'import' ), 'isx_import', array( __CLASS__, 'page_import' ) );
 		$isx_backups_label = __( 'Backups', 'insightx-backup' );
 		$isx_backup_count  = count( ISX_Backups::all() );
 		if ( $isx_backup_count > 0 ) {
@@ -158,13 +173,13 @@ class ISX_Admin {
 				$isx_backup_count
 			);
 		}
-		add_submenu_page( 'isx_export', __( 'Backups', 'insightx-backup' ), $isx_backups_label, 'export', 'isx_backups', array( __CLASS__, 'page_backups' ) );
-		add_submenu_page( 'isx_export', __( 'Connections', 'insightx-backup' ), __( 'Connections', 'insightx-backup' ), 'export', 'isx_connections', array( __CLASS__, 'page_connections' ) );
-		add_submenu_page( 'isx_export', __( 'Storage Settings', 'insightx-backup' ), __( 'Storage Settings', 'insightx-backup' ), 'export', 'isx_settings', array( __CLASS__, 'page_settings' ) );
+		add_submenu_page( 'isx_export', __( 'Backups', 'insightx-backup' ), $isx_backups_label, self::cap( 'export' ), 'isx_backups', array( __CLASS__, 'page_backups' ) );
+		add_submenu_page( 'isx_export', __( 'Connections', 'insightx-backup' ), __( 'Connections', 'insightx-backup' ), self::cap( 'export' ), 'isx_connections', array( __CLASS__, 'page_connections' ) );
+		add_submenu_page( 'isx_export', __( 'Storage Settings', 'insightx-backup' ), __( 'Storage Settings', 'insightx-backup' ), self::cap( 'export' ), 'isx_settings', array( __CLASS__, 'page_settings' ) );
 		// Stricter cap than the rest of this plugin ('export'/'import') — these
 		// tools purge plugins/themes/media or wipe the database outright.
-		add_submenu_page( 'isx_export', __( 'Reset Hub', 'insightx-backup' ), __( 'Reset Hub', 'insightx-backup' ), 'manage_options', 'isx_reset_hub', array( __CLASS__, 'page_reset_hub' ) );
-		add_submenu_page( 'isx_export', __( 'Log', 'insightx-backup' ), __( 'Log', 'insightx-backup' ), 'export', 'isx_log', array( __CLASS__, 'page_log' ) );
+		add_submenu_page( 'isx_export', __( 'Reset Hub', 'insightx-backup' ), __( 'Reset Hub', 'insightx-backup' ), self::cap( 'manage_options' ), 'isx_reset_hub', array( __CLASS__, 'page_reset_hub' ) );
+		add_submenu_page( 'isx_export', __( 'Log', 'insightx-backup' ), __( 'Log', 'insightx-backup' ), self::cap( 'export' ), 'isx_log', array( __CLASS__, 'page_log' ) );
 	}
 
 	/**
@@ -588,6 +603,27 @@ class ISX_Admin {
 			// chunk size, or the request hit a proxy/host body-size limit.
 			ISX_Logger::log_error( 'import', __( 'No chunk data found', 'insightx-backup' ), array( 'job' => $job_id ) );
 			wp_send_json_error( array( 'message' => __( 'No chunk data found', 'insightx-backup' ) ) );
+		}
+
+		// A chunk whose response was lost (timeout, proxy reset) is retried by
+		// the browser; plain appending wrote it twice and the package then
+		// failed verification after the whole upload. With its offset known,
+		// the archive is cut back to where this chunk starts first.
+		if ( isset( $_POST['offset'] ) ) {
+			$offset = max( 0, (int) $_POST['offset'] );
+			clearstatcache( true, $job->archive() );
+			$size = is_file( $job->archive() ) ? (int) filesize( $job->archive() ) : 0;
+			if ( $size < $offset ) {
+				ISX_Logger::log_error( 'import', __( 'Uploaded chunk does not follow the previous one', 'insightx-backup' ), array( 'job' => $job->id(), 'size' => $size, 'offset' => $offset ) );
+				wp_send_json_error( array( 'message' => __( 'Part of the upload is missing — please start the import again', 'insightx-backup' ) ) );
+			}
+			if ( $size > $offset ) {
+				$fh = fopen( $job->archive(), 'c+b' );
+				if ( $fh === false || ! ftruncate( $fh, $offset ) ) {
+					wp_send_json_error( array( 'message' => __( 'Could not write the uploaded file — the server disk may be full. Please check free space and try again', 'insightx-backup' ) ) );
+				}
+				fclose( $fh );
+			}
 		}
 
 		$out = fopen( $job->archive(), 'ab' );
@@ -1179,7 +1215,12 @@ class ISX_Admin {
 		// added a loopback request and a cron tick that could do nothing but
 		// bounce off the same lock — a self-sustaining request storm competing
 		// for the very PHP workers the running step needed.
-		if ( empty( $result['done'] ) && ! self::$driving_synchronously && ! $lock_skipped ) {
+		// Waiting for a password is not "more work": only the browser can
+		// supply it (isx_import_decrypt, which resumes the poll). Scheduling
+		// another cron step + loopback here re-ran init() back-to-back forever
+		// on an abandoned prompt, pinning PHP workers and keeping the job's
+		// heartbeat alive so the stall watchdog never ended it.
+		if ( empty( $result['done'] ) && empty( $result['needs_password'] ) && ! self::$driving_synchronously && ! $lock_skipped ) {
 			self::schedule_cron( $job->id() );
 			self::spawn_loopback( $job );
 		}
@@ -1208,7 +1249,7 @@ class ISX_Admin {
 				if ( is_callable( $on_tick ) ) {
 					$on_tick( $result );
 				}
-			} while ( empty( $result['done'] ) );
+			} while ( empty( $result['done'] ) && empty( $result['needs_password'] ) );
 		} finally {
 			self::$driving_synchronously = $prev;
 		}
@@ -2099,7 +2140,7 @@ class ISX_Admin {
 			wp_send_json_success(
 				array(
 					'message' => __( 'Reset to default', 'insightx-backup' ),
-					'path'    => untrailingslashit( ISX_PATH . 'storage' ),
+					'path'    => ISX_DEFAULT_STORAGE_PATH,
 				)
 			);
 		}
@@ -2119,6 +2160,16 @@ class ISX_Admin {
 		}
 		if ( $normalized === '/' || (bool) preg_match( '/^[A-Za-z]:\/$/', $normalized ) ) {
 			wp_send_json_error( array( 'message' => __( 'The filesystem root cannot be used as the storage folder', 'insightx-backup' ) ) );
+		}
+
+		$conflict = isx_storage_path_conflict( $path );
+		if ( $conflict !== '' ) {
+			wp_send_json_error(
+				array(
+					/* translators: %s: WordPress directory */
+					'message' => sprintf( __( 'This folder would contain the WordPress directory %s — choose a dedicated folder for backups instead (e.g. wp-content/insightx-backup)', 'insightx-backup' ), $conflict ),
+				)
+			);
 		}
 
 		$parent = dirname( $path );
@@ -2438,7 +2489,7 @@ class ISX_Admin {
 	 * someone else's token.
 	 */
 	public static function ajax_reset_password_reveal() {
-		if ( ! current_user_can( 'manage_options' ) ) {
+		if ( ! current_user_can( self::cap( 'manage_options' ) ) ) {
 			wp_send_json_error( array( 'message' => __( 'Permission denied', 'insightx-backup' ) ) );
 		}
 
@@ -2503,9 +2554,18 @@ class ISX_Admin {
 		// download indistinguishable from a rejected form post in the log.
 		$action = isset( $_REQUEST['action'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['action'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
 
-		if ( ! current_user_can( $cap ) && ! current_user_can( 'manage_options' ) ) {
+		$allowed = is_multisite()
+			? current_user_can( self::cap( $cap ) )
+			: ( current_user_can( $cap ) || current_user_can( 'manage_options' ) );
+		if ( ! $allowed ) {
 			ISX_Logger::log_warn( 'system', __( 'AJAX request rejected: permission denied', 'insightx-backup' ), array( 'action' => $action, 'cap' => $cap ) );
 			self::reject( __( 'Permission denied', 'insightx-backup' ), $is_navigation );
+		}
+		// Import and Reset Hub write and delete plugin/theme code — exactly
+		// what DISALLOW_FILE_MODS exists to forbid from the dashboard.
+		if ( ( $cap === 'import' || $cap === 'manage_options' ) && defined( 'DISALLOW_FILE_MODS' ) && DISALLOW_FILE_MODS ) {
+			ISX_Logger::log_warn( 'system', __( 'AJAX request rejected: file modifications are disabled (DISALLOW_FILE_MODS)', 'insightx-backup' ), array( 'action' => $action ) );
+			self::reject( __( 'File modifications are disabled on this site (DISALLOW_FILE_MODS), so import and reset are not available', 'insightx-backup' ), $is_navigation );
 		}
 		if ( ! check_ajax_referer( self::NONCE, 'nonce', false ) ) {
 			ISX_Logger::log_warn( 'system', __( 'AJAX request rejected: invalid or expired nonce', 'insightx-backup' ), array( 'action' => $action ) );

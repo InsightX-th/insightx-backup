@@ -359,8 +359,34 @@ class ISX_Logger {
 		}
 	}
 
+	/**
+	 * Log file path, with a random per-site suffix.
+	 *
+	 * The storage dir sits under the web root and only .htaccess guards it —
+	 * which nginx never reads. A fixed name (isx-error.log) was therefore
+	 * downloadable by anyone on nginx, and the log names every backup file,
+	 * the one secret that keeps backups/*.wpress from being downloaded too.
+	 * An unguessable name gives the log the same protection the backups
+	 * themselves rely on. A log under the old fixed name is moved over once.
+	 *
+	 * @return string
+	 */
 	private static function file() {
-		return ISX_STORAGE_PATH . '/logs/isx-error.log';
+		static $file = null;
+		if ( $file !== null ) {
+			return $file;
+		}
+		$key = (string) get_option( 'isx_log_key', '' );
+		if ( ! preg_match( '/^[A-Za-z0-9]{24}$/', $key ) ) {
+			$key = wp_generate_password( 24, false, false );
+			update_option( 'isx_log_key', $key, false );
+		}
+		$dir  = ISX_STORAGE_PATH . '/logs';
+		$file = $dir . '/isx-error-' . $key . '.log';
+		if ( is_file( $dir . '/isx-error.log' ) && ! is_file( $file ) ) {
+			@rename( $dir . '/isx-error.log', $file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		}
+		return $file;
 	}
 
 	private static function ensure_dir() {

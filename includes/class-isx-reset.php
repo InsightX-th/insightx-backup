@@ -173,13 +173,18 @@ class ISX_Reset {
 			'home'             => get_option( 'home' ),
 			'admin_email'      => $preserve_email,
 			'isx_storage_path' => get_option( 'isx_storage_path' ),
+			'isx_log_key'      => get_option( 'isx_log_key' ),
+			'isx_storage_migrated' => get_option( 'isx_storage_migrated' ),
 			'isx_schedule'     => get_option( 'isx_schedule' ),
 			ISX_Destinations::OPTION_KEY => get_option( ISX_Destinations::OPTION_KEY ),
 		);
 
 		@set_time_limit( 0 );
 
-		$tables = $wpdb->get_col( "SHOW TABLES LIKE '" . $wpdb->esc_like( $wpdb->prefix ) . "%'" );
+		// ISX_Database::tables(), not SHOW TABLES LIKE 'prefix%': the latter
+		// also matched another install whose prefix starts with ours
+		// (wp_ vs wp_staging_) and dropped its tables too.
+		$tables = ISX_Database::tables();
 		foreach ( $tables as $table ) {
 			$wpdb->query( "DROP TABLE IF EXISTS `{$table}`" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- $table comes from SHOW TABLES, not user input.
 		}
@@ -194,6 +199,11 @@ class ISX_Reset {
 				update_option( $key, $value );
 			}
 		}
+
+		// populate_options() empties active_plugins, which deactivated this
+		// plugin: the follow-up isx_reset_password_reveal request then hit an
+		// unregistered AJAX action and the new admin password was never shown.
+		update_option( 'active_plugins', array( plugin_basename( ISX_FILE ) ) );
 
 		$new_password = wp_generate_password( 24 );
 		$user_id      = wp_insert_user(

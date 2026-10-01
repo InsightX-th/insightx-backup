@@ -76,7 +76,7 @@
    - งานที่ยกเลิกจะถูกปิดจริงทั้งฝั่งเซิร์ฟเวอร์ — ไฟล์ระหว่างทางถูกล้าง, ตัวขับงานเบื้องหลัง (loopback/WP-Cron) หยุดตาม, และ multipart upload ที่ค้างอยู่ใน bucket ถูกยกเลิกให้ ไม่มีอะไรเดินต่อเงียบๆ หลังปิดหน้า
    - ยกเลิก**ก่อน**ขั้น "สร้างไฟล์สำเร็จ" จะไม่ได้ไฟล์ `.wpress` เลย แต่ยกเลิก**ระหว่างอัปโหลดขึ้น Storage** ไฟล์จะอยู่ในเมนู "ข้อมูลสำรอง" เรียบร้อยแล้ว (ระบบเก็บสำเนาลงเครื่องให้ก่อนเริ่มอัปโหลดเสมอ) — ดาวน์โหลดหรือส่งขึ้น Storage ใหม่ทีหลังได้
 6. ไฟล์ที่ export เสร็จจะถูกเก็บสำเนาไว้ในเมนู "ข้อมูลสำรอง" เสมอ ไม่ว่าจะเลือกปลายทางไหน — ตั้งชื่อไฟล์รูปแบบ `{โดเมนเว็บ}-{วันเดือนปี}-{รหัสสุ่ม 16 ตัว}.wpress` เช่น `skymaster.co.th-23072026-a1b2c3d4e5f6g7h8.wpress` (สุ่มยาว เพราะบนเซิร์ฟเวอร์ nginx ชื่อไฟล์คือสิ่งเดียวที่กันไม่ให้เข้าถึงไฟล์ backup ตรงจาก URL ได้ — ดูหัวข้อความปลอดภัย)
-7. ลิงก์ดาวน์โหลด backup ชี้**ตรงไปที่ไฟล์เลย** (`storage/backups/...`) — เว็บเซิร์ฟเวอร์ส่งไฟล์เอง ไม่ผ่าน PHP อีกต่อไป จึงไม่มี PHP-FPM timeout / memory limit / proxy edge timeout มาตัดกลางทางได้ และได้ Range/resume มาฟรีจาก web server เอง (แนวทางเดียวกับที่ All-in-One WP Migration ใช้) — ใช้ได้เฉพาะตอนโฟลเดอร์เก็บ backup อยู่ใต้ web root เท่านั้น ถ้าตั้ง custom storage path ไว้นอก web root จะ fallback กลับไปสตรีมผ่าน `admin-ajax.php` แบบเดิม (ยังรองรับ Range เหมือนกัน แต่ผ่าน PHP)
+7. ลิงก์ดาวน์โหลด backup ชี้**ตรงไปที่ไฟล์เลย** (`wp-content/insightx-backup/backups/...`) — เว็บเซิร์ฟเวอร์ส่งไฟล์เอง ไม่ผ่าน PHP อีกต่อไป จึงไม่มี PHP-FPM timeout / memory limit / proxy edge timeout มาตัดกลางทางได้ และได้ Range/resume มาฟรีจาก web server เอง (แนวทางเดียวกับที่ All-in-One WP Migration ใช้) — ใช้ได้เฉพาะตอนโฟลเดอร์เก็บ backup อยู่ใต้ web root เท่านั้น ถ้าตั้ง custom storage path ไว้นอก web root จะ fallback กลับไปสตรีมผ่าน `admin-ajax.php` แบบเดิม (ยังรองรับ Range เหมือนกัน แต่ผ่าน PHP)
 
 ### นำเข้าเว็บไซต์ (เมนู "นำเข้า")
 
@@ -193,7 +193,7 @@
 ## WP-CLI
 
 ```bash
-# ส่งออก ดาวน์โหลดไว้ในเครื่อง (storage/backups/)
+# ส่งออก ดาวน์โหลดไว้ในเครื่อง (wp-content/insightx-backup/backups/)
 wp isx export
 
 # ส่งออกแล้วอัปขึ้น Storage provider ที่ตั้งค่าไว้แล้ว (ดู slug จาก wp isx providers)
@@ -265,7 +265,7 @@ storage/                       job scratch data + backups/ (gitignored, สร�
 ## ความปลอดภัย
 
 - โฟลเดอร์ `storage/` ระดับบนสุด (job scratch data ระหว่าง export/import + logs) ถูกกัน HTTP access โดยตรงด้วย `.htaccess` (`Require all denied`, รองรับทั้ง Apache 2.4 และ 2.2 ผ่าน `<IfModule>`) + `index.php` ว่างเปล่า
-- **`storage/backups/` (ไฟล์ `.wpress` ที่เก็บถาวร) ตั้งใจ _ไม่_ deny-all** — อนุญาตให้เข้าถึงไฟล์ `.wpress` ได้ตรงๆ (แค่ปิด directory listing) เพื่อให้ปุ่มดาวน์โหลดชี้ตรงไปที่ไฟล์แล้วให้เว็บเซิร์ฟเวอร์ส่งเองได้เลย ไม่ผ่าน PHP — แนวทางเดียวกับ All-in-One WP Migration ผลคือ **ดาวน์โหลดไม่มีการเช็ค nonce/capability ใดๆ อีกต่อไป** ความปลอดภัยพึ่งชื่อไฟล์สุ่ม 16 ตัวอักษรล้วนๆ (`ISX_Backups::store()`) ถ้าใครเดา/หลุด URL ไฟล์ได้ก็โหลดได้แม้ไม่ได้ login — บนเซิร์ฟเวอร์ nginx (ที่ไม่อ่าน `.htaccess` เลย) ชื่อไฟล์สุ่มนี้คือชั้นป้องกันจริงชั้นเดียว
+- **`wp-content/insightx-backup/backups/` (ไฟล์ `.wpress` ที่เก็บถาวร) ตั้งใจ _ไม่_ deny-all** — อนุญาตให้เข้าถึงไฟล์ `.wpress` ได้ตรงๆ (แค่ปิด directory listing) เพื่อให้ปุ่มดาวน์โหลดชี้ตรงไปที่ไฟล์แล้วให้เว็บเซิร์ฟเวอร์ส่งเองได้เลย ไม่ผ่าน PHP — แนวทางเดียวกับ All-in-One WP Migration ผลคือ **ดาวน์โหลดไม่มีการเช็ค nonce/capability ใดๆ อีกต่อไป** ความปลอดภัยพึ่งชื่อไฟล์สุ่ม 16 ตัวอักษรล้วนๆ (`ISX_Backups::store()`) ถ้าใครเดา/หลุด URL ไฟล์ได้ก็โหลดได้แม้ไม่ได้ login — บนเซิร์ฟเวอร์ nginx (ที่ไม่อ่าน `.htaccess` เลย) ชื่อไฟล์สุ่มนี้คือชั้นป้องกันจริงชั้นเดียว
 - ตั้ง custom storage path ไว้**นอก web root** จะไม่มี URL ตรงให้ใช้ (`ISX_Backups::is_web_reachable()` เป็น false) ระบบจะ fallback กลับไปดาวน์โหลดผ่าน `admin-ajax.php` แบบสตรีมผ่าน PHP อัตโนมัติ — เส้นทางนี้ยังเช็ค nonce/capability ตามปกติ
 - ตั้ง custom storage path แล้วเซิร์ฟเวอร์ใช้โฟลเดอร์นั้นไม่ได้ (ไม่มีอยู่จริง/เขียนไม่ได้) จะไม่ลบค่าที่ตั้งไว้ทิ้งเงียบๆ — ระบบ fallback ไปใช้โฟลเดอร์เริ่มต้นชั่วคราวพร้อมขึ้น admin notice เตือนในหน้า wp-admin แทน กันปัญหางานที่กำลังรันอยู่หายไปกลางทางเพราะ path เปลี่ยนโดยไม่รู้ตัว
 - แต่ละ export/import job มี secret แยกต่อ job เก็บบนดิสก์ ใช้ยืนยันตัวตนแทน WP session ระหว่าง poll (เพราะ import เขียนทับ `wp_users`/`wp_options` กลางทาง ทำให้ session เดิมหลุด) — endpoint poll (`isx_run`) ลงทะเบียนทั้งแบบ `wp_ajax_` และ `wp_ajax_nopriv_` เพื่อให้ยัง poll ต่อได้แม้ WP มองว่า "ไม่ login" แล้ว โดยที่ยังปลอดภัยเพราะเช็ค secret เท่านั้น ไม่เช็ค capability ใดๆ ที่ endpoint นี้

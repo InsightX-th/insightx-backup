@@ -434,7 +434,7 @@ class ISX_Archive {
 			}
 			$header_json = fread( $handle, $len );
 			$header      = json_decode( $header_json, true );
-			if ( ! is_array( $header ) || ! isset( $header['s'] ) ) {
+			if ( ! self::valid_header( $header ) ) {
 				break;
 			}
 
@@ -521,7 +521,7 @@ class ISX_Archive {
 				break;
 			}
 			$header = json_decode( fread( $handle, $len ), true );
-			if ( ! is_array( $header ) || ! isset( $header['s'] ) ) {
+			if ( ! self::valid_header( $header ) ) {
 				$done = true;
 				break;
 			}
@@ -595,7 +595,7 @@ class ISX_Archive {
 			}
 
 			$header = json_decode( fread( $handle, $unpacked[1] ), true );
-			if ( ! is_array( $header ) || ! isset( $header['s'] ) ) {
+			if ( ! self::valid_header( $header ) ) {
 				fclose( $handle );
 				return $fail( $offset, $entries, __( 'The package file is corrupted (cannot read the file list inside)', 'insightx-backup' ) );
 			}
@@ -693,7 +693,26 @@ class ISX_Archive {
 	 * @param string $name
 	 * @return string
 	 */
-	private static function sanitize_relative( $name ) {
+	/**
+	 * Whether a decoded entry header is usable.
+	 *
+	 * The size must be a non-negative integer: every reader seeks to
+	 * start + size after the entry, so a crafted negative size sent the
+	 * stream backwards onto the same header again — an endless loop on
+	 * import, verify and listing alike.
+	 *
+	 * @param mixed $header
+	 * @return bool
+	 */
+	public static function valid_header( $header ) {
+		return is_array( $header )
+			&& isset( $header['s'], $header['p'] )
+			&& is_string( $header['p'] )
+			&& ( is_int( $header['s'] ) || ( is_string( $header['s'] ) && ctype_digit( $header['s'] ) ) )
+			&& (int) $header['s'] >= 0;
+	}
+
+	public static function sanitize_relative( $name ) {
 		$name = str_replace( '\\', '/', (string) $name );
 		$name = ltrim( $name, '/' );
 		$parts = array();

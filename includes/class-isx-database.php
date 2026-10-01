@@ -157,14 +157,54 @@ class ISX_Database {
 		if ( ! is_array( $all ) ) {
 			return array();
 		}
-		$prefix = $wpdb->prefix;
-		$tables = array();
+		$prefix  = $wpdb->prefix;
+		$foreign = self::foreign_prefixes( $all, $prefix );
+		$tables  = array();
 		foreach ( $all as $table ) {
-			if ( strpos( $table, $prefix ) === 0 ) {
-				$tables[] = $table;
+			if ( strpos( $table, $prefix ) !== 0 ) {
+				continue;
 			}
+			foreach ( $foreign as $other ) {
+				if ( strpos( $table, $other ) === 0 ) {
+					continue 2;
+				}
+			}
+			$tables[] = $table;
 		}
 		return $tables;
+	}
+
+	/**
+	 * Prefixes of OTHER WordPress installs sharing this database whose prefix
+	 * merely starts with ours ("wp_staging_" next to "wp_").
+	 *
+	 * A plain "starts with wp_" test claimed their tables as this site's, so
+	 * an export packed them, an import dropped them as "extra", and Reset Hub
+	 * wiped them. An install is recognised by having its own options AND posts
+	 * tables. Multisite sub-sites (wp_2_…) are part of this network, not
+	 * foreign, and stay included.
+	 *
+	 * @param string[] $all    Every table in the database.
+	 * @param string   $prefix This site's table prefix.
+	 * @return string[]
+	 */
+	public static function foreign_prefixes( array $all, $prefix ) {
+		$lookup  = array_flip( $all );
+		$foreign = array();
+		foreach ( $all as $table ) {
+			if ( substr( $table, -7 ) !== 'options' || strpos( $table, $prefix ) !== 0 ) {
+				continue;
+			}
+			$other = substr( $table, 0, -7 );
+			if ( $other === $prefix || ! isset( $lookup[ $other . 'posts' ] ) ) {
+				continue;
+			}
+			if ( is_multisite() && preg_match( '/^' . preg_quote( $prefix, '/' ) . '\d+_$/', $other ) ) {
+				continue;
+			}
+			$foreign[] = $other;
+		}
+		return $foreign;
 	}
 
 	/**

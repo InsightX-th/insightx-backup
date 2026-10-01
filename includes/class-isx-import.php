@@ -459,9 +459,10 @@ class ISX_Import {
 
 		$imported_tables = (array) $job->get( 'imported_tables', array() );
 
-		$deadline  = self::deadline();
-		$processed = 0;
-		$done      = false;
+		$deadline        = self::deadline();
+		$processed       = 0;
+		$done            = false;
+		$touched_options = false;
 		while ( true ) {
 			$pos  = ftell( $fh );
 			$line = fgets( $fh );
@@ -474,7 +475,8 @@ class ISX_Import {
 			// but never mid-options (see the atomic-options note above): the file
 			// must be left at a table boundary the next poll can safely resume
 			// from, and a cancel is no reason to leave wp_options half-written.
-			$is_options = ISX_Database::line_table( $line ) === $options_table;
+			$is_options      = ISX_Database::line_table( $line ) === $options_table;
+			$touched_options = $touched_options || $is_options;
 			if ( ! $is_options && ( $processed >= self::DB_LINES_PER_BATCH || microtime( true ) >= $deadline || $job->is_cancel_requested() ) ) {
 				fseek( $fh, $pos );
 				break;
@@ -492,6 +494,10 @@ class ISX_Import {
 		}
 		$cursor['db_offset'] = ftell( $fh );
 		fclose( $fh );
+
+		if ( $touched_options ) {
+			self::reassert_locator_options( $job );
+		}
 
 		$job->set( 'imported_tables', $imported_tables );
 		$job->set( 'cursor', $cursor );
@@ -957,6 +963,48 @@ class ISX_Import {
 	 * @param ISX_Job $job
 	 * @return void
 	 */
+	/**
+	 * Options this import itself needs to keep finding its own job.
+	 *
+	 * The package's wp_options carries the SOURCE site's isx_storage_path.
+	 * Written mid-import, the very next request resolves ISX_STORAGE_PATH to
+	 * the source's folder (or the default) and no longer finds this job —
+	 * with wp-content already cleaned and the database half imported. The
+	 * full preserved set only comes back in finalize(), which that job never
+	 * reaches, so these few are put back right after each batch that touched
+	 * wp_options.
+	 *
+	 * @return string[]
+	 */
+	private static function locator_options() {
+		return array( 'isx_storage_path', 'isx_log_key', 'isx_storage_migrated' );
+	}
+
+	/**
+	 * Put the target's locator options back (or remove them when the target
+	 * never had them) from the pre-import snapshot.
+	 *
+	 * @param ISX_Job $job
+	 * @return void
+	 */
+	private static function reassert_locator_options( ISX_Job $job ) {
+		$snapshot = json_decode( (string) @file_get_contents( $job->preserved_options() ), true ); // phpcs:ignore
+		if ( ! is_array( $snapshot ) ) {
+			return;
+		}
+		global $wpdb;
+		foreach ( self::locator_options() as $name ) {
+			if ( isset( $snapshot[ $name ] ) ) {
+				$value = base64_decode( (string) $snapshot[ $name ] ); // phpcs:ignore
+				if ( $value !== false ) {
+					self::write_option( $name, $value );
+				}
+			} else {
+				$wpdb->delete( $wpdb->options, array( 'option_name' => $name ) );
+			}
+		}
+	}
+
 	private static function restore_preserved_options( ISX_Job $job ) {
 		$path = $job->preserved_options();
 		if ( ! is_file( $path ) ) {

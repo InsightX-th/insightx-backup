@@ -20,6 +20,11 @@ class ISX_Backups {
 		$dir = ISX_STORAGE_PATH . '/backups';
 		if ( ! is_dir( $dir ) ) {
 			wp_mkdir_p( $dir );
+		}
+		// Checked every time, not only on creation: a folder made by someone
+		// else (the storage migration, a restore, an admin) must not be left
+		// listable on servers that ignore .htaccess.
+		if ( ! is_file( $dir . '/index.php' ) ) {
 			file_put_contents( $dir . '/index.php', "<?php // Silence is golden.\n" );
 		}
 		// This folder is deliberately *not* deny-all (unlike the rest of
@@ -201,6 +206,12 @@ class ISX_Backups {
 		$path = self::path( $name );
 		if ( $path === null ) {
 			return false;
+		}
+		// The decompressed scratch copy the "View contents" screen makes of a
+		// gzipped backup is a full, readable copy of the site in this
+		// web-served folder — it goes with its backup.
+		if ( is_file( $path . '.peek' ) ) {
+			@unlink( $path . '.peek' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
 		}
 		return @unlink( $path );
 	}

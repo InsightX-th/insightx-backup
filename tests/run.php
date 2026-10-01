@@ -82,6 +82,7 @@ class ISX_Database {
 $PLUGIN = dirname( __DIR__ );
 require $PLUGIN . '/includes/class-isx-archive.php';
 require $PLUGIN . '/includes/class-isx-files.php';
+require $PLUGIN . '/includes/class-isx-serialize.php';
 require $PLUGIN . '/includes/class-isx-import.php';
 
 $PASS = 0; $FAIL = 0; $group = '';
@@ -342,6 +343,345 @@ $fin->invoke( null, $job );
 t( 'E2 no drop_extra_tables', count( ISX_Database::$calls ) === 0 );
 t( 'E2 no reassert (target theme kept)', $GLOBALS['isx_opts']['stylesheet'] === 'target-theme' );
 t( 'E2 sweep still ran', ! file_exists( "$content/themes/fruit3/leftover.js" ) );
+
+// =====================================================================
+group( 'SECURITY 1: restore_stream() refuses traversal paths (zip-slip)' );
+// =====================================================================
+$evil = $JOB_DIR . '/evil.wpress';
+@unlink( $evil );
+ISX_Archive::init( $evil );
+$evil_names = array(
+	'wpcontent/../zipslip-wp-config.php',
+	'wpcontent/uploads/../../zipslip-outside.php',
+	'wpcontent/plugins/./insightx-backup/insightx-backup.php',
+	'wpcontent/uploads//double.php',
+	'wpcontent/uploads\\..\\..\\zipslip-backslash.php',
+	'wpcontent/uploads/ok.txt',
+);
+// ISX_Archive's writer sanitizes names itself, so build the entries with
+// placeholders and then patch the raw headers the way an attacker's own
+// tool would: new JSON name + the matching 4-byte length prefix.
+foreach ( $evil_names as $i => $name ) {
+	ISX_Archive::add_data( $evil, "wpcontent/placeholder$i.txt", '<?php // evil' );
+}
+ISX_Archive::finish( $evil );
+$raw = file_get_contents( $evil );
+foreach ( $evil_names as $i => $name ) {
+	$needle = '"p":"wpcontent\/placeholder' . $i . '.txt"';
+	$pos    = strpos( $raw, $needle );
+	$start  = strrpos( substr( $raw, 0, $pos ), '{' );
+	$len    = unpack( 'V', substr( $raw, $start - 4, 4 ) )[1];
+	$json   = str_replace( $needle, '"p":' . json_encode( $name ), substr( $raw, $start, $len ) );
+	$raw    = substr( $raw, 0, $start - 4 ) . pack( 'V', strlen( $json ) ) . $json . substr( $raw, $start + $len );
+}
+file_put_contents( $evil, $raw );
+$results = array();
+ISX_Archive::each( $evil, function ( $h, $fh ) use ( &$results ) {
+	$results[ $h['p'] ] = ISX_Files::restore_stream( $h, $fh );
+	return true;
+} );
+t( 'Z1 "../" out of wp-content refused', $results['wpcontent/../zipslip-wp-config.php'] === null && ! file_exists( dirname( WP_CONTENT_DIR ) . '/zipslip-wp-config.php' ) );
+t( 'Z2 deeper "../../" refused', $results['wpcontent/uploads/../../zipslip-outside.php'] === null && ! file_exists( dirname( WP_CONTENT_DIR ) . '/zipslip-outside.php' ) );
+t( 'Z3 "./" cannot sneak past self-protection', $results['wpcontent/plugins/./insightx-backup/insightx-backup.php'] === null );
+t( 'Z4 empty segment refused', $results['wpcontent/uploads//double.php'] === null );
+t( 'Z5 backslash traversal refused', $results['wpcontent/uploads\\..\\..\\zipslip-backslash.php'] === null && ! file_exists( dirname( WP_CONTENT_DIR ) . '/zipslip-backslash.php' ) );
+t( 'Z6 a normal entry still restores', $results['wpcontent/uploads/ok.txt'] === true && is_file( WP_CONTENT_DIR . '/uploads/ok.txt' ) );
+
+// =====================================================================
+group( 'SECURITY 2: the log file name is not guessable (nginx ignores .htaccess)' );
+// =====================================================================
+// The suite stubs ISX_Logger, so the real class runs in its own process.
+$LOG_DIR = sys_get_temp_dir() . '/isx_logtest_' . getmypid();
+@mkdir( "$LOG_DIR/logs", 0777, true );
+file_put_contents( "$LOG_DIR/logs/isx-error.log", "old line\n" );
+$snippet = "$LOG_DIR/run.php";
+file_put_contents( $snippet, '<?php
+define( "ABSPATH", "/" );
+define( "ISX_STORAGE_PATH", ' . var_export( $LOG_DIR, true ) . ' );
+$GLOBALS["o"] = array();
+function get_option( $k, $d = false ) { return isset( $GLOBALS["o"][ $k ] ) ? $GLOBALS["o"][ $k ] : $d; }
+function update_option( $k, $v ) { $GLOBALS["o"][ $k ] = $v; return true; }
+function wp_generate_password( $n ) { return substr( bin2hex( random_bytes( $n ) ), 0, $n ); }
+function wp_mkdir_p( $d ) { return is_dir( $d ) || mkdir( $d, 0777, true ); }
+function isx_htaccess_deny_all() { return "deny\n"; }
+function wp_json_encode( $v ) { return json_encode( $v ); }
+function __( $t ) { return $t; }
+require ' . var_export( $PLUGIN . '/includes/class-isx-logger.php', true ) . ';
+ISX_Logger::log_error( "export", "uploaded site-30092026-AbC.wpress" );
+' );
+exec( escapeshellarg( PHP_BINARY ) . ' ' . escapeshellarg( $snippet ), $out, $code );
+$logs = glob( "$LOG_DIR/logs/isx-error*.log" );
+t( 'L1 log written under a random 24-char name', $code === 0 && count( $logs ) === 1 && preg_match( '#/isx-error-[A-Za-z0-9]{24}\.log$#', $logs[0] ), json_encode( $logs ) );
+t( 'L2 the old fixed-name log is moved, not left readable', ! file_exists( "$LOG_DIR/logs/isx-error.log" ) && strpos( (string) @file_get_contents( $logs[0] ), 'old line' ) === 0 );
+array_map( 'unlink', glob( "$LOG_DIR/logs/{,.}*", GLOB_BRACE ) ?: array() );
+
+// =====================================================================
+group( 'SECURITY 3: capability gate (multisite super admin, DISALLOW_FILE_MODS)' );
+// =====================================================================
+// Runs ISX_Admin::guard() in its own process: every scenario gets fresh
+// is_multisite()/capability/constant stubs. Prints "allowed" or the reject reason.
+function isx_guard_case( $plugin, $cap, array $user_caps, $multisite, $file_mods_off ) {
+	$code = '<?php
+define( "ABSPATH", "/" );' . ( $file_mods_off ? ' define( "DISALLOW_FILE_MODS", true );' : '' ) . '
+class ISX_Logger { public static function __callStatic( $n, $a ) {} }
+class ISX_Reject extends Exception {}
+function is_multisite() { return ' . var_export( $multisite, true ) . '; }
+function current_user_can( $c ) { return in_array( $c, ' . var_export( $user_caps, true ) . ', true ); }
+function check_ajax_referer() { return true; }
+function sanitize_text_field( $s ) { return $s; }
+function wp_unslash( $s ) { return $s; }
+function __( $t ) { return $t; }
+function wp_send_json_error( $d ) { throw new ISX_Reject( is_array( $d ) ? $d["message"] : (string) $d ); }
+function wp_die( $m = "" ) { throw new ISX_Reject( (string) $m ); }
+function status_header() {}
+function nocache_headers() {}
+function add_action() {} function add_filter() {}
+require ' . var_export( $plugin . '/includes/class-isx-admin.php', true ) . ';
+$m = new ReflectionMethod( "ISX_Admin", "guard" );
+if ( PHP_VERSION_ID < 80100 ) { $m->setAccessible( true ); }
+try { $m->invoke( null, ' . var_export( $cap, true ) . ' ); echo "allowed"; } catch ( ISX_Reject $e ) { echo "rejected: " . $e->getMessage(); }
+';
+	$f = tempnam( sys_get_temp_dir(), 'isxg' );
+	file_put_contents( $f, $code );
+	$out = shell_exec( escapeshellarg( PHP_BINARY ) . ' ' . escapeshellarg( $f ) . ' 2>&1' );
+	unlink( $f );
+	return trim( (string) $out );
+}
+$admin_caps = array( 'export', 'import', 'manage_options' );
+t( 'G1 single site: admin may import', isx_guard_case( $PLUGIN, 'import', $admin_caps, false, false ) === 'allowed' );
+$r = isx_guard_case( $PLUGIN, 'import', $admin_caps, true, false );
+t( 'G2 multisite: sub-site admin may NOT import', strpos( $r, 'rejected' ) === 0, $r );
+$r = isx_guard_case( $PLUGIN, 'manage_options', $admin_caps, true, false );
+t( 'G3 multisite: sub-site admin may NOT use Reset Hub', strpos( $r, 'rejected' ) === 0, $r );
+t( 'G4 multisite: super admin may', isx_guard_case( $PLUGIN, 'import', array_merge( $admin_caps, array( 'manage_network_options' ) ), true, false ) === 'allowed' );
+$r = isx_guard_case( $PLUGIN, 'import', $admin_caps, false, true );
+t( 'G5 DISALLOW_FILE_MODS blocks import', strpos( $r, 'rejected' ) === 0 && strpos( $r, 'DISALLOW_FILE_MODS' ) !== false, $r );
+t( 'G6 DISALLOW_FILE_MODS still allows export', isx_guard_case( $PLUGIN, 'export', $admin_caps, false, true ) === 'allowed' );
+t( 'G7 no capability → rejected', strpos( isx_guard_case( $PLUGIN, 'export', array(), false, false ), 'rejected' ) === 0 );
+
+// =====================================================================
+group( 'B5: an import keeps finding its own job after wp_options is replaced' );
+// =====================================================================
+class ISX_Test_Options_DB {
+	public $options = 'wp_options';
+	public $rows    = array();
+	public function prepare( $q ) { $a = func_get_args(); array_shift( $a ); return vsprintf( str_replace( '%s', "'%s'", $q ), $a ); }
+	public function get_var( $q ) { preg_match( "/= '([^']+)'/", $q, $m ); return isset( $this->rows[ $m[1] ] ) ? 1 : 0; }
+	public function update( $t, $d, $w ) { $this->rows[ $w['option_name'] ] = $d['option_value']; }
+	public function insert( $t, $d ) { $this->rows[ $d['option_name'] ] = $d['option_value']; }
+	public function delete( $t, $w ) { unset( $this->rows[ $w['option_name'] ] ); }
+}
+$GLOBALS['wpdb'] = new ISX_Test_Options_DB();
+// State right after the package's wp_options landed: the SOURCE's values.
+$GLOBALS['wpdb']->rows = array( 'isx_storage_path' => '/source/site/storage', 'isx_log_key' => 'SOURCEKEY', 'blogname' => 'Source' );
+// The target's own pre-import snapshot: custom storage path, no log key yet.
+file_put_contents( ( new ISX_Job() )->preserved_options(), json_encode( array( 'isx_storage_path' => base64_encode( '/home/u/isx-storage' ), 'isx_foo' => base64_encode( 'x' ) ) ) );
+$m = new ReflectionMethod( 'ISX_Import', 'reassert_locator_options' );
+if ( PHP_VERSION_ID < 80100 ) {
+	$m->setAccessible( true );
+}
+$m->invoke( null, new ISX_Job() );
+$rows = $GLOBALS['wpdb']->rows;
+t( 'B5a target storage path put back immediately', $rows['isx_storage_path'] === '/home/u/isx-storage' );
+t( 'B5b a locator option the target never had is removed', ! isset( $rows['isx_log_key'] ) );
+t( 'B5c everything else in wp_options is left to the import', $rows['blogname'] === 'Source' && ! isset( $rows['isx_foo'] ) );
+@unlink( ( new ISX_Job() )->preserved_options() );
+unset( $GLOBALS['wpdb'] );
+
+// =====================================================================
+group( 'B6: tables of another install sharing the DB are never ours' );
+// =====================================================================
+function isx_foreign_case( $plugin, array $tables, $multisite ) {
+	$code = '<?php
+define( "ABSPATH", "/" );
+function is_multisite() { return ' . var_export( $multisite, true ) . '; }
+function __( $t ) { return $t; }
+class WPDB_T { public $prefix = "wp_"; public function get_col() { return ' . var_export( $tables, true ) . '; } }
+$GLOBALS["wpdb"] = new WPDB_T();
+require ' . var_export( $plugin . '/includes/class-isx-database.php', true ) . ';
+echo json_encode( ISX_Database::tables() );
+';
+	$f = tempnam( sys_get_temp_dir(), 'isxd' );
+	file_put_contents( $f, $code );
+	$out = shell_exec( escapeshellarg( PHP_BINARY ) . ' ' . escapeshellarg( $f ) . ' 2>&1' );
+	unlink( $f );
+	return json_decode( (string) $out, true );
+}
+$db = array( 'wp_options', 'wp_posts', 'wp_users', 'wp_woocommerce_sessions', 'wp_staging_options', 'wp_staging_posts', 'wp_staging_users', 'wp_2_options', 'wp_2_posts', 'other_options' );
+$got = isx_foreign_case( $PLUGIN, $db, false );
+t( 'T1 single site: other installs (wp_staging_, wp_2_) excluded, own plugin tables kept', $got === array( 'wp_options', 'wp_posts', 'wp_users', 'wp_woocommerce_sessions' ), json_encode( $got ) );
+$got = isx_foreign_case( $PLUGIN, $db, true );
+t( 'T2 multisite: wp_2_ sub-site tables stay part of the network', is_array( $got ) && in_array( 'wp_2_options', $got, true ) && ! in_array( 'wp_staging_options', $got, true ) );
+$got = isx_foreign_case( $PLUGIN, array( 'wp_options', 'wp_posts', 'wp_optionsbackup' ), false );
+t( 'T3 a lone "<x>options" without its posts table is not an install', is_array( $got ) && in_array( 'wp_optionsbackup', $got, true ) );
+
+// =====================================================================
+group( 'B7: a job waiting for a password is not re-driven forever' );
+// =====================================================================
+function isx_password_case( $plugin, $mode ) {
+	$code = '<?php
+define( "ABSPATH", "/" );
+function __( $t ) { return $t; }
+function size_format( $b ) { return $b . " B"; }
+function wp_raise_memory_limit() {}
+function apply_filters( $t, $v ) { return $v; }
+function wp_convert_hr_to_bytes( $v ) { return 268435456; }
+function add_action() {} function add_filter() {}
+function wp_next_scheduled() { return false; }
+function wp_schedule_single_event() { echo "SCHEDULED;"; }
+function wp_remote_post() { echo "LOOPBACK;"; }
+class ISX_Logger { public static function __callStatic( $n, $a ) {} }
+class ISX_Export { public static function run( $j ) { return array( "done" => true ); } }
+class ISX_Import { public static $calls = 0; public static function run( $j ) { self::$calls++; return array( "progress" => 0, "done" => false, "needs_password" => true, "message" => "pw" ); } }
+class ISX_Job {
+	private $s = array( "type" => "import", "step" => "init" );
+	public function with_lock( $cb ) { return $cb( $this ); }
+	public function get( $k, $d = null ) { return isset( $this->s[ $k ] ) ? $this->s[ $k ] : $d; }
+	public function set( $k, $v ) { $this->s[ $k ] = $v; return $this; }
+	public function save() { return true; }
+	public function id() { return "isx_test"; }
+	public function dir() { return sys_get_temp_dir(); }
+	public function is_cancel_requested() { return false; }
+}
+require ' . var_export( $plugin . '/includes/class-isx-admin.php', true ) . ';
+if ( ' . var_export( $mode, true ) . ' === "sync" ) {
+	ISX_Admin::run_job_to_completion( new ISX_Job() );
+	echo "RETURNED after " . ISX_Import::$calls . " step(s)";
+} else {
+	$m = new ReflectionMethod( "ISX_Admin", "run_step" );
+	if ( PHP_VERSION_ID < 80100 ) { $m->setAccessible( true ); }
+	$m->invoke( null, new ISX_Job() );
+	echo "STEP DONE";
+}
+';
+	$f = tempnam( sys_get_temp_dir(), 'isxp' );
+	file_put_contents( $f, $code );
+	// perl alarm: an infinite loop must fail the test, not hang the suite.
+	$out = shell_exec( 'perl -e ' . escapeshellarg( 'alarm 10; exec @ARGV' ) . ' ' . escapeshellarg( PHP_BINARY ) . ' ' . escapeshellarg( $f ) . ' 2>&1' );
+	unlink( $f );
+	return trim( (string) $out );
+}
+$r = isx_password_case( $PLUGIN, 'sync' );
+t( 'P1 WP-CLI/synchronous driver stops at the password prompt (no infinite loop)', $r === 'RETURNED after 1 step(s)', $r );
+$r = isx_password_case( $PLUGIN, 'async' );
+t( 'P2 no cron event or loopback is chained while waiting for the password', $r === 'STEP DONE', $r );
+
+// =====================================================================
+group( 'B9: the storage folder can never swallow a WordPress directory' );
+// =====================================================================
+require_once $PLUGIN . '/includes/functions-isx-storage.php';
+$wc = untrailingslashit( WP_CONTENT_DIR );
+foreach ( array( ABSPATH, $wc, "$wc/", "$wc/plugins", "$wc/uploads", "$wc/themes", dirname( ABSPATH ), '/', ISX_PATH ) as $bad ) {
+	t( 'S9 refused: ' . str_replace( sys_get_temp_dir(), '<tmp>', $bad ), isx_storage_path_conflict( $bad ) !== '' );
+}
+foreach ( array( "$wc/insightx-backup", "$wc/uploads/isx-backups", '/srv/isx-backups', ISX_PATH . '/storage' ) as $ok ) {
+	t( 'S9 allowed: ' . str_replace( sys_get_temp_dir(), '<tmp>', $ok ), isx_storage_path_conflict( $ok ) === '' );
+}
+
+// =====================================================================
+group( 'B10: import rewrites URLs inside stdClass, never wakes other classes' );
+// =====================================================================
+if ( ! function_exists( 'is_serialized' ) ) {
+	function is_serialized( $data ) { return is_string( $data ) && ( $data === 'b:0;' || @unserialize( $data, array( 'allowed_classes' => false ) ) !== false ); }
+}
+require_once $PLUGIN . '/includes/class-isx-serialize.php';
+class ISX_Test_Wakeup { public $u; public function __wakeup() { $GLOBALS['isx_woke'] = true; } }
+$GLOBALS['isx_woke'] = false;
+$o = new stdClass();
+$o->url = 'https://old.example.com/a.jpg';
+$out = ISX_Serialize::replace( serialize( array( 'data' => $o ) ), 'https://old.example.com', 'https://new.example.com' );
+$un  = @unserialize( $out, array( 'allowed_classes' => array( 'stdClass' ) ) );
+t( 'O1 URL inside a serialized stdClass is rewritten', is_array( $un ) && $un['data']->url === 'https://new.example.com/a.jpg', $out );
+$gadget = 'O:15:"ISX_Test_Wakeup":1:{s:1:"u";s:23:"https://old.example.com";}';
+$out    = ISX_Serialize::replace( $gadget, 'https://old.example.com', 'https://new.example.com' );
+t( 'O2 other classes are never instantiated and come back byte-identical', $GLOBALS['isx_woke'] === false && $out === $gadget, $out );
+
+// =====================================================================
+group( 'URL replacement stops at a host/path boundary' );
+// =====================================================================
+$map = array( 'https://old.com' => 'https://new.com', '/var/www/old' => '/srv/new' );
+$in  = 'a https://old.com/x b https://old.com c https://old.com.au d https://old.community e https://old.com:8080/p f https://old.com-shop g "https://old.com" h /var/www/old/wp i /var/www/old2';
+$out = ISX_Serialize::replace_bounded( $in, $map );
+t( 'U1 own URLs replaced (path, end, port, quotes)', strpos( $out, 'a https://new.com/x b https://new.com c' ) === 0 && strpos( $out, 'https://new.com:8080/p' ) !== false && strpos( $out, '"https://new.com"' ) !== false && strpos( $out, '/srv/new/wp' ) !== false, $out );
+t( 'U2 other domains/paths that merely start the same are left alone', strpos( $out, 'https://old.com.au' ) !== false && strpos( $out, 'https://old.community' ) !== false && strpos( $out, 'https://old.com-shop' ) !== false && strpos( $out, '/var/www/old2' ) !== false, $out );
+t( 'U3 longest key still wins (strtr semantics)', ISX_Serialize::replace_bounded( 'https://old.com/blog/x', array( 'https://old.com' => 'A', 'https://old.com/blog' => 'B' ) ) === 'B/x' );
+t( 'U4 sentence punctuation after a URL is a boundary', ISX_Serialize::replace_bounded( 'see https://old.com. Next', $map ) === 'see https://new.com. Next' );
+
+// =====================================================================
+group( 'Chunked upload: a retried chunk is not written twice' );
+// =====================================================================
+$chunk_arc  = sys_get_temp_dir() . '/isx_chunk_' . getmypid() . '.wpress';
+$chunk_port = 19000 + ( getmypid() % 1000 );
+@unlink( $chunk_arc );
+$chunk_srv = proc_open(
+	array( PHP_BINARY, '-S', "127.0.0.1:$chunk_port", __DIR__ . '/chunk-router.php' ),
+	array( 0 => array( 'pipe', 'r' ), 1 => array( 'file', '/dev/null', 'w' ), 2 => array( 'file', '/dev/null', 'w' ) ),
+	$chunk_pipes,
+	null,
+	array( 'ISX_CHUNK_ARCHIVE' => $chunk_arc )
+);
+for ( $i = 0; $i < 50 && ! @fsockopen( '127.0.0.1', $chunk_port ); $i++ ) {
+	usleep( 100000 );
+}
+$send_chunk = function ( $data, $offset ) use ( $chunk_port ) {
+	$tmp = tempnam( sys_get_temp_dir(), 'isxc' );
+	file_put_contents( $tmp, $data );
+	$ch = curl_init( "http://127.0.0.1:$chunk_port/" );
+	curl_setopt_array( $ch, array(
+		CURLOPT_POST           => true,
+		CURLOPT_RETURNTRANSFER => true,
+		CURLOPT_POSTFIELDS     => array( 'job' => 'x', 'offset' => $offset, 'chunk' => new CURLFile( $tmp, 'application/octet-stream', 'part' ) ),
+	) );
+	$res = json_decode( (string) curl_exec( $ch ), true );
+	curl_close( $ch );
+	unlink( $tmp );
+	return is_array( $res ) && ! empty( $res['success'] );
+};
+$ok = $send_chunk( 'AAAAA', 0 ) && $send_chunk( 'BBBBB', 5 ) && $send_chunk( 'BBBBB', 5 ) && $send_chunk( 'CC', 10 );
+clearstatcache();
+t( 'K1 retried chunk overwrites itself: archive is exactly A+B+C', $ok && file_get_contents( $chunk_arc ) === 'AAAAABBBBBCC', (string) @file_get_contents( $chunk_arc ) );
+t( 'K2 a gap (missing earlier chunk) is refused', $send_chunk( 'ZZ', 40 ) === false && file_get_contents( $chunk_arc ) === 'AAAAABBBBBCC' );
+proc_terminate( $chunk_srv );
+@unlink( $chunk_arc );
+
+// =====================================================================
+group( 'Crafted entry sizes cannot loop the readers' );
+// =====================================================================
+t( 'H1 valid header accepted', ISX_Archive::valid_header( array( 'p' => 'wpcontent/a.txt', 's' => 0 ) ) && ISX_Archive::valid_header( array( 'p' => 'x', 's' => 12 ) ) );
+t( 'H2 negative / fractional / non-numeric / missing size rejected', ! ISX_Archive::valid_header( array( 'p' => 'x', 's' => -40 ) )
+	&& ! ISX_Archive::valid_header( array( 'p' => 'x', 's' => 1.5 ) )
+	&& ! ISX_Archive::valid_header( array( 'p' => 'x', 's' => 'abc' ) )
+	&& ! ISX_Archive::valid_header( array( 'p' => 'x' ) )
+	&& ! ISX_Archive::valid_header( array( 's' => 3 ) ) );
+$loop = $JOB_DIR . '/loop.wpress';
+@unlink( $loop );
+ISX_Archive::init( $loop );
+ISX_Archive::add_data( $loop, 'wpcontent/a.txt', 'x' );
+ISX_Archive::finish( $loop );
+$raw = file_get_contents( $loop );
+$raw = str_replace( '"s":1,', '"s":-30,', $raw );
+$pos = strpos( $raw, '{"p"' );
+$len = unpack( 'V', substr( $raw, $pos - 4, 4 ) )[1];
+$json = substr( $raw, $pos, strpos( $raw, '}', $pos ) - $pos + 1 );
+$raw = substr( $raw, 0, $pos - 4 ) . pack( 'V', strlen( $json ) ) . $json . substr( $raw, $pos + $len );
+file_put_contents( $loop, $raw );
+$seen    = 0;
+$started = microtime( true );
+ISX_Archive::each( $loop, function () use ( &$seen ) { return ++$seen < 1000; } );
+t( 'H3 each() stops on a negative size instead of looping', $seen === 0 && microtime( true ) - $started < 2, "callbacks=$seen" );
+
+// =====================================================================
+group( 'Deleting a backup also deletes its decompressed .peek copy' );
+// =====================================================================
+if ( ! function_exists( 'isx_htaccess_deny_all' ) ) {
+	function isx_htaccess_deny_all() { return "deny\n"; }
+}
+require_once $PLUGIN . '/includes/class-isx-backups.php';
+$bdir = ISX_Backups::dir();
+file_put_contents( "$bdir/site-01012026-Abc.wpress", 'gz' );
+file_put_contents( "$bdir/site-01012026-Abc.wpress.peek", 'plain copy' );
+t( 'K3 backup and its .peek both removed', ISX_Backups::delete( 'site-01012026-Abc.wpress' ) && ! file_exists( "$bdir/site-01012026-Abc.wpress" ) && ! file_exists( "$bdir/site-01012026-Abc.wpress.peek" ) );
+t( 'K4 backups dir always gets an index.php', is_file( "$bdir/index.php" ) );
 
 // =====================================================================
 group( 'I18N: every t() string in assets/js is localized by ISX_Admin::js_i18n()' );

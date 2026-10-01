@@ -4,6 +4,30 @@
 
 ## [Unreleased]
 
+## [0.1.25] - 2026-10-01
+
+### ความปลอดภัย
+- **ปิดช่องโหว่ zip-slip ตอน import** — แพ็กเกจที่ถูกแต่งชื่อไฟล์ให้มี `..` (เช่น `wpcontent/../wp-config.php`) เคยเขียนไฟล์ออกนอก wp-content หรือทับปลั๊กอินที่กำลังรันได้ ตอนนี้ entry ที่ path ไม่ปลอดภัยถูกปฏิเสธทั้งหมดและบันทึกลง Log
+- **ไฟล์ Log ใช้ชื่อสุ่มที่เดาไม่ได้** — บน nginx (ซึ่งไม่อ่าน `.htaccess`) ไฟล์ `isx-error.log` เคยเปิดอ่านได้จากภายนอก และ log มีชื่อไฟล์ backup อยู่ จึงดาวน์โหลด backup ทั้งเว็บได้โดยไม่ต้องล็อกอิน log เดิมถูกย้ายไปชื่อใหม่ให้อัตโนมัติ
+- **Multisite: ใช้ได้เฉพาะ super admin** — admin ของ subsite เคยใช้ import/Reset Hub กระทบทั้ง network ได้ และเว็บที่ตั้ง `DISALLOW_FILE_MODS` จะปิด import และ Reset Hub ให้ด้วย
+- เขียน URL ใน `stdClass` ได้แต่ยังไม่สร้าง object ของ class อื่นจากแพ็กเกจ (กัน object injection เหมือนเดิม)
+- แพ็กเกจที่ใส่ขนาดไฟล์ติดลบไม่ทำให้ import/verify วนไม่จบอีกต่อไป
+- escape เครื่องหมายคำพูดในรายการไฟล์บน Storage และสร้างรายการตารางด้วย DOM แทนการต่อ HTML
+
+### ข้อมูลไม่หาย
+- **ย้ายโฟลเดอร์เก็บ backup ค่าเริ่มต้นไปที่ `wp-content/insightx-backup`** — เดิมอยู่ในโฟลเดอร์ปลั๊กอิน ซึ่ง WordPress ลบทิ้งทุกครั้งที่อัปเดต backup ในเครื่องจึงหายทุกครั้งที่อัปเดต ถ้าโฟลเดอร์เดิมยังอยู่ backup เก่าจะถูกย้ายให้อัตโนมัติ
+- import ไม่ค้างกลางทางเมื่อเว็บต้นทางกับปลายทางตั้ง storage path ต่างกัน (เดิมขึ้น "ไม่พบงาน" ขณะที่ wp-content ถูกล้างไปแล้ว)
+- export/import/รีเซ็ตไม่แตะตารางของเว็บอื่นใน database เดียวกันที่ prefix ขึ้นต้นเหมือนกัน (`wp_` กับ `wp_staging_`)
+- ห้ามตั้ง storage path เป็นโฟลเดอร์ของ WordPress (root, wp-content, plugins, themes, uploads ฯลฯ) ซึ่งเคยทำให้ทั้งเว็บขึ้น 403 และ export/import ทำงานว่างเปล่า
+- แทน URL เฉพาะที่ตรงขอบเขตจริง — `https://old.com` ไม่ไปแทนใน `https://old.com.au` หรือ `https://old.community` อีกแล้ว
+- chunk ที่อัปโหลดซ้ำหลัง response หายไม่ถูกเขียนต่อซ้ำ (เดิมทำให้แพ็กเกจเสียหลังอัปโหลดเสร็จ)
+- ลบ backup แล้วลบสำเนา `.peek` ที่คลายบีบอัดไว้ด้วย
+
+### แก้บั๊ก
+- แพ็กเกจที่เข้ารหัสแล้วไม่ได้กรอกรหัสผ่าน ไม่ทำให้ loopback/cron วนไม่หยุดอีกต่อไป และ `wp isx import` แจ้ง error แทนการค้าง
+- รีเซ็ตฐานข้อมูลแล้วปลั๊กอินยังเปิดอยู่ จึงแสดงรหัสผ่านใหม่ของแอดมินได้
+- ชุดทดสอบเพิ่มจาก 48 เป็น 97 เทสต์
+
 ## [0.1.24] - 2026-09-30
 
 - **รองรับหลายภาษา (i18n) — ปลั๊กอินแสดงภาษาตามที่ตั้งไว้ใน WordPress** ตั้งเป็นไทยแสดงไทย ตั้งเป็นอังกฤษแสดงอังกฤษ ภาษาอื่นที่ยังไม่มีคำแปลใช้อังกฤษ — ข้อความต้นฉบับเปลี่ยนเป็นภาษาอังกฤษและครอบ `__()` ครบทุกจุด (หน้า admin, ข้อความ progress/error, Log, WP-CLI) คำแปลไทยเดิมทั้งหมดย้ายไปอยู่ที่ `languages/insightx-backup-th.po` / `.mo`
@@ -187,7 +211,8 @@
 - ศูนย์รีเซ็ต (Reset Hub) — ล้างปลั๊กอิน / รีเซ็ตธีม / ล้างคลังสื่อ / รีเซ็ตฐานข้อมูล / รีเซ็ตทั้งเว็บไซต์ พร้อมยืนยันด้วยรหัสผ่านก่อนทำรายการทุกครั้ง
 - รองรับ WP-CLI: `wp isx export` / `wp isx import <file>` / `wp isx providers`
 
-[Unreleased]: https://github.com/InsightX-th/insightx-backup/compare/v0.1.24...HEAD
+[Unreleased]: https://github.com/InsightX-th/insightx-backup/compare/v0.1.25...HEAD
+[0.1.25]: https://github.com/InsightX-th/insightx-backup/compare/v0.1.24...v0.1.25
 [0.1.24]: https://github.com/InsightX-th/insightx-backup/compare/v0.1.23...v0.1.24
 [0.1.23]: https://github.com/InsightX-th/insightx-backup/compare/v0.1.22...v0.1.23
 [0.1.22]: https://github.com/InsightX-th/insightx-backup/compare/v0.1.21...v0.1.22

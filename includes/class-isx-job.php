@@ -129,7 +129,7 @@ class ISX_Job {
 		// default) while this job was in flight, the job is still perfectly
 		// intact — just no longer where ISX_STORAGE_PATH now points. Reporting
 		// "Job not found" for that is what turned a settings hiccup into a dead run.
-		$candidates = array( ISX_STORAGE_PATH, untrailingslashit( ISX_PATH . 'storage' ) );
+		$candidates = self::search_paths();
 
 		foreach ( array_unique( $candidates ) as $base ) {
 			$dir  = untrailingslashit( $base ) . '/' . $id;
@@ -158,7 +158,7 @@ class ISX_Job {
 	 * @return array
 	 */
 	public static function search_paths() {
-		return array_values( array_unique( array( ISX_STORAGE_PATH, untrailingslashit( ISX_PATH . 'storage' ) ) ) );
+		return array_values( array_unique( array( ISX_STORAGE_PATH, ISX_DEFAULT_STORAGE_PATH, ISX_LEGACY_STORAGE_PATH ) ) );
 	}
 
 	/**

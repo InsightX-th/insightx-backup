@@ -32,13 +32,15 @@ class ISX_Serialize {
 	 */
 	public static function replace( $data, $search, $replace, $skip_emails = false ) {
 		// A serialized string: unserialize, replace inside, re-serialize.
-		// allowed_classes => false: the value originates from a backup package
-		// the importing admin chose, so no class may be instantiated from it
-		// (Object Injection via __wakeup/__destruct). A serialized object
-		// becomes __PHP_Incomplete_Class instead, which the recursion below
-		// leaves untouched and re-serializes back byte-identically.
+		// Only stdClass may be instantiated: the value originates from a
+		// backup package, so no class with __wakeup/__destruct may come out of
+		// it (Object Injection). stdClass has no magic methods, and blocking it
+		// too left every URL inside a plain object (common in options and
+		// postmeta) pointing at the old site. Any other class becomes
+		// __PHP_Incomplete_Class, which the recursion below leaves untouched
+		// and re-serializes back byte-identically.
 		if ( is_string( $data ) && $data !== '' && is_serialized( $data ) ) {
-			$unserialized = @unserialize( $data, array( 'allowed_classes' => false ) ); // phpcs:ignore
+			$unserialized = @unserialize( $data, array( 'allowed_classes' => array( 'stdClass' ) ) ); // phpcs:ignore
 			if ( $unserialized !== false || $data === 'b:0;' ) {
 				return serialize( self::replace( $unserialized, $search, $replace, $skip_emails ) );
 			}
@@ -107,7 +109,7 @@ class ISX_Serialize {
 
 		$data = $skip_emails
 			? self::replace_skipping_email_domains( $data, $map )
-			: strtr( $data, $map );
+			: self::replace_bounded( $data, $map );
 
 		return self::replace_in_base64( $data, $map );
 	}
@@ -209,7 +211,7 @@ class ISX_Serialize {
 			return $payload;
 		}
 
-		$replaced = strtr( $decoded, $map );
+		$replaced = self::replace_bounded( $decoded, $map );
 		if ( $replaced === $decoded ) {
 			return $payload; // Nothing matched — hand back the original bytes.
 		}
@@ -243,6 +245,54 @@ class ISX_Serialize {
 			$map[ $from ] = $to;
 		}
 		return $map;
+	}
+
+	/**
+	 * strtr()-style replacement (longest key first at each position, one
+	 * pass, never re-reading its own output) that only replaces a key where it
+	 * ENDS: the next character must not continue a host name or path segment.
+	 *
+	 * Plain strtr() rewrote "https://old.com" inside "https://old.com.au",
+	 * "https://old.community" and "/var/www/old2" too, sending links to
+	 * someone else's site. Every key is already anchored on its left (scheme,
+	 * "//" or an attribute quote), so only the right edge needs checking.
+	 *
+	 * @param string $subject
+	 * @param array  $map Search => replace.
+	 * @return string
+	 */
+	public static function replace_bounded( $subject, array $map ) {
+		$present = array();
+		foreach ( $map as $from => $to ) {
+			if ( $from !== '' && strpos( $subject, (string) $from ) !== false ) {
+				$present[ (string) $from ] = $to;
+			}
+		}
+		if ( empty( $present ) ) {
+			return $subject;
+		}
+		$keys = array_keys( $present );
+		usort(
+			$keys,
+			function ( $a, $b ) {
+				return strlen( $b ) - strlen( $a );
+			}
+		);
+		$alternatives = array();
+		foreach ( $keys as $key ) {
+			$alternatives[] = preg_quote( $key, '#' );
+		}
+		$pattern = '#(?:' . implode( '|', $alternatives ) . ')(?![A-Za-z0-9_-]|\.[A-Za-z0-9])#';
+		$out     = preg_replace_callback(
+			$pattern,
+			function ( $m ) use ( $present ) {
+				return $present[ $m[0] ];
+			},
+			$subject
+		);
+		// null: PCRE gave up on a pathological subject — an unbounded
+		// replacement beats returning nothing.
+		return $out === null ? strtr( $subject, $present ) : $out;
 	}
 
 	/**
@@ -281,10 +331,10 @@ class ISX_Serialize {
 		// Fall back to replacing the untouched original: losing the email
 		// protection is a far smaller problem than returning nothing.
 		if ( $masked === null ) {
-			return strtr( $subject, $map );
+			return self::replace_bounded( $subject, $map );
 		}
 
-		$masked = strtr( $masked, $map );
+		$masked = self::replace_bounded( $masked, $map );
 
 		if ( ! empty( $protected ) ) {
 			$masked = strtr( $masked, $protected );

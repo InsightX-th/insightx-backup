@@ -3,7 +3,7 @@
  * Plugin Name: InsightX Backup
  * Plugin URI: https://insightx.in.th/
  * Description: Migrate or back up an entire WordPress site (database + files) as a single package, then import it back or send it to S3 — written from scratch by InsightX.
- * Version: 0.1.24
+ * Version: 0.1.25
  * Author: InsightX
  * Author URI: https://insightx.in.th/
  * Text Domain: insightx-backup
@@ -21,7 +21,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ISX_VERSION', '0.1.24' );
+define( 'ISX_VERSION', '0.1.25' );
 define( 'ISX_FILE', __FILE__ );
 define( 'ISX_PATH', plugin_dir_path( __FILE__ ) );
 define( 'ISX_URL', plugin_dir_url( __FILE__ ) );
@@ -80,14 +80,31 @@ add_action(
  *
  * @return string
  */
+/**
+ * Default storage: wp-content/insightx-backup, OUTSIDE the plugin folder.
+ * WordPress deletes and replaces the plugin folder on every update, so the
+ * old default (the plugin's own storage/ dir) lost every local backup and
+ * any in-flight job whenever the plugin was updated.
+ */
+define( 'ISX_DEFAULT_STORAGE_PATH', untrailingslashit( WP_CONTENT_DIR ) . '/insightx-backup' );
+/** Pre-0.1.25 default, still searched for jobs and moved over once. */
+define( 'ISX_LEGACY_STORAGE_PATH', untrailingslashit( ISX_PATH . 'storage' ) );
+
+require_once ISX_PATH . 'includes/functions-isx-storage.php';
+
 function isx_resolve_storage_path() {
-	$default = untrailingslashit( ISX_PATH . 'storage' );
+	$default = ISX_DEFAULT_STORAGE_PATH;
 	$custom  = get_option( 'isx_storage_path', '' );
 	if ( ! is_string( $custom ) || $custom === '' ) {
 		return $default;
 	}
 
 	$custom = untrailingslashit( $custom );
+	if ( isx_storage_path_conflict( $custom ) !== '' ) {
+		// Saved before this check existed — never use it.
+		$GLOBALS['isx_storage_path_fallback'] = $custom;
+		return $default;
+	}
 	if ( is_dir( $custom ) && is_writable( $custom ) ) {
 		return $custom;
 	}
@@ -102,6 +119,61 @@ function isx_resolve_storage_path() {
 	return $default;
 }
 define( 'ISX_STORAGE_PATH', isx_resolve_storage_path() );
+
+/**
+ * Deny-all protection for the storage root (the backups/ subdir manages its
+ * own rules — see ISX_Backups::dir()).
+ */
+function isx_protect_storage() {
+	if ( ! is_dir( ISX_STORAGE_PATH ) ) {
+		wp_mkdir_p( ISX_STORAGE_PATH );
+	}
+	$htaccess = ISX_STORAGE_PATH . '/.htaccess';
+	if ( ! file_exists( $htaccess ) || trim( (string) @file_get_contents( $htaccess ) ) === 'Deny from all' ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		file_put_contents( $htaccess, isx_htaccess_deny_all() ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+	}
+	$index = ISX_STORAGE_PATH . '/index.php';
+	if ( ! file_exists( $index ) ) {
+		file_put_contents( $index, "<?php // Silence is golden.\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+	}
+}
+
+/**
+ * Move backups and logs from the old in-plugin default to the new one.
+ *
+ * Only possible when the old folder survived the update (manual/FTP/git
+ * installs) — WordPress' own updater has already deleted it by the time this
+ * code runs. Repeats until nothing is left to move; jobs still in flight
+ * stay where they are (ISX_Job searches both locations).
+ */
+function isx_migrate_legacy_storage() {
+	if ( ISX_STORAGE_PATH !== ISX_DEFAULT_STORAGE_PATH || get_option( 'isx_storage_migrated' ) ) {
+		return;
+	}
+	$left = 0;
+	foreach ( array( 'backups', 'logs' ) as $sub ) {
+		$from = ISX_LEGACY_STORAGE_PATH . '/' . $sub;
+		if ( ! is_dir( $from ) ) {
+			continue;
+		}
+		$to = ISX_DEFAULT_STORAGE_PATH . '/' . $sub;
+		wp_mkdir_p( $to );
+		foreach ( (array) glob( $from . '/*' ) as $file ) {
+			$name = basename( (string) $file );
+			if ( ! is_file( $file ) || $name === 'index.php' ) {
+				continue;
+			}
+			if ( file_exists( $to . '/' . $name ) || ! @rename( $file, $to . '/' . $name ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+				$left++;
+			}
+		}
+	}
+	isx_protect_storage();
+	if ( $left === 0 ) {
+		update_option( 'isx_storage_migrated', 1, false );
+	}
+}
+isx_migrate_legacy_storage();
 
 /**
  * Surface the fallback above, which is otherwise completely invisible: backups
@@ -196,18 +268,7 @@ function isx_htaccess_deny_all() {
  * Activation: prepare a protected storage directory for in-progress jobs.
  */
 function isx_activate() {
-	if ( ! is_dir( ISX_STORAGE_PATH ) ) {
-		wp_mkdir_p( ISX_STORAGE_PATH );
-	}
-	// Protect the storage directory from direct web access.
-	$htaccess = ISX_STORAGE_PATH . '/.htaccess';
-	if ( ! file_exists( $htaccess ) || trim( (string) @file_get_contents( $htaccess ) ) === 'Deny from all' ) {
-		file_put_contents( $htaccess, isx_htaccess_deny_all() );
-	}
-	$index = ISX_STORAGE_PATH . '/index.php';
-	if ( ! file_exists( $index ) ) {
-		file_put_contents( $index, "<?php // Silence is golden.\n" );
-	}
+	isx_protect_storage();
 }
 register_activation_hook( __FILE__, 'isx_activate' );
 

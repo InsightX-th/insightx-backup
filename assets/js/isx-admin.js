@@ -396,14 +396,22 @@
 				return;
 			}
 			var tables = res.data.tables || [];
-			var html = '';
+			var $list = $('#isx-tables-picker-list').empty();
+			// Built as elements (.val/.text), not concatenated HTML: a table
+			// name is just data and must never be parsed as markup.
 			tables.forEach(function (table) {
-				html += '<label class="isx-checkbox-row">' +
-					'<input type="checkbox" value="' + table.name.replace(/"/g, '&quot;') + '" />' +
-					'<span>' + table.name + ' <span class="isx-muted">(' + t('%s rows', table.rows) + ')</span></span>' +
-					'</label>';
+				$list.append(
+					$('<label class="isx-checkbox-row">').append(
+						$('<input type="checkbox">').val(table.name),
+						$('<span>').text(table.name + ' ').append(
+							$('<span class="isx-muted">').text('(' + t('%s rows', table.rows) + ')')
+						)
+					)
+				);
 			});
-			$('#isx-tables-picker-list').html(html || '<p class="isx-fetch-status">' + t('No tables found') + '</p>');
+			if (!tables.length) {
+				$list.html('<p class="isx-fetch-status">' + t('No tables found') + '</p>');
+			}
 		});
 	}
 
@@ -524,6 +532,9 @@
 			fd.append('action', 'isx_import_chunk');
 			fd.append('nonce', isx.nonce);
 			fd.append('job', job);
+			// Where this chunk belongs, so a retry after a lost response
+			// overwrites its first attempt instead of appending a second copy.
+			fd.append('offset', start);
 			fd.append('chunk', blob, file.name);
 
 			$.ajax({

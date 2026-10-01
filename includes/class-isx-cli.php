@@ -122,6 +122,10 @@ class ISX_CLI_Command {
 		);
 		$progress->finish();
 
+		if ( ! empty( $result['needs_password'] ) ) {
+			$job->cleanup();
+			WP_CLI::error( __( 'This package is password-encrypted, which WP-CLI import does not support — import it from the dashboard instead', 'insightx-backup' ) );
+		}
 		if ( ! empty( $result['error'] ) ) {
 			WP_CLI::error( isset( $result['message'] ) ? $result['message'] : __( 'Import failed', 'insightx-backup' ) );
 		}

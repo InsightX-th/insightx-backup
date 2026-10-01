@@ -788,7 +788,17 @@ class ISX_Files {
 		if ( strpos( $path, self::NS ) !== 0 ) {
 			return null;
 		}
-		$rel  = substr( $path, strlen( self::NS ) );
+		$rel = substr( $path, strlen( self::NS ) );
+		// The header path comes from the package, i.e. from whoever built or
+		// tampered with the file. Anything that is not already a plain,
+		// normalised relative path ('..', '.', '//', backslashes) could land
+		// outside wp-content — "wpcontent/../wp-config.php" — or slip past the
+		// self-protection check below ("plugins/./insightx-backup/…"), so it
+		// is refused outright rather than repaired.
+		if ( $rel === '' || ISX_Archive::sanitize_relative( $rel ) !== $rel ) {
+			ISX_Logger::log_warn( 'import', __( 'Skipped an unsafe path in the package', 'insightx-backup' ), array( 'path' => $path ) );
+			return null;
+		}
 		$dest = untrailingslashit( WP_CONTENT_DIR ) . '/' . $rel;
 
 		// Never overwrite the plugin driving this very import (or its storage
@@ -824,7 +834,7 @@ class ISX_Files {
 				// Skip anything with a NUL byte — almost certainly binary, and
 				// running strtr over binary is where corruption sneaks in.
 				if ( strpos( $content, "\0" ) === false ) {
-					$replaced = strtr( $content, self::$url_replace_map );
+					$replaced = ISX_Serialize::replace_bounded( $content, self::$url_replace_map );
 					if ( $replaced !== $content && @file_put_contents( $dest, $replaced ) === false ) { // phpcs:ignore WordPress.WP.AlternativeFunctions, WordPress.PHP.NoSilencedErrors
 						return false; // Same class as a failed restore write.
 					}

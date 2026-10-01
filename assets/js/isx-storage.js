@@ -18,8 +18,13 @@
 		return isx_storage.providers[slug] && isx_storage.providers[slug].configured;
 	}
 
+	// Quotes too: the result also goes into attributes (data-key="…"), where
+	// an object key containing a double quote would otherwise end the
+	// attribute early and inject markup.
 	function escapeHtml(text) {
-		return $('<div>').text(text == null ? '' : String(text)).html();
+		return $('<div>').text(text == null ? '' : String(text)).html()
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;');
 	}
 
 	// Icon dropdown used wherever a provider (or another icon-bearing choice)
